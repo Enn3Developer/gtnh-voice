@@ -35,4 +35,7 @@
  */
 dependencies {
     //runtimeOnlyNonPublishable("com.github.GTNewHorizons:NotEnoughItems:2.7.69-GTNH:dev")
+
+    // Provides Java 17-25 / LWJGL3 runtime support (dev/runtime only, not published as a dependency of this mod).
+    runtimeOnlyNonPublishable("com.github.GTNewHorizons:lwjgl3ify:3.0.25:dev")
 }
