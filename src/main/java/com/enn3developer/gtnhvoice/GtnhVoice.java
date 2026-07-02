@@ -16,7 +16,9 @@ public class GtnhVoice {
     public static final String MODID = "gtnhvoice";
     public static final Logger LOG = LogManager.getLogger(MODID);
 
-    @SidedProxy(clientSide = "com.enn3developer.gtnhvoice.ClientProxy", serverSide = "com.enn3developer.gtnhvoice.CommonProxy")
+    @SidedProxy(
+        clientSide = "com.enn3developer.gtnhvoice.ClientProxy",
+        serverSide = "com.enn3developer.gtnhvoice.CommonProxy")
     public static CommonProxy proxy;
 
     @Mod.EventHandler
