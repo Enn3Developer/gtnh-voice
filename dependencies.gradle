@@ -41,4 +41,16 @@ dependencies {
     // tweaker to both runClient and runServer, but the relauncher does not support server launches and
     // crashes runServer.
     compileOnly("com.github.GTNewHorizons:lwjgl3ify:3.0.25:dev")
+
+    // Guava is already on the Minecraft/Forge classpath at compile- and run-time (currently 17.0), declared
+    // explicitly here so the core package doesn't rely on an incidental transitive dependency.
+    compileOnly("com.google.guava:guava:17.0")
+
+    // Minecraft 1.7.10 does not ship fastutil (added in later MC versions), but the lifted packet registry
+    // needs it at runtime, so it's pulled in for real via the slimmed-down "core" artifact.
+    implementation("it.unimi.dsi:fastutil-core:8.5.16")
+
+    // Compile-time-only nullability annotations (@NotNull/@Nullable) used throughout the lifted Plasmo Voice
+    // code; RetentionPolicy.CLASS, so no runtime jar is required.
+    compileOnly("org.jetbrains:annotations:24.1.0")
 }
