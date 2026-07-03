@@ -67,9 +67,13 @@ jobs:
 
       - name: Setup the workspace
         run: ./gradlew --build-cache --info --stacktrace setupCIWorkspace
+        env:
+          VERSION: ${{ steps.version.outputs.number }}
 
       - name: Build the mod
         run: ./gradlew --build-cache --info --stacktrace assemble
+        env:
+          VERSION: ${{ steps.version.outputs.number }}
 
       - name: Create GitHub release
         env:
