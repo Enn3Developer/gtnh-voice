@@ -1,9 +1,13 @@
 package com.enn3developer.gtnhvoice;
 
+import com.enn3developer.gtnhvoice.network.NetworkHandler;
+import com.enn3developer.gtnhvoice.server.VoiceServerManager;
+
 import cpw.mods.fml.common.event.FMLInitializationEvent;
 import cpw.mods.fml.common.event.FMLPostInitializationEvent;
 import cpw.mods.fml.common.event.FMLPreInitializationEvent;
 import cpw.mods.fml.common.event.FMLServerStartingEvent;
+import cpw.mods.fml.common.event.FMLServerStoppingEvent;
 
 public class CommonProxy {
 
@@ -14,6 +18,8 @@ public class CommonProxy {
 
         GtnhVoice.LOG.info(Config.greeting);
         GtnhVoice.LOG.info("I am GTNH Voice at version " + Tags.VERSION);
+
+        NetworkHandler.init();
     }
 
     // load "Do your mod setup. Build whatever data structures you care about. Register recipes." (Remove if not needed)
@@ -23,5 +29,13 @@ public class CommonProxy {
     public void postInit(FMLPostInitializationEvent event) {}
 
     // register server commands in this event handler (Remove if not needed)
-    public void serverStarting(FMLServerStartingEvent event) {}
+    public void serverStarting(FMLServerStartingEvent event) {
+        VoiceServerManager.getInstance()
+            .start();
+    }
+
+    public void serverStopping(FMLServerStoppingEvent event) {
+        VoiceServerManager.getInstance()
+            .stop();
+    }
 }

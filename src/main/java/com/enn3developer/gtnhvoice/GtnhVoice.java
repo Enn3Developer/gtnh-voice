@@ -9,6 +9,7 @@ import cpw.mods.fml.common.event.FMLInitializationEvent;
 import cpw.mods.fml.common.event.FMLPostInitializationEvent;
 import cpw.mods.fml.common.event.FMLPreInitializationEvent;
 import cpw.mods.fml.common.event.FMLServerStartingEvent;
+import cpw.mods.fml.common.event.FMLServerStoppingEvent;
 
 @Mod(modid = GtnhVoice.MODID, version = Tags.VERSION, name = "GTNH Voice", acceptedMinecraftVersions = "[1.7.10]")
 public class GtnhVoice {
@@ -44,5 +45,10 @@ public class GtnhVoice {
     // register server commands in this event handler (Remove if not needed)
     public void serverStarting(FMLServerStartingEvent event) {
         proxy.serverStarting(event);
+    }
+
+    @Mod.EventHandler
+    public void serverStopping(FMLServerStoppingEvent event) {
+        proxy.serverStopping(event);
     }
 }
