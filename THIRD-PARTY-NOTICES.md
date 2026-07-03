@@ -4,8 +4,8 @@
 
 Portions of `com.enn3developer.gtnhvoice.core` (protocol packet definitions, packet
 utilities, codec/encryption value objects, encoder/decoder/encryption interfaces, audio
-math utilities, the AES encryption implementation, the pure-Java Opus codec wrappers, and
-the Netty-based UDP transport layer) are adapted from
+math utilities, the AES encryption implementation, the pure-Java Opus codec wrappers, the
+adaptive jitter buffer, and the Netty-based UDP transport layer) are adapted from
 [Plasmo Voice](https://github.com/plasmoapp/plasmo-voice), copyright the Plasmo Voice
 contributors, licensed under the GNU Lesser General Public License v3.0 (LGPL-3.0).
 
