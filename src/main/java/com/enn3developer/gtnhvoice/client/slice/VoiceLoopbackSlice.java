@@ -36,6 +36,10 @@ public class VoiceLoopbackSlice {
     private static final int MTU_SIZE = 1275; // max Opus frame size per RFC 6716
     private static final long LOG_INTERVAL_MILLIS = 500L;
 
+    // This harness proves the codec+transport+playback path with a single fixed "speaker" at the origin - it
+    // predates per-source routing, so it just picks one arbitrary sourceId for its one AL source.
+    private final UUID sliceSourceId = UUID.randomUUID();
+
     private final UUID secret = UUID.randomUUID();
     private final UUID activationId = UUID.randomUUID();
     private final AesEncryption encryption = new AesEncryption(VoiceProtocol.deriveKey(secret));
@@ -79,8 +83,11 @@ public class VoiceLoopbackSlice {
 
             playbackManager = new PlaybackManager();
             playbackManager.start();
+            playbackManager.createSource(sliceSourceId);
+            playbackManager.updateSourcePosition(sliceSourceId, 0, 0, 0);
+            playbackManager.updateListener(0, 0, 0, 0f, 0f, -1f);
 
-            jitterBuffer = new SimpleJitterBuffer(playbackManager::submit);
+            jitterBuffer = new SimpleJitterBuffer(frame -> playbackManager.submit(sliceSourceId, frame));
             jitterBuffer.start();
 
             server = new UdpTransportServer(this::onServerPacket);

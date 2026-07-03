@@ -1,20 +1,32 @@
 package com.enn3developer.gtnhvoice.client.playback;
 
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
 
 import com.enn3developer.gtnhvoice.GtnhVoice;
 
 /**
- * Owns the lifecycle of the {@link PlaybackThread} and the frame hand-off queue. Nothing touches OpenAL until
- * {@link #start()} is called.
+ * Owns the lifecycle of the {@link PlaybackThread} and the per-source frame/position hand-off. Nothing touches
+ * OpenAL until {@link #start()} is called. A single dedicated ALC device+context+thread is shared across every
+ * {@code VoiceSource} that registers here - each gets its own positioned AL source, not its own device.
+ * <p>
+ * Frame queues and positions are kept in plain {@link ConcurrentHashMap}s so the hot path ({@link #submit} /
+ * {@link #updateSourcePosition}, called from the network receive path every ~20ms per active source) never has to
+ * cross onto the playback thread. Only the AL object lifecycle (create/destroy/reset) is marshalled onto
+ * {@link PlaybackThread} via its command queue, since only that thread may call {@code AL10}/{@code ALC10}
+ * functions.
  */
 public class PlaybackManager {
 
     private static final int QUEUE_CAPACITY = 50; // ~1s of 20ms frames
 
-    private final BlockingQueue<short[]> frameQueue = new ArrayBlockingQueue<>(QUEUE_CAPACITY);
+    private final Map<UUID, BlockingQueue<short[]>> frameQueues = new ConcurrentHashMap<>();
+    private final Map<UUID, double[]> positions = new ConcurrentHashMap<>();
 
+    private volatile ListenerSnapshot listenerSnapshot = ListenerSnapshot.ORIGIN;
     private PlaybackThread playbackThread;
 
     public boolean isPlaying() {
@@ -24,8 +36,10 @@ public class PlaybackManager {
     public void start() {
         if (isPlaying()) return;
 
-        frameQueue.clear();
-        playbackThread = new PlaybackThread(frameQueue);
+        frameQueues.clear();
+        positions.clear();
+        listenerSnapshot = ListenerSnapshot.ORIGIN;
+        playbackThread = new PlaybackThread(this);
         playbackThread.start();
         GtnhVoice.LOG.info("[Playback] Started");
     }
@@ -41,19 +55,86 @@ public class PlaybackManager {
                 .interrupt();
         }
         playbackThread = null;
+        frameQueues.clear();
+        positions.clear();
         GtnhVoice.LOG.info("[Playback] Stopped");
     }
 
     /**
-     * Submits a decoded 960-sample mono PCM frame for playback. Drops the oldest queued frame if the queue is full,
-     * to keep playback latency bounded rather than growing unboundedly under sustained overload.
+     * Lazily registers a new positioned AL source for {@code sourceId}. Safe to call multiple times; only the first
+     * call for a given id has any effect.
      */
-    public void submit(short[] frame) {
+    public void createSource(UUID sourceId) {
         if (!isPlaying()) return;
 
-        if (!frameQueue.offer(frame)) {
-            frameQueue.poll();
-            frameQueue.offer(frame);
+        BlockingQueue<short[]> queue = frameQueues
+            .computeIfAbsent(sourceId, id -> new ArrayBlockingQueue<>(QUEUE_CAPACITY));
+        positions.putIfAbsent(sourceId, new double[] { 0, 0, 0 });
+
+        playbackThread.enqueueCommand(() -> playbackThread.createSourceChannel(sourceId, queue));
+    }
+
+    /**
+     * Fully tears down {@code sourceId}'s AL source and frees its handle. Used when the speaker disconnects
+     * ({@code SourceEndPacket}).
+     */
+    public void destroySource(UUID sourceId) {
+        frameQueues.remove(sourceId);
+        positions.remove(sourceId);
+
+        if (!isPlaying()) return;
+        playbackThread.enqueueCommand(() -> playbackThread.destroySourceChannel(sourceId));
+    }
+
+    /**
+     * Stops the source and drops any queued audio without deleting the AL source itself. Used on speech-segment
+     * inactivity timeout so a resumed segment starts clean instead of the first frame bridging an intentional pause.
+     */
+    public void resetSource(UUID sourceId) {
+        BlockingQueue<short[]> queue = frameQueues.get(sourceId);
+        if (queue != null) queue.clear();
+
+        if (!isPlaying()) return;
+        playbackThread.enqueueCommand(() -> playbackThread.resetSourceChannel(sourceId));
+    }
+
+    /**
+     * Submits a decoded 960-sample mono PCM frame for {@code sourceId}. Drops the oldest queued frame if that
+     * source's queue is full, to keep playback latency bounded rather than growing unboundedly under sustained
+     * overload. No-op if the source hasn't been registered via {@link #createSource}.
+     */
+    public void submit(UUID sourceId, short[] frame) {
+        BlockingQueue<short[]> queue = frameQueues.get(sourceId);
+        if (queue == null) return;
+
+        if (!queue.offer(frame)) {
+            queue.poll();
+            queue.offer(frame);
         }
+    }
+
+    /**
+     * Records the latest known absolute world position of {@code sourceId}'s speaker. Picked up by the playback
+     * thread on its next loop iteration and applied to that source's AL position.
+     */
+    public void updateSourcePosition(UUID sourceId, double x, double y, double z) {
+        if (!frameQueues.containsKey(sourceId)) return;
+        positions.put(sourceId, new double[] { x, y, z });
+    }
+
+    /**
+     * Publishes the local player's absolute position/look direction, driving the shared AL listener. Called from
+     * the client tick; read by the playback thread every loop iteration.
+     */
+    public void updateListener(double x, double y, double z, float lookX, float lookY, float lookZ) {
+        listenerSnapshot = new ListenerSnapshot(x, y, z, lookX, lookY, lookZ);
+    }
+
+    Map<UUID, double[]> positionsView() {
+        return positions;
+    }
+
+    ListenerSnapshot currentListenerSnapshot() {
+        return listenerSnapshot;
     }
 }

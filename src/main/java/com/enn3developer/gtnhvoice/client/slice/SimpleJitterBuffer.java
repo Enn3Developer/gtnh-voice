@@ -63,6 +63,14 @@ public class SimpleJitterBuffer {
         }
     }
 
+    /**
+     * Drops all buffered frames, forcing the emitter back into its pre-buffering state on the next poll. Used to cut
+     * a speech segment cleanly (e.g. on an inactivity timeout) instead of letting stale frames bridge into new audio.
+     */
+    public void clear() {
+        buffer.clear();
+    }
+
     private void runEmitter() {
         boolean started = false;
         long framesEmitted = 0;

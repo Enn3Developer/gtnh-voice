@@ -1,22 +1,30 @@
 package com.enn3developer.gtnhvoice.client;
 
+import java.net.InetSocketAddress;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import com.enn3developer.gtnhvoice.Config;
 import com.enn3developer.gtnhvoice.GtnhVoice;
 import com.enn3developer.gtnhvoice.Tags;
 import com.enn3developer.gtnhvoice.client.capture.CaptureManager;
+import com.enn3developer.gtnhvoice.client.source.VoiceSourceManager;
 import com.enn3developer.gtnhvoice.core.api.audio.codec.CodecException;
 import com.enn3developer.gtnhvoice.core.audio.codec.opus.JavaOpusEncoder;
 import com.enn3developer.gtnhvoice.core.encryption.aes.AesEncryption;
 import com.enn3developer.gtnhvoice.core.proto.data.audio.codec.opus.OpusMode;
+import com.enn3developer.gtnhvoice.core.proto.packets.Packet;
+import com.enn3developer.gtnhvoice.core.proto.packets.udp.PacketUdp;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.bothbound.PingPacket;
+import com.enn3developer.gtnhvoice.core.proto.packets.udp.clientbound.SourceAudioPacket;
+import com.enn3developer.gtnhvoice.core.proto.packets.udp.clientbound.SourceEndPacket;
 import com.enn3developer.gtnhvoice.core.transport.UdpTransportClient;
 import com.enn3developer.gtnhvoice.network.ClientHelloPacket;
 import com.enn3developer.gtnhvoice.network.NetworkHandler;
@@ -38,17 +46,29 @@ public final class VoiceClientManager {
 
     private static final long PING_INTERVAL_MILLIS = 5000L;
     private static final long PING_LOG_THROTTLE_MILLIS = 30_000L;
+    private static final long UNKNOWN_SECRET_LOG_THROTTLE_MILLIS = 5000L;
     private static final int OPUS_MTU_SIZE = 1275; // max Opus frame size per RFC 6716
+
+    // ClientHello travels over the same early-connection FML channel documented in
+    // ClientConnectionEventHandler's Hodgepodge dispatcher-race warning: deferring the send by one client tick
+    // reduces but does not eliminate the chance it vanishes with the dispatcher unset (observed in practice with
+    // two clients joining close together). Since ClientHello is idempotent server-side (repeat sends just
+    // re-resolve to the same session), retry it like the existing ping until a ServerHello/ServerReject arrives.
+    private static final long HANDSHAKE_RETRY_INTERVAL_MILLIS = 1000L;
+    private static final int HANDSHAKE_MAX_ATTEMPTS = 10;
 
     private volatile VoiceClientSession session = VoiceClientSession.DISCONNECTED;
     private volatile String pendingHost;
     private UdpTransportClient udpClient;
     private ScheduledExecutorService pingExecutor;
+    private ScheduledExecutorService handshakeExecutor;
     private final AtomicLong lastPingLogMillis = new AtomicLong();
+    private final AtomicLong lastUnknownSecretLogMillis = new AtomicLong();
 
     private volatile CaptureManager captureManager;
     private JavaOpusEncoder captureEncoder;
     private CaptureSendWorker captureSendWorker;
+    private volatile VoiceSourceManager voiceSourceManager;
 
     public static VoiceClientManager getInstance() {
         return INSTANCE;
@@ -69,22 +89,20 @@ public final class VoiceClientManager {
         this.captureManager = captureManager;
     }
 
+    /**
+     * The session's receive-side voice sources (other players' positioned audio), or {@code null} when
+     * disconnected. Read by {@link VoiceListenerTickHandler} to publish the AL listener snapshot every tick.
+     */
+    public @Nullable VoiceSourceManager getVoiceSourceManager() {
+        return voiceSourceManager;
+    }
+
     public synchronized void onConnectedToServer(@NotNull String host) {
         closeUdp();
         pendingHost = host;
         session = new VoiceClientSession(VoiceClientSession.State.CONNECTING, null, null, null, 0, (byte) 0, 0, 0);
 
-        byte claimedVersion = Config.debugForceProtocolMismatch ? (byte) (VoiceProtocol.PROTOCOL_VERSION + 1)
-            : VoiceProtocol.PROTOCOL_VERSION;
-        boolean hasChannel = NetworkRegistry.INSTANCE.hasChannel(VoiceProtocol.CHANNEL, Side.CLIENT);
-        NetworkHandler.WRAPPER.sendToServer(new ClientHelloPacket(claimedVersion, Tags.VERSION));
-
-        GtnhVoice.LOG.info(
-            "Sent ClientHello to {} (protocolVersion={}, modVersion={}, hasChannel(CLIENT)={})",
-            host,
-            claimedVersion,
-            Tags.VERSION,
-            hasChannel);
+        startHandshakeRetry(host);
     }
 
     public synchronized void onDisconnected() {
@@ -95,6 +113,23 @@ public final class VoiceClientManager {
 
     public synchronized void handleServerHello(@NotNull ServerHelloPacket packet) {
         UUID secret = packet.getSecret();
+
+        // The server replies with a ServerHello carrying the SAME secret for every ClientHello of an
+        // already-established session (see VoiceServerManager#handleClientHello's computeIfAbsent), which is
+        // exactly what makes our handshake retry (see #startHandshakeRetry) safe to fire repeatedly - a
+        // retried ClientHello that raced with the first ServerHello produces a harmless duplicate reply. But
+        // that's only true end-to-end if we also treat a duplicate reply as a no-op here: tearing down and
+        // rebuilding an already-connected UDP link/capture worker/voice sources for no reason would glitch a
+        // perfectly working session.
+        VoiceClientSession currentSession = session;
+        if (currentSession.getState() == VoiceClientSession.State.CONNECTED
+            && secret.equals(currentSession.getSecret())) {
+            GtnhVoice.LOG.info(
+                "Ignored duplicate ServerHello for already-connected session (secret={})",
+                VoiceProtocol.abbreviateSecret(secret));
+            return;
+        }
+
         byte[] key = VoiceProtocol.deriveKey(secret);
         AesEncryption encryption = new AesEncryption(key);
 
@@ -104,7 +139,7 @@ public final class VoiceClientManager {
         try {
             closeUdp();
 
-            udpClient = new UdpTransportClient((p, sender) -> {});
+            udpClient = new UdpTransportClient(this::onUdpPacket);
             udpClient.connect(host, packet.getUdpPort());
 
             session = new VoiceClientSession(
@@ -116,6 +151,9 @@ public final class VoiceClientManager {
                 packet.getOpusMode(),
                 packet.getFrameSize(),
                 packet.getSampleRate());
+
+            voiceSourceManager = new VoiceSourceManager();
+            voiceSourceManager.start();
 
             startPinging(secret, encryption);
             startCaptureSending(secret, encryption, packet.getOpusMode(), packet.getSampleRate());
@@ -156,6 +194,70 @@ public final class VoiceClientManager {
         GtnhVoice.LOG.warn("Voice disabled: {}", reason);
     }
 
+    private void startHandshakeRetry(String host) {
+        AtomicInteger attempts = new AtomicInteger();
+
+        handshakeExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread thread = new Thread(r, "gtnhvoice-handshake");
+            thread.setDaemon(true);
+            return thread;
+        });
+        handshakeExecutor.scheduleAtFixedRate(
+            () -> sendClientHello(host, attempts),
+            0,
+            HANDSHAKE_RETRY_INTERVAL_MILLIS,
+            TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Fires on the handshake retry executor. Stops itself once the session has moved past CONNECTING (a
+     * ServerHello/ServerReject arrived, or the player disconnected) - see {@link #closeUdp}, called from both
+     * {@link #handleServerHello} and {@link #handleServerReject} before this method can observe the new state.
+     */
+    private synchronized void sendClientHello(String host, AtomicInteger attempts) {
+        if (session.getState() != VoiceClientSession.State.CONNECTING) {
+            stopHandshakeRetry();
+            return;
+        }
+
+        int attempt = attempts.incrementAndGet();
+        if (attempt > HANDSHAKE_MAX_ATTEMPTS) {
+            stopHandshakeRetry();
+            session = new VoiceClientSession(
+                VoiceClientSession.State.DISABLED,
+                "voice handshake timed out after " + HANDSHAKE_MAX_ATTEMPTS + " attempts (no ServerHello/ServerReject)",
+                null,
+                null,
+                0,
+                (byte) 0,
+                0,
+                0);
+            GtnhVoice.LOG.warn("Voice handshake to {} timed out after {} attempts", host, HANDSHAKE_MAX_ATTEMPTS);
+            return;
+        }
+
+        byte claimedVersion = Config.debugForceProtocolMismatch ? (byte) (VoiceProtocol.PROTOCOL_VERSION + 1)
+            : VoiceProtocol.PROTOCOL_VERSION;
+        boolean hasChannel = NetworkRegistry.INSTANCE.hasChannel(VoiceProtocol.CHANNEL, Side.CLIENT);
+        NetworkHandler.WRAPPER.sendToServer(new ClientHelloPacket(claimedVersion, Tags.VERSION));
+
+        GtnhVoice.LOG.info(
+            "Sent ClientHello to {} (attempt {}/{}, protocolVersion={}, modVersion={}, hasChannel(CLIENT)={})",
+            host,
+            attempt,
+            HANDSHAKE_MAX_ATTEMPTS,
+            claimedVersion,
+            Tags.VERSION,
+            hasChannel);
+    }
+
+    private void stopHandshakeRetry() {
+        if (handshakeExecutor != null) {
+            handshakeExecutor.shutdownNow();
+            handshakeExecutor = null;
+        }
+    }
+
     private void startPinging(UUID secret, AesEncryption encryption) {
         pingExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread thread = new Thread(r, "gtnhvoice-ping");
@@ -181,6 +283,39 @@ public final class VoiceClientManager {
             }
         } catch (Exception e) {
             GtnhVoice.LOG.error("Failed to send voice ping", e);
+        }
+    }
+
+    /**
+     * Real UDP receive callback, wired in on connect. Mirrors {@code VoiceServerManager.onPacket}: resolves the
+     * packet against the current session's secret, decrypts, and routes the two clientbound audio packets to
+     * {@link #voiceSourceManager}. Runs on the Netty IO thread.
+     */
+    private void onUdpPacket(@NotNull PacketUdp packetUdp, @NotNull InetSocketAddress sender) {
+        VoiceClientSession currentSession = session;
+        VoiceSourceManager sourceManager = voiceSourceManager;
+        if (currentSession.getState() != VoiceClientSession.State.CONNECTED || sourceManager == null) return;
+
+        if (!packetUdp.getSecret()
+            .equals(currentSession.getSecret())) {
+            long now = System.currentTimeMillis();
+            long last = lastUnknownSecretLogMillis.get();
+            if (now - last >= UNKNOWN_SECRET_LOG_THROTTLE_MILLIS
+                && lastUnknownSecretLogMillis.compareAndSet(last, now)) {
+                GtnhVoice.LOG.warn("Dropped UDP packet with unexpected secret from {}", sender);
+            }
+            return;
+        }
+
+        try {
+            Packet<?> packet = packetUdp.getPacketUntyped(currentSession.getEncryption());
+            if (packet instanceof SourceAudioPacket) {
+                sourceManager.onSourceAudio((SourceAudioPacket) packet);
+            } else if (packet instanceof SourceEndPacket) {
+                sourceManager.onSourceEnd((SourceEndPacket) packet);
+            }
+        } catch (Exception e) {
+            GtnhVoice.LOG.error("Failed to read voice UDP packet from {}", sender, e);
         }
     }
 
@@ -212,6 +347,8 @@ public final class VoiceClientManager {
     }
 
     private void closeUdp() {
+        stopHandshakeRetry();
+
         if (pingExecutor != null) {
             pingExecutor.shutdownNow();
             pingExecutor = null;
@@ -225,6 +362,11 @@ public final class VoiceClientManager {
         if (captureEncoder != null) {
             captureEncoder.close();
             captureEncoder = null;
+        }
+
+        if (voiceSourceManager != null) {
+            voiceSourceManager.stop();
+            voiceSourceManager = null;
         }
 
         if (udpClient != null) {
