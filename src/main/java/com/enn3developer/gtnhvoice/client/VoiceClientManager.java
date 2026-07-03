@@ -11,7 +11,11 @@ import org.jetbrains.annotations.NotNull;
 import com.enn3developer.gtnhvoice.Config;
 import com.enn3developer.gtnhvoice.GtnhVoice;
 import com.enn3developer.gtnhvoice.Tags;
+import com.enn3developer.gtnhvoice.client.capture.CaptureManager;
+import com.enn3developer.gtnhvoice.core.api.audio.codec.CodecException;
+import com.enn3developer.gtnhvoice.core.audio.codec.opus.JavaOpusEncoder;
 import com.enn3developer.gtnhvoice.core.encryption.aes.AesEncryption;
+import com.enn3developer.gtnhvoice.core.proto.data.audio.codec.opus.OpusMode;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.bothbound.PingPacket;
 import com.enn3developer.gtnhvoice.core.transport.UdpTransportClient;
 import com.enn3developer.gtnhvoice.network.ClientHelloPacket;
@@ -34,12 +38,17 @@ public final class VoiceClientManager {
 
     private static final long PING_INTERVAL_MILLIS = 5000L;
     private static final long PING_LOG_THROTTLE_MILLIS = 30_000L;
+    private static final int OPUS_MTU_SIZE = 1275; // max Opus frame size per RFC 6716
 
     private volatile VoiceClientSession session = VoiceClientSession.DISCONNECTED;
     private volatile String pendingHost;
     private UdpTransportClient udpClient;
     private ScheduledExecutorService pingExecutor;
     private final AtomicLong lastPingLogMillis = new AtomicLong();
+
+    private volatile CaptureManager captureManager;
+    private JavaOpusEncoder captureEncoder;
+    private CaptureSendWorker captureSendWorker;
 
     public static VoiceClientManager getInstance() {
         return INSTANCE;
@@ -49,6 +58,15 @@ public final class VoiceClientManager {
 
     public VoiceClientSession getSession() {
         return session;
+    }
+
+    /**
+     * Wires the shared {@link CaptureManager} in - once a session connects, {@link
+     * #handleServerHello} drains this manager's frame queue for the session's lifetime, regardless
+     * of whether the capture keybind is currently toggled on.
+     */
+    public void bindCaptureManager(@NotNull CaptureManager captureManager) {
+        this.captureManager = captureManager;
     }
 
     public synchronized void onConnectedToServer(@NotNull String host) {
@@ -99,7 +117,8 @@ public final class VoiceClientManager {
                 packet.getFrameSize(),
                 packet.getSampleRate());
 
-            startPinging(secret);
+            startPinging(secret, encryption);
+            startCaptureSending(secret, encryption, packet.getOpusMode(), packet.getSampleRate());
 
             GtnhVoice.LOG.info(
                 "Voice connected: secret={} keyFingerprint={} udp={}:{} distance={} opusMode={} frameSize={} sampleRate={}",
@@ -137,22 +156,23 @@ public final class VoiceClientManager {
         GtnhVoice.LOG.warn("Voice disabled: {}", reason);
     }
 
-    private void startPinging(UUID secret) {
+    private void startPinging(UUID secret, AesEncryption encryption) {
         pingExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread thread = new Thread(r, "gtnhvoice-ping");
             thread.setDaemon(true);
             return thread;
         });
 
-        pingExecutor.scheduleAtFixedRate(() -> sendPing(secret), 0, PING_INTERVAL_MILLIS, TimeUnit.MILLISECONDS);
+        pingExecutor
+            .scheduleAtFixedRate(() -> sendPing(secret, encryption), 0, PING_INTERVAL_MILLIS, TimeUnit.MILLISECONDS);
     }
 
-    private void sendPing(UUID secret) {
+    private void sendPing(UUID secret, AesEncryption encryption) {
         UdpTransportClient client = udpClient;
         if (client == null) return;
 
         try {
-            client.send(new PingPacket(), secret);
+            client.send(new PingPacket(), secret, encryption);
 
             long now = System.currentTimeMillis();
             long last = lastPingLogMillis.get();
@@ -164,10 +184,47 @@ public final class VoiceClientManager {
         }
     }
 
+    private void startCaptureSending(UUID secret, AesEncryption encryption, byte opusModeOrdinal, int sampleRate) {
+        CaptureManager manager = captureManager;
+        if (manager == null) {
+            GtnhVoice.LOG.warn("Voice connected but no CaptureManager bound yet - mic audio will not be sent");
+            return;
+        }
+
+        OpusMode[] modes = OpusMode.values();
+        OpusMode opusMode = modes[opusModeOrdinal >= 0 && opusModeOrdinal < modes.length ? opusModeOrdinal : 0];
+
+        try {
+            captureEncoder = new JavaOpusEncoder(sampleRate, false, opusMode, OPUS_MTU_SIZE);
+            captureEncoder.open();
+
+            captureSendWorker = new CaptureSendWorker(
+                manager.getFrameQueue(),
+                captureEncoder,
+                udpClient,
+                secret,
+                encryption,
+                UUID.randomUUID());
+            captureSendWorker.start();
+        } catch (CodecException e) {
+            GtnhVoice.LOG.error("Failed to open capture encoder, mic audio will not be sent", e);
+        }
+    }
+
     private void closeUdp() {
         if (pingExecutor != null) {
             pingExecutor.shutdownNow();
             pingExecutor = null;
+        }
+
+        if (captureSendWorker != null) {
+            captureSendWorker.shutdown();
+            captureSendWorker = null;
+        }
+
+        if (captureEncoder != null) {
+            captureEncoder.close();
+            captureEncoder = null;
         }
 
         if (udpClient != null) {

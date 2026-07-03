@@ -11,6 +11,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.jetbrains.annotations.NotNull;
 
+import com.enn3developer.gtnhvoice.core.api.encryption.Encryption;
 import com.enn3developer.gtnhvoice.core.proto.packets.Packet;
 import com.enn3developer.gtnhvoice.core.proto.packets.PacketDirection;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.PacketUdpCodec;
@@ -74,10 +75,10 @@ public final class UdpTransportClient {
         LOGGER.info("UDP transport client connected to {}:{}", host, port);
     }
 
-    public void send(@NotNull Packet<?> packet, @NotNull UUID secret) {
+    public void send(@NotNull Packet<?> packet, @NotNull UUID secret, @NotNull Encryption encryption) {
         if (channel == null) throw new IllegalStateException("Client is not connected");
 
-        byte[] encoded = PacketUdpCodec.encode(packet, secret);
+        byte[] encoded = PacketUdpCodec.encode(packet, secret, encryption);
         if (encoded == null) return;
 
         ByteBuf buf = Unpooled.wrappedBuffer(encoded);

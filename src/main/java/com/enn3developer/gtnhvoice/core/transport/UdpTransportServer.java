@@ -5,14 +5,20 @@
 package com.enn3developer.gtnhvoice.core.transport;
 
 import java.net.InetSocketAddress;
+import java.util.UUID;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.jetbrains.annotations.NotNull;
 
+import com.enn3developer.gtnhvoice.core.api.encryption.Encryption;
+import com.enn3developer.gtnhvoice.core.proto.packets.Packet;
 import com.enn3developer.gtnhvoice.core.proto.packets.PacketDirection;
+import com.enn3developer.gtnhvoice.core.proto.packets.udp.PacketUdpCodec;
 
 import io.netty.bootstrap.Bootstrap;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
@@ -21,6 +27,7 @@ import io.netty.channel.ChannelPipeline;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.socket.DatagramPacket;
 import io.netty.channel.socket.nio.NioDatagramChannel;
 
 /**
@@ -70,6 +77,22 @@ public final class UdpTransportServer {
         LOGGER.info("UDP transport server bound on {}", boundAddress);
 
         return boundAddress;
+    }
+
+    /**
+     * Sends a packet to an explicit recipient address. Unlike {@code UdpTransportClient}, the
+     * server has no single "remote" - every send targets whichever client last identified itself
+     * over this session's secret.
+     */
+    public void send(@NotNull Packet<?> packet, @NotNull UUID secret, @NotNull Encryption encryption,
+        @NotNull InetSocketAddress recipient) {
+        if (channel == null) throw new IllegalStateException("Server is not bound");
+
+        byte[] encoded = PacketUdpCodec.encode(packet, secret, encryption);
+        if (encoded == null) return;
+
+        ByteBuf buf = Unpooled.wrappedBuffer(encoded);
+        channel.writeAndFlush(new DatagramPacket(buf, recipient));
     }
 
     public void close() {

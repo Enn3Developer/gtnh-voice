@@ -15,7 +15,10 @@ import com.enn3developer.gtnhvoice.core.proto.packets.PacketUtil;
 public final class VoiceProtocol {
 
     public static final String CHANNEL = "gtnhvoice";
-    public static final byte PROTOCOL_VERSION = 1;
+    // v2: SourceAudioPacket now carries the speaker's absolute position (x,y,z) instead of a
+    // scalar distance, so a mismatched client/server pair must fail the handshake cleanly rather
+    // than misreading UDP audio packet bytes.
+    public static final byte PROTOCOL_VERSION = 2;
 
     public static final byte REASON_VERSION_MISMATCH = 0;
 

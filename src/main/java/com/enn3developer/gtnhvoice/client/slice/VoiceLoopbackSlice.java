@@ -11,11 +11,13 @@ import com.enn3developer.gtnhvoice.client.playback.PlaybackManager;
 import com.enn3developer.gtnhvoice.core.api.audio.codec.CodecException;
 import com.enn3developer.gtnhvoice.core.audio.codec.opus.JavaOpusDecoder;
 import com.enn3developer.gtnhvoice.core.audio.codec.opus.JavaOpusEncoder;
+import com.enn3developer.gtnhvoice.core.encryption.aes.AesEncryption;
 import com.enn3developer.gtnhvoice.core.proto.data.audio.codec.opus.OpusMode;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.serverbound.PlayerAudioPacket;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.serverbound.ServerPacketUdpHandler;
 import com.enn3developer.gtnhvoice.core.transport.UdpTransportClient;
 import com.enn3developer.gtnhvoice.core.transport.UdpTransportServer;
+import com.enn3developer.gtnhvoice.network.VoiceProtocol;
 
 /**
  * DEV/VALIDATION HARNESS - NOT a real feature. Wires the full local vertical slice end-to-end so it can be proven
@@ -36,6 +38,7 @@ public class VoiceLoopbackSlice {
 
     private final UUID secret = UUID.randomUUID();
     private final UUID activationId = UUID.randomUUID();
+    private final AesEncryption encryption = new AesEncryption(VoiceProtocol.deriveKey(secret));
 
     private CaptureManager captureManager;
     private JavaOpusEncoder encoder;
@@ -93,6 +96,7 @@ public class VoiceLoopbackSlice {
                 encoder,
                 client,
                 secret,
+                encryption,
                 activationId);
             encodeSendWorker.start();
 
@@ -163,7 +167,7 @@ public class VoiceLoopbackSlice {
     private void onServerPacket(com.enn3developer.gtnhvoice.core.proto.packets.udp.PacketUdp packetUdp,
         InetSocketAddress sender) {
         try {
-            Object packet = packetUdp.<ServerPacketUdpHandler>getPacket();
+            Object packet = packetUdp.<ServerPacketUdpHandler>getPacket(encryption);
             if (!(packet instanceof PlayerAudioPacket)) return;
 
             PlayerAudioPacket audioPacket = (PlayerAudioPacket) packet;

@@ -20,16 +20,20 @@ public final class SourceAudioPacket extends BaseAudioPacket<ClientPacketUdpHand
 
     private UUID sourceId;
     private byte sourceState;
-    private short distance;
+    private double x;
+    private double y;
+    private double z;
 
     public SourceAudioPacket() {}
 
-    public SourceAudioPacket(long sequenceNumber, byte sourceState, byte[] data, @NotNull UUID sourceId,
-        short distance) {
+    public SourceAudioPacket(long sequenceNumber, byte sourceState, byte[] data, @NotNull UUID sourceId, double x,
+        double y, double z) {
         super(sequenceNumber, data);
         this.sourceId = sourceId;
         this.sourceState = sourceState;
-        this.distance = distance;
+        this.x = x;
+        this.y = y;
+        this.z = z;
     }
 
     public UUID getSourceId() {
@@ -44,12 +48,16 @@ public final class SourceAudioPacket extends BaseAudioPacket<ClientPacketUdpHand
         this.sourceState = sourceState;
     }
 
-    public short getDistance() {
-        return distance;
+    public double getX() {
+        return x;
     }
 
-    public void setDistance(short distance) {
-        this.distance = distance;
+    public double getY() {
+        return y;
+    }
+
+    public double getZ() {
+        return z;
     }
 
     @Override
@@ -58,7 +66,9 @@ public final class SourceAudioPacket extends BaseAudioPacket<ClientPacketUdpHand
 
         this.sourceId = PacketUtil.readUUID(in);
         this.sourceState = in.readByte();
-        this.distance = in.readShort();
+        this.x = in.readDouble();
+        this.y = in.readDouble();
+        this.z = in.readDouble();
     }
 
     @Override
@@ -67,7 +77,9 @@ public final class SourceAudioPacket extends BaseAudioPacket<ClientPacketUdpHand
 
         PacketUtil.writeUUID(out, checkNotNull(sourceId, "sourceId"));
         out.writeByte(sourceState);
-        out.writeShort(distance);
+        out.writeDouble(x);
+        out.writeDouble(y);
+        out.writeDouble(z);
     }
 
     @Override
@@ -80,8 +92,12 @@ public final class SourceAudioPacket extends BaseAudioPacket<ClientPacketUdpHand
         return "SourceAudioPacket(sourceId=" + sourceId
             + ", sourceState="
             + sourceState
-            + ", distance="
-            + distance
+            + ", x="
+            + x
+            + ", y="
+            + y
+            + ", z="
+            + z
             + ", "
             + super.toString()
             + ")";

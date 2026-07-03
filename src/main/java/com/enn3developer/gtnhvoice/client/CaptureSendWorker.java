@@ -1,4 +1,4 @@
-package com.enn3developer.gtnhvoice.client.slice;
+package com.enn3developer.gtnhvoice.client;
 
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
@@ -13,14 +13,16 @@ import com.enn3developer.gtnhvoice.core.proto.packets.udp.serverbound.PlayerAudi
 import com.enn3developer.gtnhvoice.core.transport.UdpTransportClient;
 
 /**
- * Dev-slice worker thread: drains captured mic frames off a queue, Opus-encodes them, and sends each as a
- * {@link PlayerAudioPacket} over the real UDP transport. Reuses the existing capture hand-off queue rather than
- * duplicating capture.
+ * Drains {@link com.enn3developer.gtnhvoice.client.capture.CaptureManager}'s frame queue for the
+ * lifetime of a voice session, Opus-encodes each frame, and sends it as a {@link
+ * PlayerAudioPacket} over the session's real UDP link. Runs continuously once a session is
+ * connected regardless of whether the capture keybind is currently on - if nothing is being
+ * captured, the queue is simply empty and this thread idles.
  */
-final class EncodeSendWorker extends Thread {
+final class CaptureSendWorker extends Thread {
 
     private static final short DISTANCE = 0;
-    private static final long LOG_INTERVAL_MILLIS = 500L;
+    private static final long LOG_INTERVAL_MILLIS = 5000L;
 
     private final BlockingQueue<short[]> captureFrameQueue;
     private final AudioEncoder encoder;
@@ -31,9 +33,9 @@ final class EncodeSendWorker extends Thread {
 
     private volatile boolean running = true;
 
-    EncodeSendWorker(BlockingQueue<short[]> captureFrameQueue, AudioEncoder encoder, UdpTransportClient client,
+    CaptureSendWorker(BlockingQueue<short[]> captureFrameQueue, AudioEncoder encoder, UdpTransportClient client,
         UUID secret, Encryption encryption, UUID activationId) {
-        super("gtnhvoice-slice-encode-send");
+        super("gtnhvoice-capture-send");
         this.captureFrameQueue = captureFrameQueue;
         this.encoder = encoder;
         this.client = client;
@@ -51,8 +53,8 @@ final class EncodeSendWorker extends Thread {
     @Override
     public void run() {
         AtomicLong sequenceNumber = new AtomicLong();
-        long framesEncoded = 0;
         long framesSent = 0;
+        long lastLoggedFramesSent = 0;
         long lastLogTime = System.currentTimeMillis();
 
         while (running) {
@@ -66,7 +68,6 @@ final class EncodeSendWorker extends Thread {
             if (frame != null) {
                 try {
                     byte[] encoded = encoder.encode(frame);
-                    framesEncoded++;
 
                     PlayerAudioPacket packet = new PlayerAudioPacket(
                         sequenceNumber.getAndIncrement(),
@@ -77,13 +78,16 @@ final class EncodeSendWorker extends Thread {
                     client.send(packet, secret, encryption);
                     framesSent++;
                 } catch (CodecException e) {
-                    GtnhVoice.LOG.error("[Slice] Failed to encode captured frame", e);
+                    GtnhVoice.LOG.error("[Voice] Failed to encode captured frame", e);
                 }
             }
 
             long now = System.currentTimeMillis();
             if (now - lastLogTime >= LOG_INTERVAL_MILLIS) {
-                GtnhVoice.LOG.info("[Slice] framesEncoded={} framesSent={}", framesEncoded, framesSent);
+                if (framesSent != lastLoggedFramesSent) {
+                    GtnhVoice.LOG.info("[Voice] framesSent={}", framesSent);
+                    lastLoggedFramesSent = framesSent;
+                }
                 lastLogTime = now;
             }
         }

@@ -15,6 +15,7 @@ public class Config {
     // Server-authoritative voice session config, sent to clients in ServerHelloPacket.
     public static int udpPort = 25566;
     public static int distance = 48;
+    public static int maxDistance = 128;
     public static String opusMode = OpusMode.VOIP.name();
     public static int frameSize = 960;
     public static int sampleRate = 48_000;
@@ -40,7 +41,14 @@ public class Config {
             distance,
             1,
             512,
-            "Proximity voice distance in blocks. Not yet used for audio routing.");
+            "Proximity voice distance in blocks. Sent to clients; also used server-side for audio routing.");
+        maxDistance = configuration.getInt(
+            "maxDistance",
+            CATEGORY_VOICE,
+            maxDistance,
+            1,
+            1024,
+            "Hard server-side proximity cutoff in blocks, independent of 'distance'. Audio routing uses min(distance, maxDistance) as the effective range, so this caps how far voice can ever travel even if 'distance' is misconfigured high.");
         opusMode = configuration
             .getString("opusMode", CATEGORY_VOICE, opusMode, "Opus encoder mode: VOIP, AUDIO, or RESTRICTED_LOWDELAY.");
         frameSize = configuration

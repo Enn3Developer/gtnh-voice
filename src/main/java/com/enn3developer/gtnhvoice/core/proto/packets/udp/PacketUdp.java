@@ -9,9 +9,11 @@ import java.util.UUID;
 
 import org.jetbrains.annotations.NotNull;
 
+import com.enn3developer.gtnhvoice.core.api.encryption.Encryption;
+import com.enn3developer.gtnhvoice.core.api.encryption.EncryptionException;
 import com.enn3developer.gtnhvoice.core.proto.packets.Packet;
 import com.enn3developer.gtnhvoice.core.proto.packets.PacketHandler;
-import com.google.common.io.ByteArrayDataInput;
+import com.google.common.io.ByteStreams;
 
 public class PacketUdp {
 
@@ -19,15 +21,14 @@ public class PacketUdp {
     private final long timestamp;
     private final Packet<?> packet;
 
-    private ByteArrayDataInput input;
+    private byte[] encryptedBody;
     private boolean read;
 
-    public PacketUdp(@NotNull UUID secret, long timestamp, @NotNull Packet<?> packet,
-        @NotNull ByteArrayDataInput input) {
+    public PacketUdp(@NotNull UUID secret, long timestamp, @NotNull Packet<?> packet, @NotNull byte[] encryptedBody) {
         this.secret = secret;
         this.timestamp = timestamp;
         this.packet = packet;
-        this.input = input;
+        this.encryptedBody = encryptedBody;
     }
 
     public PacketUdp(@NotNull UUID secret, long timestamp, @NotNull Packet<?> packet) {
@@ -45,33 +46,41 @@ public class PacketUdp {
         return timestamp;
     }
 
-    public ByteArrayDataInput getInput() {
-        return input;
-    }
-
     public boolean isRead() {
         return read;
     }
 
-    public Packet<?> getPacketUntyped() throws IOException {
-        if (!read) readPacket();
+    public Packet<?> getPacketUntyped(@NotNull Encryption encryption) throws IOException {
+        if (!read) readPacket(encryption);
 
         return packet;
     }
 
     @SuppressWarnings("unchecked")
-    public <T extends PacketHandler> Packet<T> getPacket() throws IOException {
-        if (!read) readPacket();
+    public <T extends PacketHandler> Packet<T> getPacket(@NotNull Encryption encryption) throws IOException {
+        if (!read) readPacket(encryption);
 
         return (Packet<T>) packet;
     }
 
-    private synchronized void readPacket() throws IOException {
-        if (input == null) return;
+    /**
+     * Decrypts the packet body with the caller-supplied {@link Encryption} and reads the packet
+     * fields from it. The key is not known at decode time - only once the sender's secret has been
+     * resolved to a session (and thus a key) by the caller - so decryption is deferred to here.
+     */
+    private synchronized void readPacket(@NotNull Encryption encryption) throws IOException {
+        if (encryptedBody == null) return;
+
+        byte[] decrypted;
+        try {
+            decrypted = encryption.decrypt(encryptedBody);
+        } catch (EncryptionException e) {
+            throw new IOException("Failed to decrypt UDP packet body", e);
+        }
 
         this.read = true;
-        packet.read(input);
-        this.input = null;
+        packet.read(ByteStreams.newDataInput(decrypted));
+        this.encryptedBody = null;
     }
 
     @Override

@@ -16,10 +16,12 @@ import org.junit.jupiter.api.Test;
 import com.enn3developer.gtnhvoice.core.api.util.AudioUtil;
 import com.enn3developer.gtnhvoice.core.audio.codec.opus.JavaOpusDecoder;
 import com.enn3developer.gtnhvoice.core.audio.codec.opus.JavaOpusEncoder;
+import com.enn3developer.gtnhvoice.core.encryption.aes.AesEncryption;
 import com.enn3developer.gtnhvoice.core.proto.data.audio.codec.opus.OpusMode;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.PacketUdp;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.serverbound.PlayerAudioPacket;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.serverbound.ServerPacketUdpHandler;
+import com.enn3developer.gtnhvoice.network.VoiceProtocol;
 
 /**
  * Loopback proof that the MC-independent UDP transport actually moves bytes: encodes real
@@ -44,6 +46,7 @@ class UdpTransportLoopbackTest {
         }
 
         UUID secret = UUID.randomUUID();
+        AesEncryption encryption = new AesEncryption(VoiceProtocol.deriveKey(secret));
         UUID activationId = UUID.randomUUID();
         long sequenceNumber = 42L;
         short distance = 16;
@@ -57,14 +60,15 @@ class UdpTransportLoopbackTest {
             InetSocketAddress serverAddress = server.bind("127.0.0.1", 0);
             client.connect(serverAddress.getHostString(), serverAddress.getPort());
 
-            client.send(sentPacket, secret);
+            client.send(sentPacket, secret, encryption);
 
             PacketUdp receivedPacket = received.poll(5, TimeUnit.SECONDS);
             if (receivedPacket == null) fail("Server did not receive the packet within the timeout");
 
             assertEquals(secret, receivedPacket.getSecret());
 
-            PlayerAudioPacket decodedPacket = (PlayerAudioPacket) receivedPacket.<ServerPacketUdpHandler>getPacket();
+            PlayerAudioPacket decodedPacket = (PlayerAudioPacket) receivedPacket
+                .<ServerPacketUdpHandler>getPacket(encryption);
             assertEquals(sequenceNumber, decodedPacket.getSequenceNumber());
             assertEquals(activationId, decodedPacket.getActivationId());
             assertEquals(distance, decodedPacket.getDistance());

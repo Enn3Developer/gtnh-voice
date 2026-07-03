@@ -13,4 +13,6 @@ public interface ClientPacketUdpHandler extends PacketUdpHandler {
     void handle(@NotNull SourceAudioPacket packet);
 
     void handle(@NotNull SelfAudioInfoPacket packet);
+
+    void handle(@NotNull SourceEndPacket packet);
 }

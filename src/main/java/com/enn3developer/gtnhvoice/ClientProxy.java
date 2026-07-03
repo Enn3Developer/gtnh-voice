@@ -2,6 +2,7 @@ package com.enn3developer.gtnhvoice;
 
 import com.enn3developer.gtnhvoice.client.CaptureKeybindHandler;
 import com.enn3developer.gtnhvoice.client.ClientConnectionEventHandler;
+import com.enn3developer.gtnhvoice.client.VoiceClientManager;
 import com.enn3developer.gtnhvoice.client.slice.LoopbackSliceKeybindHandler;
 
 import cpw.mods.fml.common.event.FMLPreInitializationEvent;
@@ -19,5 +20,8 @@ public class ClientProxy extends CommonProxy {
         captureKeybindHandler.register();
         loopbackSliceKeybindHandler.register();
         clientConnectionEventHandler.register();
+
+        VoiceClientManager.getInstance()
+            .bindCaptureManager(captureKeybindHandler.getCaptureManager());
     }
 }
