@@ -155,19 +155,13 @@ public class CaptureThread extends Thread {
     }
 
     private static String alcErrorToString(int error) {
-        switch (error) {
-            case ALC10.ALC_INVALID_DEVICE:
-                return "ALC_INVALID_DEVICE";
-            case ALC10.ALC_INVALID_CONTEXT:
-                return "ALC_INVALID_CONTEXT";
-            case ALC10.ALC_INVALID_ENUM:
-                return "ALC_INVALID_ENUM";
-            case ALC10.ALC_INVALID_VALUE:
-                return "ALC_INVALID_VALUE";
-            case ALC10.ALC_OUT_OF_MEMORY:
-                return "ALC_OUT_OF_MEMORY";
-            default:
-                return "unknown error code " + error;
-        }
+        return switch (error) {
+            case ALC10.ALC_INVALID_DEVICE -> "ALC_INVALID_DEVICE";
+            case ALC10.ALC_INVALID_CONTEXT -> "ALC_INVALID_CONTEXT";
+            case ALC10.ALC_INVALID_ENUM -> "ALC_INVALID_ENUM";
+            case ALC10.ALC_INVALID_VALUE -> "ALC_INVALID_VALUE";
+            case ALC10.ALC_OUT_OF_MEMORY -> "ALC_OUT_OF_MEMORY";
+            default -> "unknown error code " + error;
+        };
     }
 }

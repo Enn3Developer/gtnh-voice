@@ -17,7 +17,7 @@ import com.enn3developer.gtnhvoice.core.audio.codec.opus.JavaOpusDecoder;
  * <p>
  * Created lazily by {@link VoiceSourceManager} on the first {@code SourceAudioPacket} seen for a given sourceId,
  * which stays stable for the speaker's whole session. Two distinct lifecycle events, both driven by the manager:
- * {@link #resetSegment()} on a short inactivity timeout (speaker paused, still connected - keeps this object but
+ * {@link #segmentActive} on a short inactivity timeout (speaker paused, still connected - keeps this object but
  * clears its decode/jitter/AL state so the next segment starts clean) and {@link #destroy()} on
  * {@code SourceEndPacket} (speaker disconnected - tears everything down for good).
  */
@@ -41,10 +41,10 @@ final class VoiceSource {
         this.jitterBuffer = new SimpleJitterBuffer(frame -> playbackManager.submit(sourceId, frame));
     }
 
-    void create() throws CodecException {
+    void create(int distance) throws CodecException {
         decoder.open();
         jitterBuffer.start();
-        playbackManager.createSource(sourceId);
+        playbackManager.createSource(sourceId, distance);
 
         lastPacketMillis = System.currentTimeMillis();
         segmentActive = true;

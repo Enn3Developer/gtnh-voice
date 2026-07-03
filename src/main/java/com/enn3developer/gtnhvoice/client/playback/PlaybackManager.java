@@ -64,14 +64,14 @@ public class PlaybackManager {
      * Lazily registers a new positioned AL source for {@code sourceId}. Safe to call multiple times; only the first
      * call for a given id has any effect.
      */
-    public void createSource(UUID sourceId) {
+    public void createSource(UUID sourceId, int distance) {
         if (!isPlaying()) return;
 
         BlockingQueue<short[]> queue = frameQueues
             .computeIfAbsent(sourceId, id -> new ArrayBlockingQueue<>(QUEUE_CAPACITY));
         positions.putIfAbsent(sourceId, new double[] { 0, 0, 0 });
 
-        playbackThread.enqueueCommand(() -> playbackThread.createSourceChannel(sourceId, queue));
+        playbackThread.enqueueCommand(() -> playbackThread.createSourceChannel(sourceId, queue, distance));
     }
 
     /**
@@ -101,7 +101,7 @@ public class PlaybackManager {
     /**
      * Submits a decoded 960-sample mono PCM frame for {@code sourceId}. Drops the oldest queued frame if that
      * source's queue is full, to keep playback latency bounded rather than growing unboundedly under sustained
-     * overload. No-op if the source hasn't been registered via {@link #createSource}.
+     * overload. No-op if the source hasn't been registered via {@link #createSource(UUID, int)}.
      */
     public void submit(UUID sourceId, short[] frame) {
         BlockingQueue<short[]> queue = frameQueues.get(sourceId);

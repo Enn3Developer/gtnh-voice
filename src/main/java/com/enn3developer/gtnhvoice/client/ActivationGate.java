@@ -44,8 +44,7 @@ public class ActivationGate {
 
     /**
      * Whether the client currently considers itself to be transmitting/speaking, per the active
-     * activation mode. Updated by {@link #shouldTransmit(short[])}; safe to poll from any thread. This
-     * is the hook a future speaking-indicator HUD would read.
+     * activation mode. Updated by {@link #shouldTransmit(short[])}; safe to poll from any thread.
      */
     public boolean isSpeaking() {
         return speaking;

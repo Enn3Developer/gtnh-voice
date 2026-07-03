@@ -19,7 +19,6 @@ import org.lwjgl.openal.ALCapabilities;
 import org.lwjgl.openal.EXTThreadLocalContext;
 import org.lwjgl.system.MemoryUtil;
 
-import com.enn3developer.gtnhvoice.Config;
 import com.enn3developer.gtnhvoice.GtnhVoice;
 
 import me.eigenraven.lwjgl3ify.api.Lwjgl3Aware;
@@ -201,25 +200,24 @@ public class PlaybackThread extends Thread {
 
     private void applyListenerSnapshot() {
         ListenerSnapshot snapshot = manager.currentListenerSnapshot();
-        AL10.alListener3f(AL10.AL_POSITION, (float) snapshot.x, (float) snapshot.y, (float) snapshot.z);
+        AL10.alListener3f(AL10.AL_POSITION, (float) snapshot.x(), (float) snapshot.y(), (float) snapshot.z());
         AL10.alListenerfv(
             AL10.AL_ORIENTATION,
-            new float[] { snapshot.lookX, snapshot.lookY, snapshot.lookZ, 0f, 1f, 0f });
+            new float[] { snapshot.lookX(), snapshot.lookY(), snapshot.lookZ(), 0f, 1f, 0f });
     }
 
     /**
      * Runs on this thread only (queued via {@link #enqueueCommand}): allocates a positioned AL source + buffer pool
      * for a newly seen {@code sourceId}. No-op if one already exists.
      */
-    void createSourceChannel(UUID sourceId, BlockingQueue<short[]> frameQueue) {
+    void createSourceChannel(UUID sourceId, BlockingQueue<short[]> frameQueue, int distance) {
         if (sourceChannels.containsKey(sourceId)) return;
 
         int source = AL10.alGenSources();
         if (!checkAlError("alGenSources")) return;
 
-        int effectiveDistance = Math.min(Config.distance, Config.maxDistance);
         AL10.alSourcef(source, AL10.AL_REFERENCE_DISTANCE, REFERENCE_DISTANCE);
-        AL10.alSourcef(source, AL10.AL_MAX_DISTANCE, effectiveDistance);
+        AL10.alSourcef(source, AL10.AL_MAX_DISTANCE, distance);
         AL10.alSourcef(source, AL10.AL_ROLLOFF_FACTOR, ROLLOFF_FACTOR);
 
         int[] bufferIds = new int[BUFFER_POOL_SIZE];

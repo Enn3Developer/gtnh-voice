@@ -11,8 +11,6 @@ import cpw.mods.fml.common.event.FMLPreInitializationEvent;
 
 public class ClientProxy extends CommonProxy {
 
-    // Lifecycle (start/stop) is owned by VoiceClientManager, tied to the voice session's connection state -
-    // no manual toggle keybind. What actually gets transmitted is gated by ActivationGate (VA/PTT).
     private final CaptureManager captureManager = new CaptureManager();
     private final ActivationGate activationGate = new ActivationGate();
     private final LoopbackSliceKeybindHandler loopbackSliceKeybindHandler = new LoopbackSliceKeybindHandler();

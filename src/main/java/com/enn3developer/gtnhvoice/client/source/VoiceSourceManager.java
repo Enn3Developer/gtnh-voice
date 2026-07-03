@@ -73,8 +73,8 @@ public final class VoiceSourceManager {
         GtnhVoice.LOG.info("[VoiceSource] Manager stopped");
     }
 
-    public void onSourceAudio(@NotNull SourceAudioPacket packet) {
-        VoiceSource source = sources.computeIfAbsent(packet.getSourceId(), this::createSource);
+    public void onSourceAudio(@NotNull SourceAudioPacket packet, int distance) {
+        VoiceSource source = sources.computeIfAbsent(packet.getSourceId(), uuid -> createSource(uuid, distance));
         if (source == null) return; // creation failed, already logged
 
         source.handleAudio(packet.getData(), packet.getX(), packet.getY(), packet.getZ());
@@ -93,10 +93,10 @@ public final class VoiceSourceManager {
         playbackManager.updateListener(x, y, z, lookX, lookY, lookZ);
     }
 
-    private VoiceSource createSource(UUID sourceId) {
+    private VoiceSource createSource(UUID sourceId, int distance) {
         VoiceSource source = new VoiceSource(sourceId, playbackManager);
         try {
-            source.create();
+            source.create(distance);
         } catch (CodecException e) {
             GtnhVoice.LOG.error("[VoiceSource] Failed to open decoder for sourceId={}", sourceId, e);
             return null;

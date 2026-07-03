@@ -10,8 +10,6 @@ public class Config {
 
     private static final String CATEGORY_VOICE = "voice";
 
-    public static String greeting = "Hello World";
-
     // Server-authoritative voice session config, sent to clients in ServerHelloPacket.
     public static int udpPort = 25566;
     public static int distance = 48;
@@ -36,8 +34,6 @@ public class Config {
 
     public static void synchronizeConfiguration(File configFile) {
         Configuration configuration = new Configuration(configFile);
-
-        greeting = configuration.getString("greeting", Configuration.CATEGORY_GENERAL, greeting, "How shall I greet?");
 
         udpPort = configuration.getInt(
             "udpPort",

@@ -334,7 +334,7 @@ public final class VoiceClientManager {
         try {
             Packet<?> packet = packetUdp.getPacketUntyped(currentSession.getEncryption());
             if (packet instanceof SourceAudioPacket) {
-                sourceManager.onSourceAudio((SourceAudioPacket) packet);
+                sourceManager.onSourceAudio((SourceAudioPacket) packet, session.getDistance());
             } else if (packet instanceof SourceEndPacket) {
                 sourceManager.onSourceEnd((SourceEndPacket) packet);
             }

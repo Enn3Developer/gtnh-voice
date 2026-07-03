@@ -8,8 +8,7 @@ import com.enn3developer.gtnhvoice.GtnhVoice;
 /**
  * Owns the lifecycle of the {@link CaptureThread} and the frame hand-off queue. In production, {@code
  * VoiceClientManager} calls {@link #start()}/{@link #stop()} for the lifetime of a voice session -
- * nothing touches OpenAL before a session connects. {@link #toggle()} exists for the dev/validation
- * loopback harness ({@code VoiceLoopbackSlice}), which owns its own standalone instance.
+ * nothing touches OpenAL before a session connects.
  */
 public class CaptureManager {
 
@@ -28,14 +27,6 @@ public class CaptureManager {
 
     public boolean isCapturing() {
         return captureThread != null && captureThread.isAlive();
-    }
-
-    public void toggle() {
-        if (isCapturing()) {
-            stop();
-        } else {
-            start();
-        }
     }
 
     public void start() {

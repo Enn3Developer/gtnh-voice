@@ -16,25 +16,24 @@ public class CommonProxy {
     public void preInit(FMLPreInitializationEvent event) {
         Config.synchronizeConfiguration(event.getSuggestedConfigurationFile());
 
-        GtnhVoice.LOG.info(Config.greeting);
         GtnhVoice.LOG.info("I am GTNH Voice at version " + Tags.VERSION);
 
         NetworkHandler.init();
     }
 
     // load "Do your mod setup. Build whatever data structures you care about. Register recipes." (Remove if not needed)
-    public void init(FMLInitializationEvent event) {}
+    public void init(FMLInitializationEvent ignoredEvent) {}
 
     // postInit "Handle interaction with other mods, complete your setup based on this." (Remove if not needed)
-    public void postInit(FMLPostInitializationEvent event) {}
+    public void postInit(FMLPostInitializationEvent ignoredEvent) {}
 
     // register server commands in this event handler (Remove if not needed)
-    public void serverStarting(FMLServerStartingEvent event) {
+    public void serverStarting(FMLServerStartingEvent ignoredEvent) {
         VoiceServerManager.getInstance()
             .start();
     }
 
-    public void serverStopping(FMLServerStoppingEvent event) {
+    public void serverStopping(FMLServerStoppingEvent ignoredEvent) {
         VoiceServerManager.getInstance()
             .stop();
     }
