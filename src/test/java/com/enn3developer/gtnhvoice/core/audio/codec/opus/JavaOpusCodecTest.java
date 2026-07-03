@@ -22,7 +22,8 @@ class JavaOpusCodecTest {
     void encodeDecodeRoundTripProducesPlausibleAudio() throws Exception {
         short[] sineSamples = generateSine(FRAME_SIZE, SAMPLE_RATE, 440.0);
 
-        try (JavaOpusEncoder encoder = new JavaOpusEncoder(SAMPLE_RATE, false, OpusMode.VOIP, MTU_SIZE); JavaOpusDecoder decoder = new JavaOpusDecoder(SAMPLE_RATE, false, FRAME_SIZE)) {
+        try (JavaOpusEncoder encoder = new JavaOpusEncoder(SAMPLE_RATE, false, OpusMode.VOIP, MTU_SIZE);
+            JavaOpusDecoder decoder = new JavaOpusDecoder(SAMPLE_RATE, false, FRAME_SIZE)) {
             encoder.open();
             decoder.open();
 
