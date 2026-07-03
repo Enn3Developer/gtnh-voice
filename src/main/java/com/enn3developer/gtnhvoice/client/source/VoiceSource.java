@@ -6,8 +6,9 @@ import org.jetbrains.annotations.NotNull;
 
 import com.enn3developer.gtnhvoice.GtnhVoice;
 import com.enn3developer.gtnhvoice.client.playback.PlaybackManager;
+import com.enn3developer.gtnhvoice.core.api.audio.codec.AudioDecoder;
 import com.enn3developer.gtnhvoice.core.api.audio.codec.CodecException;
-import com.enn3developer.gtnhvoice.core.audio.codec.opus.JavaOpusDecoder;
+import com.enn3developer.gtnhvoice.core.audio.codec.opus.OpusCodecSupplier;
 import com.enn3developer.gtnhvoice.core.audio.jitter.AdaptiveJitterBuffer;
 
 /**
@@ -35,9 +36,9 @@ final class VoiceSource {
 
     private final UUID sourceId;
     private final PlaybackManager playbackManager;
-    private final JavaOpusDecoder decoder;
     private final AdaptiveJitterBuffer jitterBuffer;
 
+    private AudioDecoder decoder;
     private volatile long lastPacketMillis;
     private volatile boolean segmentActive;
     private volatile boolean running;
@@ -46,12 +47,11 @@ final class VoiceSource {
     VoiceSource(@NotNull UUID sourceId, @NotNull PlaybackManager playbackManager) {
         this.sourceId = sourceId;
         this.playbackManager = playbackManager;
-        this.decoder = new JavaOpusDecoder(SAMPLE_RATE, false, FRAME_SIZE);
         this.jitterBuffer = new AdaptiveJitterBuffer(System::currentTimeMillis, JITTER_PACKET_DELAY_FRAMES);
     }
 
     void create(int distance) throws CodecException {
-        decoder.open();
+        decoder = OpusCodecSupplier.createDecoder(SAMPLE_RATE, false, FRAME_SIZE);
 
         running = true;
         pollerThread = new Thread(this::runPoller, "gtnhvoice-jitterbuffer-" + sourceId);

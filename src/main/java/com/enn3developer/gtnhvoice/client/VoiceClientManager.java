@@ -16,8 +16,11 @@ import com.enn3developer.gtnhvoice.GtnhVoice;
 import com.enn3developer.gtnhvoice.Tags;
 import com.enn3developer.gtnhvoice.client.capture.CaptureManager;
 import com.enn3developer.gtnhvoice.client.source.VoiceSourceManager;
+import com.enn3developer.gtnhvoice.core.api.audio.codec.AudioEncoder;
 import com.enn3developer.gtnhvoice.core.api.audio.codec.CodecException;
-import com.enn3developer.gtnhvoice.core.audio.codec.opus.JavaOpusEncoder;
+import com.enn3developer.gtnhvoice.core.audio.codec.opus.OpusCodecSupplier;
+import com.enn3developer.gtnhvoice.core.audio.filter.rnnoise.NoiseSuppressionFilter;
+import com.enn3developer.gtnhvoice.core.audio.filter.rnnoise.NoiseSuppressionFilterSupplier;
 import com.enn3developer.gtnhvoice.core.encryption.aes.AesEncryption;
 import com.enn3developer.gtnhvoice.core.proto.data.audio.codec.opus.OpusMode;
 import com.enn3developer.gtnhvoice.core.proto.packets.Packet;
@@ -67,7 +70,8 @@ public final class VoiceClientManager {
 
     private volatile CaptureManager captureManager;
     private volatile ActivationGate activationGate;
-    private JavaOpusEncoder captureEncoder;
+    private AudioEncoder captureEncoder;
+    private NoiseSuppressionFilter noiseSuppressionFilter;
     private CaptureSendWorker captureSendWorker;
     private volatile VoiceSourceManager voiceSourceManager;
 
@@ -360,12 +364,14 @@ public final class VoiceClientManager {
         OpusMode opusMode = modes[opusModeOrdinal >= 0 && opusModeOrdinal < modes.length ? opusModeOrdinal : 0];
 
         try {
-            captureEncoder = new JavaOpusEncoder(sampleRate, false, opusMode, OPUS_MTU_SIZE);
-            captureEncoder.open();
+            captureEncoder = OpusCodecSupplier.createEncoder(sampleRate, false, opusMode, OPUS_MTU_SIZE);
+            noiseSuppressionFilter = NoiseSuppressionFilterSupplier.create(Config.denoiseEnabled)
+                .orElse(null);
 
             captureSendWorker = new CaptureSendWorker(
                 manager.getFrameQueue(),
                 captureEncoder,
+                noiseSuppressionFilter,
                 udpClient,
                 secret,
                 encryption,
@@ -397,6 +403,11 @@ public final class VoiceClientManager {
         if (captureEncoder != null) {
             captureEncoder.close();
             captureEncoder = null;
+        }
+
+        if (noiseSuppressionFilter != null) {
+            noiseSuppressionFilter.close();
+            noiseSuppressionFilter = null;
         }
 
         if (voiceSourceManager != null) {

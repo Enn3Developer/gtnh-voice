@@ -72,6 +72,22 @@ dependencies {
     // runtime.
     implementation("com.github.lostromb.concentus:Concentus:3885c4e")
 
+    // Plasmo's native JNI Opus binding (see NativeOpusEncoder/NativeOpusDecoder), used as an
+    // optional acceleration over the pure-Java Concentus codec above via OpusCodecSupplier, which
+    // falls back to Concentus whenever the native library isn't available/loadable (untested
+    // platforms, missing native binary, ...). Must actually be bundled in the shipped jar (not
+    // devOnlyNonPublishable) for the native path to ever be reachable outside a Gradle dev run.
+    implementation("com.plasmoverse:opus-jni-rust:1.0.4")
+
+    // Plasmo's native JNI RNNoise binding (see NoiseSuppressionFilter/NoiseSuppressionFilterSupplier),
+    // used for optional capture-side noise suppression. Unlike Opus there is no pure-Java fallback -
+    // if this fails to load, denoising is simply skipped and captured audio is sent unprocessed; voice
+    // itself never depends on it. Must actually be bundled in the shipped jar (implementation, not
+    // devOnlyNonPublishable) for the feature to ever be reachable outside a Gradle dev run.
+    // testImplementation is unnecessary since the java-library plugin's testImplementation already
+    // extends implementation.
+    implementation("com.plasmoverse:rnnoise-jni-rust:1.0.3")
+
     // JUnit 5 for standalone unit tests of MC/slib-free core code (e.g. codec round-trip checks).
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")

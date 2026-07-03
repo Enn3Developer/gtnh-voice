@@ -32,6 +32,12 @@ public class Config {
     public static double vaThresholdDb = -40.0;
     public static int vaHangoverMs = 250;
 
+    // Client-side capture filtering: whether to apply RNNoise noise suppression to captured mic
+    // audio before Opus encoding. Only ever an optional acceleration - if the native RNNoise
+    // library isn't available on this platform, voice keeps working without denoising regardless
+    // of this setting (see NoiseSuppressionFilterSupplier).
+    public static boolean denoiseEnabled = true;
+
     public static void synchronizeConfiguration(File configFile) {
         Configuration configuration = new Configuration(configFile);
 
@@ -86,6 +92,11 @@ public class Config {
             0,
             2000,
             "VOICE_ACTIVATION mode only: milliseconds to keep transmitting after the level drops below vaThresholdDb, so brief pauses between words don't cut off speech.");
+        denoiseEnabled = configuration.getBoolean(
+            "denoiseEnabled",
+            CATEGORY_VOICE,
+            denoiseEnabled,
+            "Apply RNNoise noise suppression to captured mic audio before sending. Only takes effect if the native RNNoise library loads for your platform - voice keeps working without denoising either way. Set to false to disable even when available.");
 
         if (configuration.hasChanged()) {
             configuration.save();
