@@ -46,6 +46,13 @@ dependencies {
     // explicitly here so the core package doesn't rely on an incidental transitive dependency.
     compileOnly("com.google.guava:guava:17.0")
 
+    // Netty is already on the Minecraft/Forge classpath at compile- and run-time (currently
+    // netty-all 4.0.10.Final, used by vanilla networking), declared explicitly here for the same
+    // reason as Guava above: the core UDP transport shouldn't rely on an incidental transitive
+    // dependency, and bundling our own (newer) Netty risks duplicate netty-all classes on the
+    // classpath alongside FML's ASM transforms.
+    compileOnly("io.netty:netty-all:4.0.10.Final")
+
     // Minecraft 1.7.10 does not ship fastutil (added in later MC versions), but the lifted packet registry
     // needs it at runtime, so it's pulled in for real via the slimmed-down "core" artifact.
     implementation("it.unimi.dsi:fastutil-core:8.5.16")
@@ -62,4 +69,10 @@ dependencies {
     // JUnit 5 for standalone unit tests of MC/slib-free core code (e.g. codec round-trip checks).
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+
+    // Guava and Netty are compileOnly above because Minecraft/Forge provide them at real game
+    // runtime, but the plain-JVM test task has no MC classpath to fall back on, so the core UDP
+    // transport/codec tests need them explicitly to actually execute (not just compile).
+    testRuntimeOnly("com.google.guava:guava:17.0")
+    testRuntimeOnly("io.netty:netty-all:4.0.10.Final")
 }
