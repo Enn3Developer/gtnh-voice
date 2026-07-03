@@ -53,4 +53,13 @@ dependencies {
     // Compile-time-only nullability annotations (@NotNull/@Nullable) used throughout the lifted Plasmo Voice
     // code; RetentionPolicy.CLASS, so no runtime jar is required.
     compileOnly("org.jetbrains:annotations:24.1.0")
+
+    // Pure-Java Opus codec (Concentus), fetched from JitPack since it isn't published to Maven Central.
+    // Pinned to the current master HEAD commit (short SHA); MC doesn't ship it, so it must be bundled at
+    // runtime.
+    implementation("com.github.lostromb.concentus:Concentus:3885c4e")
+
+    // JUnit 5 for standalone unit tests of MC/slib-free core code (e.g. codec round-trip checks).
+    testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
