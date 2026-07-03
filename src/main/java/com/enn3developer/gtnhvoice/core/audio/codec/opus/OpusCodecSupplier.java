@@ -75,9 +75,8 @@ public final class OpusCodecSupplier {
             } catch (Exception | LinkageError e) {
                 NATIVES_FAILED.set(true);
                 nativeFailedThisCall = true;
-                LOGGER.warn(
-                    "Failed to load native Opus codec, falling back to pure-Java (Concentus) implementation",
-                    e);
+                LOGGER
+                    .warn("Failed to load native Opus codec, falling back to pure-Java (Concentus) implementation", e);
             }
         }
 

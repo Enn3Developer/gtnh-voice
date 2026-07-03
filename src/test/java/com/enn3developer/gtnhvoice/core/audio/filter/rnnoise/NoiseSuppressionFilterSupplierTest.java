@@ -72,7 +72,8 @@ class NoiseSuppressionFilterSupplierTest {
             throw new UnsatisfiedLinkError("simulated missing native library");
         };
 
-        Optional<NoiseSuppressionFilter> firstAttempt = NoiseSuppressionFilterSupplier.create(true, throwingNativeFactory);
+        Optional<NoiseSuppressionFilter> firstAttempt = NoiseSuppressionFilterSupplier
+            .create(true, throwingNativeFactory);
         assertFalse(firstAttempt.isPresent(), "A failed native load must resolve to no filter, not throw");
 
         Callable<Denoise> factoryThatWouldNowSucceed = Denoise::create;
