@@ -42,6 +42,12 @@ dependencies {
     // crashes runServer.
     compileOnly("com.github.GTNewHorizons:lwjgl3ify:3.0.25:dev")
 
+    // Compile-time-only access to the real LWJGL3 OpenAL (ALC11 capture) API used by client-side microphone
+    // capture. Not runtimeOnlyNonPublishable: lwjgl3ify's own LWJGL3 provisioning already puts the actual
+    // runtime jars (matching version, with natives) on the runClient17/21/25 classpath; bundling our own here
+    // would risk duplicate/conflicting LWJGL3 classes, and (like lwjgl3ify above) must never reach runServer.
+    compileOnly("org.lwjgl:lwjgl-openal:3.3.3")
+
     // Guava is already on the Minecraft/Forge classpath at compile- and run-time (currently 17.0), declared
     // explicitly here so the core package doesn't rely on an incidental transitive dependency.
     compileOnly("com.google.guava:guava:17.0")
