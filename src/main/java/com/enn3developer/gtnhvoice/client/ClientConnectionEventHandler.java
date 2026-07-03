@@ -12,10 +12,10 @@ import cpw.mods.fml.common.network.FMLNetworkEvent;
 
 /**
  * Drives {@link VoiceClientManager} from the client's connection lifecycle. Registers on {@code
- * FMLCommonHandler.instance().bus()}: like {@link com.enn3developer.gtnhvoice.client.CaptureKeybindHandler}'s
- * {@code TickEvent}, {@code FMLNetworkEvent} is an FML event posted on the FML bus, not the Forge
- * event bus. Must be public: FML's ASM event bus subscriber scanning throws {@link
- * IllegalAccessError} on non-public listener classes under lwjgl3ify.
+ * FMLCommonHandler.instance().bus()}: like {@link ActivationGate}'s {@code TickEvent}, {@code
+ * FMLNetworkEvent} is an FML event posted on the FML bus, not the Forge event bus. Must be public:
+ * FML's ASM event bus subscriber scanning throws {@link IllegalAccessError} on non-public listener
+ * classes under lwjgl3ify.
  * <p>
  * {@code ClientHello} is NOT sent synchronously from {@link #onConnectedToServer}: Hodgepodge's own
  * {@code FMLIndexedMessageToMessageCodecHook} documents that "early handshake FMLProxyPackets don't

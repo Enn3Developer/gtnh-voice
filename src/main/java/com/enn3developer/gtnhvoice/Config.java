@@ -23,6 +23,17 @@ public class Config {
     // DEBUG: lets the client simulate a protocol-version mismatch to exercise the ServerReject path.
     public static boolean debugForceProtocolMismatch = false;
 
+    // Client-side transmission gating: which frames actually get Opus-encoded and sent. Not
+    // server-authoritative - each client decides for itself when it's "speaking".
+    public enum ActivationMode {
+        VOICE_ACTIVATION,
+        PUSH_TO_TALK
+    }
+
+    public static String activationMode = ActivationMode.VOICE_ACTIVATION.name();
+    public static double vaThresholdDb = -40.0;
+    public static int vaHangoverMs = 250;
+
     public static void synchronizeConfiguration(File configFile) {
         Configuration configuration = new Configuration(configFile);
 
@@ -60,6 +71,25 @@ public class Config {
             CATEGORY_VOICE,
             debugForceProtocolMismatch,
             "DEBUG: client claims protocolVersion+1 in its ClientHello to test the ServerReject/incompatible-version path. Do not enable in normal play.");
+        activationMode = configuration.getString(
+            "activationMode",
+            CATEGORY_VOICE,
+            activationMode,
+            "Client-side mic transmission gating: VOICE_ACTIVATION (transmit above a level threshold) or PUSH_TO_TALK (transmit only while the bound key is held). Client-only, takes effect on next voice connection.");
+        vaThresholdDb = configuration.getFloat(
+            "vaThresholdDb",
+            CATEGORY_VOICE,
+            (float) vaThresholdDb,
+            -60F,
+            0F,
+            "VOICE_ACTIVATION mode only: frame RMS level (dB, -60=quiet..0=loudest) above which the mic starts transmitting. Raise if background noise triggers transmission; lower if normal speech doesn't.");
+        vaHangoverMs = configuration.getInt(
+            "vaHangoverMs",
+            CATEGORY_VOICE,
+            vaHangoverMs,
+            0,
+            2000,
+            "VOICE_ACTIVATION mode only: milliseconds to keep transmitting after the level drops below vaThresholdDb, so brief pauses between words don't cut off speech.");
 
         if (configuration.hasChanged()) {
             configuration.save();
@@ -72,6 +102,16 @@ public class Config {
         } catch (IllegalArgumentException e) {
             GtnhVoice.LOG.warn("Invalid voice.opusMode '{}' in config, falling back to VOIP", opusMode);
             return OpusMode.VOIP;
+        }
+    }
+
+    public static ActivationMode getActivationMode() {
+        try {
+            return ActivationMode.valueOf(activationMode);
+        } catch (IllegalArgumentException e) {
+            GtnhVoice.LOG
+                .warn("Invalid voice.activationMode '{}' in config, falling back to VOICE_ACTIVATION", activationMode);
+            return ActivationMode.VOICE_ACTIVATION;
         }
     }
 }

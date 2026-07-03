@@ -6,8 +6,10 @@ import java.util.concurrent.BlockingQueue;
 import com.enn3developer.gtnhvoice.GtnhVoice;
 
 /**
- * Owns the lifecycle of the {@link CaptureThread} and the frame hand-off queue. Lazily started/stopped by the
- * capture keybind; nothing touches OpenAL until {@link #toggle()} is called for the first time.
+ * Owns the lifecycle of the {@link CaptureThread} and the frame hand-off queue. In production, {@code
+ * VoiceClientManager} calls {@link #start()}/{@link #stop()} for the lifetime of a voice session -
+ * nothing touches OpenAL before a session connects. {@link #toggle()} exists for the dev/validation
+ * loopback harness ({@code VoiceLoopbackSlice}), which owns its own standalone instance.
  */
 public class CaptureManager {
 
@@ -36,14 +38,16 @@ public class CaptureManager {
         }
     }
 
-    private void start() {
+    public void start() {
+        if (isCapturing()) return;
+
         frameQueue.clear();
         captureThread = new CaptureThread(frameQueue);
         captureThread.start();
         GtnhVoice.LOG.info("[Capture] Toggled ON");
     }
 
-    private void stop() {
+    public void stop() {
         if (captureThread == null) return;
 
         captureThread.shutdown();

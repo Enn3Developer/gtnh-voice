@@ -66,6 +66,7 @@ public final class VoiceClientManager {
     private final AtomicLong lastUnknownSecretLogMillis = new AtomicLong();
 
     private volatile CaptureManager captureManager;
+    private volatile ActivationGate activationGate;
     private JavaOpusEncoder captureEncoder;
     private CaptureSendWorker captureSendWorker;
     private volatile VoiceSourceManager voiceSourceManager;
@@ -87,6 +88,24 @@ public final class VoiceClientManager {
      */
     public void bindCaptureManager(@NotNull CaptureManager captureManager) {
         this.captureManager = captureManager;
+    }
+
+    /**
+     * Wires the shared {@link ActivationGate} in - it's registered once at mod init, independent of any
+     * particular session, so push-to-talk/VA keep working across reconnects.
+     */
+    public void bindActivationGate(@NotNull ActivationGate activationGate) {
+        this.activationGate = activationGate;
+    }
+
+    /**
+     * Whether the client currently considers itself to be transmitting/speaking, per the active
+     * {@link com.enn3developer.gtnhvoice.Config.ActivationMode}. {@code false} when no gate is bound yet or
+     * nothing has ever been evaluated.
+     */
+    public boolean isSpeaking() {
+        ActivationGate gate = activationGate;
+        return gate != null && gate.isSpeaking();
     }
 
     /**
@@ -156,6 +175,11 @@ public final class VoiceClientManager {
             voiceSourceManager.start();
 
             startPinging(secret, encryption);
+
+            CaptureManager manager = captureManager;
+            if (manager != null) {
+                manager.start();
+            }
             startCaptureSending(secret, encryption, packet.getOpusMode(), packet.getSampleRate());
 
             GtnhVoice.LOG.info(
@@ -326,6 +350,12 @@ public final class VoiceClientManager {
             return;
         }
 
+        ActivationGate gate = activationGate;
+        if (gate == null) {
+            GtnhVoice.LOG.warn("Voice connected but no ActivationGate bound yet - mic audio will not be sent");
+            return;
+        }
+
         OpusMode[] modes = OpusMode.values();
         OpusMode opusMode = modes[opusModeOrdinal >= 0 && opusModeOrdinal < modes.length ? opusModeOrdinal : 0];
 
@@ -339,7 +369,8 @@ public final class VoiceClientManager {
                 udpClient,
                 secret,
                 encryption,
-                UUID.randomUUID());
+                UUID.randomUUID(),
+                gate);
             captureSendWorker.start();
         } catch (CodecException e) {
             GtnhVoice.LOG.error("Failed to open capture encoder, mic audio will not be sent", e);
@@ -357,6 +388,10 @@ public final class VoiceClientManager {
         if (captureSendWorker != null) {
             captureSendWorker.shutdown();
             captureSendWorker = null;
+        }
+
+        if (captureManager != null) {
+            captureManager.stop();
         }
 
         if (captureEncoder != null) {

@@ -15,9 +15,13 @@ import com.enn3developer.gtnhvoice.core.transport.UdpTransportClient;
 /**
  * Drains {@link com.enn3developer.gtnhvoice.client.capture.CaptureManager}'s frame queue for the
  * lifetime of a voice session, Opus-encodes each frame, and sends it as a {@link
- * PlayerAudioPacket} over the session's real UDP link. Runs continuously once a session is
- * connected regardless of whether the capture keybind is currently on - if nothing is being
- * captured, the queue is simply empty and this thread idles.
+ * PlayerAudioPacket} over the session's real UDP link. The capture device itself is started
+ * alongside this worker for the lifetime of the session (see {@link VoiceClientManager}) and runs
+ * continuously regardless of the activation gate below.
+ * <p>
+ * Every polled frame is passed through the {@link ActivationGate} first: frames are only
+ * encoded+sent while the gate is open (VA above threshold, or PTT key held). Frames while the
+ * gate is closed are dropped here - the capture device itself keeps running regardless.
  */
 final class CaptureSendWorker extends Thread {
 
@@ -30,11 +34,12 @@ final class CaptureSendWorker extends Thread {
     private final UUID secret;
     private final Encryption encryption;
     private final UUID activationId;
+    private final ActivationGate activationGate;
 
     private volatile boolean running = true;
 
     CaptureSendWorker(BlockingQueue<short[]> captureFrameQueue, AudioEncoder encoder, UdpTransportClient client,
-        UUID secret, Encryption encryption, UUID activationId) {
+        UUID secret, Encryption encryption, UUID activationId, ActivationGate activationGate) {
         super("gtnhvoice-capture-send");
         this.captureFrameQueue = captureFrameQueue;
         this.encoder = encoder;
@@ -42,6 +47,7 @@ final class CaptureSendWorker extends Thread {
         this.secret = secret;
         this.encryption = encryption;
         this.activationId = activationId;
+        this.activationGate = activationGate;
         setDaemon(true);
     }
 
@@ -56,6 +62,7 @@ final class CaptureSendWorker extends Thread {
         long framesSent = 0;
         long lastLoggedFramesSent = 0;
         long lastLogTime = System.currentTimeMillis();
+        boolean wasTransmitting = false;
 
         while (running) {
             short[] frame;
@@ -66,20 +73,31 @@ final class CaptureSendWorker extends Thread {
             }
 
             if (frame != null) {
-                try {
-                    byte[] encoded = encoder.encode(frame);
+                boolean transmitting = activationGate.shouldTransmit(frame);
 
-                    PlayerAudioPacket packet = new PlayerAudioPacket(
-                        sequenceNumber.getAndIncrement(),
-                        encoded,
-                        activationId,
-                        DISTANCE,
-                        false);
-                    client.send(packet, secret, encryption);
-                    framesSent++;
-                } catch (CodecException e) {
-                    GtnhVoice.LOG.error("[Voice] Failed to encode captured frame", e);
+                if (transmitting) {
+                    try {
+                        // Closed->open edge: fresh speech segment, don't carry encoder state across the gap.
+                        if (!wasTransmitting) {
+                            encoder.reset();
+                        }
+
+                        byte[] encoded = encoder.encode(frame);
+
+                        PlayerAudioPacket packet = new PlayerAudioPacket(
+                            sequenceNumber.getAndIncrement(),
+                            encoded,
+                            activationId,
+                            DISTANCE,
+                            false);
+                        client.send(packet, secret, encryption);
+                        framesSent++;
+                    } catch (CodecException e) {
+                        GtnhVoice.LOG.error("[Voice] Failed to encode captured frame", e);
+                    }
                 }
+
+                wasTransmitting = transmitting;
             }
 
             long now = System.currentTimeMillis();
