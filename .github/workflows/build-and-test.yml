@@ -3,9 +3,10 @@ name: Build and test
 
 on:
   pull_request:
-    branches: [ master, main ]
+    branches: [ master ]
   push:
-    branches: [ master, main ]
+    branches: [ master ]
+  workflow_call:
 
 jobs:
   build-and-test:
