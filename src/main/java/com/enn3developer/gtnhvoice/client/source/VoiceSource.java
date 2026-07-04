@@ -43,6 +43,7 @@ final class VoiceSource {
     private volatile boolean segmentActive;
     private volatile boolean running;
     private Thread pollerThread;
+    private int distance;
 
     VoiceSource(@NotNull UUID sourceId, @NotNull PlaybackManager playbackManager) {
         this.sourceId = sourceId;
@@ -51,6 +52,7 @@ final class VoiceSource {
     }
 
     void create(int distance) throws CodecException {
+        this.distance = distance;
         decoder = OpusCodecSupplier.createDecoder(SAMPLE_RATE, false, FRAME_SIZE);
 
         running = true;
@@ -72,6 +74,11 @@ final class VoiceSource {
             GtnhVoice.LOG.info("[VoiceSource] Segment resumed for sourceId={}", sourceId);
         }
 
+        // Idempotent no-op in the common case (createSource() is documented safe to call repeatedly); this is
+        // what makes AL-source recreation after an output-device/HRTF rebuild "lazy" - if the rebuild wiped our
+        // positioned AL source, this call is what re-creates it on the new context, without this VoiceSource ever
+        // needing to know a rebuild happened or touching its decoder/jitter state.
+        playbackManager.createSource(sourceId, distance);
         playbackManager.updateSourcePosition(sourceId, x, y, z);
         jitterBuffer.offer(sequenceNumber, opusData);
     }

@@ -17,8 +17,11 @@ import org.lwjgl.openal.ALC10;
 import org.lwjgl.openal.ALCCapabilities;
 import org.lwjgl.openal.ALCapabilities;
 import org.lwjgl.openal.EXTThreadLocalContext;
+import org.lwjgl.openal.SOFTHRTF;
+import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 
+import com.enn3developer.gtnhvoice.Config;
 import com.enn3developer.gtnhvoice.GtnhVoice;
 
 import me.eigenraven.lwjgl3ify.api.Lwjgl3Aware;
@@ -36,6 +39,12 @@ import me.eigenraven.lwjgl3ify.api.Lwjgl3Aware;
  * AL source creation/destruction/reset is marshalled onto this thread via {@link #enqueueCommand}, since only the
  * thread holding the ALC context may call {@code AL10} functions; frame and position hand-off instead reads directly
  * from the {@link PlaybackManager}'s concurrent maps every loop iteration, avoiding per-frame command overhead.
+ * <p>
+ * The output device and HRTF mode can be rebuilt live via {@link #requestRebuild}, which is itself just another
+ * command run through {@link #enqueueCommand} - it executes inline in this thread's own command-drain step, so it's
+ * automatically serialized with every other AL call this thread makes and the pump loop is naturally quiesced for
+ * its duration. The device/context are instance fields (not {@code run()} locals) specifically so that command can
+ * mutate them in place; the OS thread itself never stops for a rebuild, only for real shutdown.
  */
 @Lwjgl3Aware
 public class PlaybackThread extends Thread {
@@ -54,9 +63,19 @@ public class PlaybackThread extends Thread {
     private volatile boolean running = true;
     private volatile boolean openedSuccessfully = false;
 
-    public PlaybackThread(PlaybackManager manager) {
+    // Thread-confined (only ever read/written from this thread's own run() or from commands run inline within it,
+    // see the class javadoc) - no volatile/synchronization needed despite being mutated by requestRebuild's command.
+    private long device = MemoryUtil.NULL;
+    private long context = MemoryUtil.NULL;
+    private ALCCapabilities alcCaps;
+    private String currentDeviceName;
+    private Config.HrtfMode appliedHrtfMode = Config.HrtfMode.AUTO;
+
+    public PlaybackThread(PlaybackManager manager, String initialDeviceName, Config.HrtfMode initialHrtfMode) {
         super("gtnhvoice-playback");
         this.manager = manager;
+        this.currentDeviceName = initialDeviceName;
+        this.appliedHrtfMode = initialHrtfMode;
         setDaemon(true);
     }
 
@@ -77,41 +96,44 @@ public class PlaybackThread extends Thread {
         commands.add(command);
     }
 
+    /**
+     * Control-API entry point: rebuilds the output device and/or HRTF mode live. Marshalled onto this thread via
+     * the same command queue every other AL lifecycle op uses - see the class javadoc.
+     */
+    void requestRebuild(String targetDeviceName, Config.HrtfMode targetHrtfMode) {
+        enqueueCommand(() -> performRebuild(targetDeviceName, targetHrtfMode));
+    }
+
     @Override
     public void run() {
-        long device = ALC10.alcOpenDevice((CharSequence) null);
+        device = openDevice(currentDeviceName);
         if (device == MemoryUtil.NULL) {
-            GtnhVoice.LOG.error("[Playback] Failed to open default playback device");
+            GtnhVoice.LOG.error("[Playback] Failed to open any playback device (requested or default)");
             return;
         }
 
-        ALCCapabilities alcCaps = ALC.createCapabilities(device);
-        if (!alcCaps.ALC_EXT_thread_local_context) {
-            GtnhVoice.LOG.error("[Playback] ALC_EXT_thread_local_context is not supported by this OpenAL driver");
-            ALC10.alcCloseDevice(device);
+        context = createContext(device, appliedHrtfMode);
+        if (context == MemoryUtil.NULL) {
+            closeDevice(device);
+            device = MemoryUtil.NULL;
             return;
         }
 
-        long context = ALC10.alcCreateContext(device, (IntBuffer) null);
-        if (context == MemoryUtil.NULL || !checkAlcError(device, "alcCreateContext")) {
-            ALC10.alcCloseDevice(device);
-            return;
-        }
-
-        if (!EXTThreadLocalContext.alcSetThreadContext(context)) {
-            GtnhVoice.LOG.error("[Playback] alcSetThreadContext failed");
+        if (!bindContext(context)) {
             ALC10.alcDestroyContext(context);
-            ALC10.alcCloseDevice(device);
+            context = MemoryUtil.NULL;
+            closeDevice(device);
+            device = MemoryUtil.NULL;
             return;
         }
-
-        ALCapabilities alCaps = AL.createCapabilities(alcCaps);
-        AL.setCurrentThread(alCaps);
-        AL10.alDistanceModel(AL10.AL_INVERSE_DISTANCE_CLAMPED);
 
         openedSuccessfully = true;
-        GtnhVoice.LOG
-            .info("[Playback] Playback started: {}Hz mono16, {} buffer pool per source", SAMPLE_RATE, BUFFER_POOL_SIZE);
+        GtnhVoice.LOG.info(
+            "[Playback] Playback started: {}Hz mono16, {} buffer pool per source, device={}, hrtf={}",
+            SAMPLE_RATE,
+            BUFFER_POOL_SIZE,
+            currentDeviceName == null ? "<default>" : currentDeviceName,
+            appliedHrtfMode);
 
         long lastLogTime = System.currentTimeMillis();
 
@@ -121,6 +143,8 @@ public class PlaybackThread extends Thread {
                 while ((command = commands.poll()) != null) {
                     command.run();
                 }
+
+                if (!running) break; // a rebuild command above may have disabled output entirely
 
                 applyListenerSnapshot();
 
@@ -141,23 +165,207 @@ public class PlaybackThread extends Thread {
                 }
             }
         } finally {
-            for (Iterator<SourceChannel> it = sourceChannels.values()
-                .iterator(); it.hasNext();) {
-                SourceChannel channel = it.next();
-                stopAndFlush(channel);
-                AL10.alDeleteSources(channel.alSource);
-                AL10.alDeleteBuffers(channel.bufferIds);
-                it.remove();
-            }
-            checkAlError("teardown");
-
-            AL.setCurrentThread(null);
-            EXTThreadLocalContext.alcSetThreadContext(MemoryUtil.NULL);
-            ALC10.alcDestroyContext(context);
-            ALC10.alcCloseDevice(device);
+            teardownAlSources();
+            teardownContext();
+            closeDevice(device);
+            device = MemoryUtil.NULL;
+            openedSuccessfully = false;
 
             GtnhVoice.LOG.info("[Playback] Playback stopped and device closed");
         }
+    }
+
+    /**
+     * Runs on this thread only (queued via {@link #requestRebuild}): the ordered output rebuild - stop/destroy
+     * every AL source (b), destroy the old context and, only if the device selection actually changed, close the
+     * old device and open the new one (c), create the new context with the requested HRTF attributes (d), and bind
+     * it (e is implicit: this thread never stopped, so nothing needs restarting - the pump loop just resumes next
+     * iteration). {@code VoiceSource}s are never touched here; their AL sources reappear lazily the next time
+     * {@code PlaybackManager#createSource} runs for them (see {@code VoiceSource#handleAudio}).
+     * <p>
+     * On failure, falls back once to the default device with AUTO HRTF; if that also fails, output is cleanly
+     * disabled (this thread exits, and every {@link PlaybackManager} entry point already no-ops once
+     * {@link PlaybackManager#isPlaying()} is false) rather than left in a half-torn-down state.
+     */
+    private void performRebuild(String targetDeviceName, Config.HrtfMode targetHrtfMode) {
+        GtnhVoice.LOG.info(
+            "[Playback] Rebuild starting: device={} hrtf={}",
+            targetDeviceName == null ? "<default>" : targetDeviceName,
+            targetHrtfMode);
+
+        teardownAlSources();
+        teardownContext();
+
+        boolean deviceChanging = !deviceNamesEqual(currentDeviceName, targetDeviceName);
+        long newDevice = device;
+        if (deviceChanging) {
+            closeDevice(device);
+            device = MemoryUtil.NULL;
+            newDevice = openDevice(targetDeviceName);
+        }
+
+        long newContext = newDevice == MemoryUtil.NULL ? MemoryUtil.NULL : createContext(newDevice, targetHrtfMode);
+        boolean bound = newContext != MemoryUtil.NULL && bindContext(newContext);
+
+        if (!bound) {
+            GtnhVoice.LOG.error(
+                "[Playback] Rebuild to device={} hrtf={} failed, falling back to default device/AUTO",
+                targetDeviceName == null ? "<default>" : targetDeviceName,
+                targetHrtfMode);
+            if (newContext != MemoryUtil.NULL) ALC10.alcDestroyContext(newContext);
+            if (newDevice != MemoryUtil.NULL) closeDevice(newDevice);
+
+            newDevice = openDevice(null);
+            newContext = newDevice == MemoryUtil.NULL ? MemoryUtil.NULL
+                : createContext(newDevice, Config.HrtfMode.AUTO);
+            bound = newContext != MemoryUtil.NULL && bindContext(newContext);
+
+            if (!bound) {
+                GtnhVoice.LOG.error("[Playback] Rebuild failed entirely; disabling output until next reconnect");
+                if (newContext != MemoryUtil.NULL) ALC10.alcDestroyContext(newContext);
+                if (newDevice != MemoryUtil.NULL) closeDevice(newDevice);
+                device = MemoryUtil.NULL;
+                context = MemoryUtil.NULL;
+                running = false; // clean shutdown on the next loop check; run()'s finally is now a no-op teardown
+                return;
+            }
+
+            targetDeviceName = null;
+            targetHrtfMode = Config.HrtfMode.AUTO;
+        }
+
+        device = newDevice;
+        context = newContext;
+        currentDeviceName = targetDeviceName;
+        // appliedHrtfMode already set by createContext(), which may have degraded targetHrtfMode to AUTO.
+
+        GtnhVoice.LOG.info(
+            "[Playback] Rebuild complete: device={} hrtfRequested={} hrtfApplied={}",
+            currentDeviceName == null ? "<default>" : currentDeviceName,
+            targetHrtfMode,
+            appliedHrtfMode);
+    }
+
+    private static boolean deviceNamesEqual(String a, String b) {
+        return a == null ? b == null : a.equals(b);
+    }
+
+    /**
+     * Opens {@code requestedDevice} by name, or the system default if {@code null}, and loads its {@link
+     * ALCCapabilities} into {@link #alcCaps}. Falls back to the default device (logging a warning, never crashing)
+     * if a named device fails to open or lacks {@code ALC_EXT_thread_local_context}. Returns {@code
+     * MemoryUtil#NULL} only if even the default device is unusable.
+     */
+    private long openDevice(String requestedDevice) {
+        long dev = requestedDevice == null ? ALC10.alcOpenDevice((CharSequence) null)
+            : ALC10.alcOpenDevice(requestedDevice);
+        if (dev == MemoryUtil.NULL && requestedDevice != null) {
+            GtnhVoice.LOG.warn(
+                "[Playback] Failed to open requested output device '{}', falling back to default",
+                requestedDevice);
+            dev = ALC10.alcOpenDevice((CharSequence) null);
+        }
+        if (dev == MemoryUtil.NULL) {
+            GtnhVoice.LOG.error("[Playback] Failed to open default playback device");
+            return MemoryUtil.NULL;
+        }
+
+        ALCCapabilities caps = ALC.createCapabilities(dev);
+        if (!caps.ALC_EXT_thread_local_context) {
+            GtnhVoice.LOG.error("[Playback] ALC_EXT_thread_local_context is not supported by this OpenAL driver");
+            ALC10.alcCloseDevice(dev);
+            return MemoryUtil.NULL;
+        }
+
+        alcCaps = caps;
+        return dev;
+    }
+
+    /**
+     * Creates a context on {@code dev} with the HRTF attributes for {@code mode}, feature-detecting {@code
+     * ALC_SOFT_HRTF} via {@link #alcCaps} (the LWJGL-computed equivalent of {@code alcIsExtensionPresent}) and
+     * degrading to AUTO (no explicit attribute - openal-soft's own default) if unsupported. Sets {@link
+     * #appliedHrtfMode} to whatever was actually applied. Returns {@code MemoryUtil#NULL} on ALC failure.
+     */
+    private long createContext(long dev, Config.HrtfMode mode) {
+        boolean hrtfSupported = alcCaps.ALC_SOFT_HRTF;
+        Config.HrtfMode applied = mode;
+        long ctx;
+
+        if (mode != Config.HrtfMode.AUTO && hrtfSupported) {
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                IntBuffer attribs = stack.mallocInt(3);
+                attribs.put(SOFTHRTF.ALC_HRTF_SOFT)
+                    .put(mode == Config.HrtfMode.ON ? ALC10.ALC_TRUE : ALC10.ALC_FALSE)
+                    .put(0)
+                    .flip();
+                ctx = ALC10.alcCreateContext(dev, attribs);
+            }
+        } else {
+            if (mode != Config.HrtfMode.AUTO) {
+                GtnhVoice.LOG.warn(
+                    "[Playback] ALC_SOFT_HRTF not supported by this driver; requested {} but applying AUTO",
+                    mode);
+                applied = Config.HrtfMode.AUTO;
+            }
+            ctx = ALC10.alcCreateContext(dev, (IntBuffer) null);
+        }
+
+        if (ctx == MemoryUtil.NULL || !checkAlcError(dev, "alcCreateContext")) {
+            return MemoryUtil.NULL;
+        }
+
+        appliedHrtfMode = applied;
+        GtnhVoice.LOG.info("[Playback] HRTF requested={} applied={} extensionPresent={}", mode, applied, hrtfSupported);
+        return ctx;
+    }
+
+    /**
+     * Binds {@code ctx} thread-locally and builds this thread's {@link ALCapabilities}/{@code AL10} function
+     * pointers against it. {@link #alcCaps} must already correspond to the same device {@code ctx} was created on
+     * - true by construction since {@link #openDevice} and {@link #createContext} are always called back-to-back
+     * for the same device.
+     */
+    private boolean bindContext(long ctx) {
+        if (!EXTThreadLocalContext.alcSetThreadContext(ctx)) {
+            GtnhVoice.LOG.error("[Playback] alcSetThreadContext failed");
+            return false;
+        }
+
+        ALCapabilities alCaps = AL.createCapabilities(alcCaps);
+        AL.setCurrentThread(alCaps);
+        AL10.alDistanceModel(AL10.AL_INVERSE_DISTANCE_CLAMPED);
+        return true;
+    }
+
+    /**
+     * Stops, flushes, and deletes every active {@link SourceChannel}'s AL source and buffers (step b of a
+     * rebuild), leaving {@link #sourceChannels} empty. Never touches the owning {@code VoiceSource}s - their
+     * decoder/jitter state lives entirely outside this class.
+     */
+    private void teardownAlSources() {
+        for (Iterator<SourceChannel> it = sourceChannels.values()
+            .iterator(); it.hasNext();) {
+            SourceChannel channel = it.next();
+            stopAndFlush(channel);
+            AL10.alDeleteSources(channel.alSource);
+            AL10.alDeleteBuffers(channel.bufferIds);
+            it.remove();
+        }
+        checkAlError("teardownAlSources");
+    }
+
+    private void teardownContext() {
+        AL.setCurrentThread(null);
+        EXTThreadLocalContext.alcSetThreadContext(MemoryUtil.NULL);
+        if (context != MemoryUtil.NULL) {
+            ALC10.alcDestroyContext(context);
+            context = MemoryUtil.NULL;
+        }
+    }
+
+    private void closeDevice(long dev) {
+        if (dev != MemoryUtil.NULL) ALC10.alcCloseDevice(dev);
     }
 
     private void pumpSourceChannel(UUID sourceId, SourceChannel channel) {
@@ -208,7 +416,8 @@ public class PlaybackThread extends Thread {
 
     /**
      * Runs on this thread only (queued via {@link #enqueueCommand}): allocates a positioned AL source + buffer pool
-     * for a newly seen {@code sourceId}. No-op if one already exists.
+     * for a newly seen {@code sourceId}. No-op if one already exists - including right after a rebuild wiped
+     * {@link #sourceChannels}, in which case this is exactly what lazily recreates it.
      */
     void createSourceChannel(UUID sourceId, BlockingQueue<short[]> frameQueue, int distance) {
         if (sourceChannels.containsKey(sourceId)) return;

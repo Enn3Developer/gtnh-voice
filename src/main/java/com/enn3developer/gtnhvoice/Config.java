@@ -10,6 +10,10 @@ public class Config {
 
     private static final String CATEGORY_VOICE = "voice";
 
+    // Kept around so runtime setters (see #save) can persist a single field without re-reading every
+    // property in synchronizeConfiguration - only ever set once, from synchronizeConfiguration itself.
+    private static Configuration configuration;
+
     // Server-authoritative voice session config, sent to clients in ServerHelloPacket.
     public static int udpPort = 25566;
     public static int distance = 48;
@@ -42,8 +46,22 @@ public class Config {
     // switch.
     public static boolean hudEnabled = true;
 
+    // Client-side audio device selection + HRTF, hot-swappable at runtime via AudioDeviceController (currently
+    // driven by DEBUG keybinds - see AudioDeviceDebugDriver - until Task 2's settings GUI lands). Empty string
+    // means "system default" for both device fields, matching what AudioDeviceController hands to the ALC layer
+    // as {@code null}.
+    public enum HrtfMode {
+        AUTO,
+        ON,
+        OFF
+    }
+
+    public static String inputDevice = "";
+    public static String outputDevice = "";
+    public static String hrtfMode = HrtfMode.AUTO.name();
+
     public static void synchronizeConfiguration(File configFile) {
-        Configuration configuration = new Configuration(configFile);
+        configuration = new Configuration(configFile);
 
         udpPort = configuration.getInt(
             "udpPort",
@@ -106,9 +124,67 @@ public class Config {
             CATEGORY_VOICE,
             hudEnabled,
             "Show the who's-talking HUD overlay (top-left list of currently speaking players). Set to false to disable it entirely.");
+        inputDevice = configuration.getString(
+            "inputDevice",
+            CATEGORY_VOICE,
+            inputDevice,
+            "Preferred OpenAL capture (microphone) device name, or empty for the system default. Set via in-game audio controls; applied at voice-session startup and hot-swappable while connected.");
+        outputDevice = configuration.getString(
+            "outputDevice",
+            CATEGORY_VOICE,
+            outputDevice,
+            "Preferred OpenAL playback (speaker) device name, or empty for the system default. Set via in-game audio controls; applied at voice-session startup and hot-swappable while connected.");
+        hrtfMode = configuration.getString(
+            "hrtfMode",
+            CATEGORY_VOICE,
+            hrtfMode,
+            "HRTF mode for 3D-positioned voice playback: AUTO (driver default), ON, or OFF. Set via in-game audio controls; applied at voice-session startup and hot-swappable while connected.");
 
         if (configuration.hasChanged()) {
             configuration.save();
+        }
+    }
+
+    /**
+     * Persists a single live change to disk immediately, without re-synchronizing every other property. Used by
+     * {@link com.enn3developer.gtnhvoice.client.audio.AudioDeviceController} so device/HRTF picks (currently made
+     * via DEBUG keybinds, later the settings GUI) survive a restart right away rather than only on the next
+     * {@link #synchronizeConfiguration}.
+     */
+    public static void save() {
+        if (configuration == null) return;
+
+        configuration.get(CATEGORY_VOICE, "inputDevice", "")
+            .set(inputDevice);
+        configuration.get(CATEGORY_VOICE, "outputDevice", "")
+            .set(outputDevice);
+        configuration.get(CATEGORY_VOICE, "hrtfMode", HrtfMode.AUTO.name())
+            .set(hrtfMode);
+        configuration.save();
+    }
+
+    /**
+     * {@link #inputDevice} normalized to the {@code null == default} convention the ALC layer (and {@link
+     * com.enn3developer.gtnhvoice.client.capture.CaptureManager}) expects.
+     */
+    public static String getInputDeviceOrNull() {
+        return inputDevice == null || inputDevice.isEmpty() ? null : inputDevice;
+    }
+
+    /**
+     * {@link #outputDevice} normalized to the {@code null == default} convention the ALC layer (and {@link
+     * com.enn3developer.gtnhvoice.client.playback.PlaybackManager}) expects.
+     */
+    public static String getOutputDeviceOrNull() {
+        return outputDevice == null || outputDevice.isEmpty() ? null : outputDevice;
+    }
+
+    public static HrtfMode getHrtfMode() {
+        try {
+            return HrtfMode.valueOf(hrtfMode);
+        } catch (IllegalArgumentException e) {
+            GtnhVoice.LOG.warn("Invalid voice.hrtfMode '{}' in config, falling back to AUTO", hrtfMode);
+            return HrtfMode.AUTO;
         }
     }
 

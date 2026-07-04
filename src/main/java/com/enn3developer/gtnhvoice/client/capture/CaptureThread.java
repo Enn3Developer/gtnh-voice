@@ -7,10 +7,10 @@ import java.util.concurrent.BlockingQueue;
 import org.lwjgl.openal.AL10;
 import org.lwjgl.openal.ALC10;
 import org.lwjgl.openal.ALC11;
-import org.lwjgl.openal.ALUtil;
 import org.lwjgl.system.MemoryUtil;
 
 import com.enn3developer.gtnhvoice.GtnhVoice;
+import com.enn3developer.gtnhvoice.client.audio.AudioDeviceUtil;
 import com.enn3developer.gtnhvoice.core.api.util.AudioUtil;
 
 import me.eigenraven.lwjgl3ify.api.Lwjgl3Aware;
@@ -32,13 +32,15 @@ public class CaptureThread extends Thread {
     private static final long LOG_INTERVAL_MILLIS = 500L;
 
     private final BlockingQueue<short[]> frameQueue;
+    private final String deviceName;
 
     private volatile boolean running = true;
     private volatile boolean openedSuccessfully = false;
 
-    public CaptureThread(BlockingQueue<short[]> frameQueue) {
+    public CaptureThread(BlockingQueue<short[]> frameQueue, String deviceName) {
         super("gtnhvoice-capture");
         this.frameQueue = frameQueue;
+        this.deviceName = deviceName;
         setDaemon(true);
     }
 
@@ -55,10 +57,7 @@ public class CaptureThread extends Thread {
     public void run() {
         logAvailableDevices();
 
-        String defaultDevice = ALC10.alcGetString(0L, ALC11.ALC_CAPTURE_DEFAULT_DEVICE_SPECIFIER);
-        GtnhVoice.LOG.info("[Capture] Opening default capture device: {}", defaultDevice);
-
-        long device = ALC11.alcCaptureOpenDevice((String) null, SAMPLE_RATE, AL10.AL_FORMAT_MONO16, DEVICE_BUFFER_SIZE);
+        long device = openCaptureDevice(deviceName);
         if (device == MemoryUtil.NULL) {
             GtnhVoice.LOG.error(
                 "[Capture] Failed to open capture device (no microphone, permission denied, or unsupported format)");
@@ -134,8 +133,8 @@ public class CaptureThread extends Thread {
     }
 
     private void logAvailableDevices() {
-        List<String> devices = ALUtil.getStringList(0L, ALC11.ALC_CAPTURE_DEVICE_SPECIFIER);
-        if (devices == null || devices.isEmpty()) {
+        List<String> devices = AudioDeviceUtil.listInputDevices();
+        if (devices.isEmpty()) {
             GtnhVoice.LOG.warn("[Capture] No capture devices enumerated (no microphone connected?)");
             return;
         }
@@ -144,6 +143,28 @@ public class CaptureThread extends Thread {
         for (String name : devices) {
             GtnhVoice.LOG.info("[Capture]   - {}", name);
         }
+    }
+
+    /**
+     * Opens {@code requestedDevice} by name, or the system default if {@code null}. Falls back to the default
+     * device (logging a warning, never crashing) if a named device fails to open - e.g. it was unplugged since
+     * last selected.
+     */
+    private long openCaptureDevice(String requestedDevice) {
+        if (requestedDevice == null) {
+            String defaultDevice = AudioDeviceUtil.defaultInputDevice();
+            GtnhVoice.LOG.info("[Capture] Opening default capture device: {}", defaultDevice);
+            return ALC11.alcCaptureOpenDevice((String) null, SAMPLE_RATE, AL10.AL_FORMAT_MONO16, DEVICE_BUFFER_SIZE);
+        }
+
+        GtnhVoice.LOG.info("[Capture] Opening capture device: {}", requestedDevice);
+        long device = ALC11
+            .alcCaptureOpenDevice(requestedDevice, SAMPLE_RATE, AL10.AL_FORMAT_MONO16, DEVICE_BUFFER_SIZE);
+        if (device != MemoryUtil.NULL) return device;
+
+        GtnhVoice.LOG
+            .warn("[Capture] Failed to open requested capture device '{}', falling back to default", requestedDevice);
+        return ALC11.alcCaptureOpenDevice((String) null, SAMPLE_RATE, AL10.AL_FORMAT_MONO16, DEVICE_BUFFER_SIZE);
     }
 
     private boolean checkError(long device, String context) {

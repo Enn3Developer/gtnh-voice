@@ -6,6 +6,7 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 
+import com.enn3developer.gtnhvoice.Config;
 import com.enn3developer.gtnhvoice.GtnhVoice;
 
 /**
@@ -33,15 +34,16 @@ public class PlaybackManager {
         return playbackThread != null && playbackThread.isAlive();
     }
 
-    public void start() {
+    public void start(String deviceName, Config.HrtfMode hrtfMode) {
         if (isPlaying()) return;
 
         frameQueues.clear();
         positions.clear();
         listenerSnapshot = ListenerSnapshot.ORIGIN;
-        playbackThread = new PlaybackThread(this);
+        playbackThread = new PlaybackThread(this, deviceName, hrtfMode);
         playbackThread.start();
-        GtnhVoice.LOG.info("[Playback] Started");
+        GtnhVoice.LOG
+            .info("[Playback] Started (device={}, hrtf={})", deviceName == null ? "<default>" : deviceName, hrtfMode);
     }
 
     public void stop() {
@@ -128,6 +130,24 @@ public class PlaybackManager {
      */
     public void updateListener(double x, double y, double z, float lookX, float lookY, float lookZ) {
         listenerSnapshot = new ListenerSnapshot(x, y, z, lookX, lookY, lookZ);
+    }
+
+    /**
+     * Control-API entry point (currently driven by {@code AudioDeviceDebugDriver}): rebuilds the output device
+     * and/or HRTF mode live, without tearing down any {@code VoiceSource}. No-op (besides a log line) if playback
+     * isn't currently running - the new selection still gets picked up by the next {@link #start}, since callers
+     * are expected to persist it to {@link Config} regardless of whether a rebuild happens here.
+     */
+    public void rebuildOutput(String deviceName, Config.HrtfMode hrtfMode) {
+        if (!isPlaying()) {
+            GtnhVoice.LOG.info(
+                "[Playback] Rebuild requested (device={}, hrtf={}) but playback isn't running; will apply on next start",
+                deviceName == null ? "<default>" : deviceName,
+                hrtfMode);
+            return;
+        }
+
+        playbackThread.requestRebuild(deviceName, hrtfMode);
     }
 
     Map<UUID, double[]> positionsView() {

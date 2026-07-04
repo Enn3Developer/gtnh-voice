@@ -16,6 +16,7 @@ public class CaptureManager {
 
     private final BlockingQueue<short[]> frameQueue = new ArrayBlockingQueue<>(QUEUE_CAPACITY);
 
+    private volatile String deviceName; // null = system default
     private CaptureThread captureThread;
 
     /**
@@ -29,16 +30,20 @@ public class CaptureManager {
         return captureThread != null && captureThread.isAlive();
     }
 
-    public void start() {
+    public String getDeviceName() {
+        return deviceName;
+    }
+
+    public synchronized void start() {
         if (isCapturing()) return;
 
         frameQueue.clear();
-        captureThread = new CaptureThread(frameQueue);
+        captureThread = new CaptureThread(frameQueue, deviceName);
         captureThread.start();
-        GtnhVoice.LOG.info("[Capture] Toggled ON");
+        GtnhVoice.LOG.info("[Capture] Toggled ON (device={})", deviceName == null ? "<default>" : deviceName);
     }
 
-    public void stop() {
+    public synchronized void stop() {
         if (captureThread == null) return;
 
         captureThread.shutdown();
@@ -50,5 +55,21 @@ public class CaptureManager {
         }
         captureThread = null;
         GtnhVoice.LOG.info("[Capture] Toggled OFF");
+    }
+
+    /**
+     * Live device hotswap (control API, driven for now by {@code AudioDeviceDebugDriver}): stops the current
+     * capture device and opens the newly named one ({@code null} = system default) on a fresh {@link
+     * CaptureThread}, without touching the voice session - {@link #frameQueue} is the same instance throughout, so
+     * whatever's draining it (the encoder/send pipeline) never notices the swap beyond a brief gap in frames. Safe
+     * to call while not currently capturing too; just records the preference for the next {@link #start()}.
+     */
+    public synchronized void setInputDevice(String deviceName) {
+        this.deviceName = deviceName;
+        if (!isCapturing()) return;
+
+        GtnhVoice.LOG.info("[Capture] Hotswapping input device to {}", deviceName == null ? "<default>" : deviceName);
+        stop();
+        start();
     }
 }

@@ -11,6 +11,7 @@ import java.util.concurrent.TimeUnit;
 
 import org.jetbrains.annotations.NotNull;
 
+import com.enn3developer.gtnhvoice.Config;
 import com.enn3developer.gtnhvoice.GtnhVoice;
 import com.enn3developer.gtnhvoice.client.VoiceClientManager;
 import com.enn3developer.gtnhvoice.client.playback.PlaybackManager;
@@ -42,7 +43,7 @@ public final class VoiceSourceManager {
         if (running) return;
         running = true;
 
-        playbackManager.start();
+        playbackManager.start(Config.getOutputDeviceOrNull(), Config.getHrtfMode());
 
         watchdog = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread thread = new Thread(r, "gtnhvoice-source-watchdog");
@@ -102,6 +103,15 @@ public final class VoiceSourceManager {
      * separate speaking-detection mechanism. Safe to call every render frame from the client thread while the
      * watchdog thread concurrently flips segment state.
      */
+    /**
+     * The session's shared {@link PlaybackManager}, for {@code AudioDeviceController} to drive live output-device/
+     * HRTF rebuilds against. Never {@code null} once constructed, but only meaningfully "playing" between
+     * {@link #start()} and {@link #stop()}.
+     */
+    public PlaybackManager getPlaybackManager() {
+        return playbackManager;
+    }
+
     public Set<UUID> getSpeakingSourceIds() {
         Set<UUID> speaking = new HashSet<>();
         for (Map.Entry<UUID, VoiceSource> entry : sources.entrySet()) {
