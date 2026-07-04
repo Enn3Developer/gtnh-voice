@@ -77,7 +77,7 @@ dependencies {
     // falls back to Concentus whenever the native library isn't available/loadable (untested
     // platforms, missing native binary, ...). Must actually be bundled in the shipped jar (not
     // devOnlyNonPublishable) for the native path to ever be reachable outside a Gradle dev run.
-    implementation("com.plasmoverse:opus-jni-rust:1.0.4")
+    shadowImplementation("com.plasmoverse:opus-jni-rust:1.0.4")
 
     // Plasmo's native JNI RNNoise binding (see NoiseSuppressionFilter/NoiseSuppressionFilterSupplier),
     // used for optional capture-side noise suppression. Unlike Opus there is no pure-Java fallback -
@@ -86,7 +86,7 @@ dependencies {
     // devOnlyNonPublishable) for the feature to ever be reachable outside a Gradle dev run.
     // testImplementation is unnecessary since the java-library plugin's testImplementation already
     // extends implementation.
-    implementation("com.plasmoverse:rnnoise-jni-rust:1.0.3")
+    shadowImplementation("com.plasmoverse:rnnoise-jni-rust:1.0.3")
 
     // JUnit 5 for standalone unit tests of MC/slib-free core code (e.g. codec round-trip checks).
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
