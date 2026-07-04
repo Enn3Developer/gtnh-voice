@@ -56,6 +56,10 @@ public class PlaybackThread extends Thread {
     private static final float REFERENCE_DISTANCE = 1.0f;
     private static final float ROLLOFF_FACTOR = 1.0f;
 
+    // Prime-and-hysteresis tuning for AL source start, see pumpSourceChannel().
+    private static final int PRIME_BUFFERS = 3;
+    private static final long TAIL_FLUSH_MILLIS = 60L;
+
     private final PlaybackManager manager;
     private final ConcurrentLinkedQueue<Runnable> commands = new ConcurrentLinkedQueue<>();
     private final Map<UUID, SourceChannel> sourceChannels = new HashMap<>();
@@ -148,11 +152,11 @@ public class PlaybackThread extends Thread {
 
                 applyListenerSnapshot();
 
+                long now = System.currentTimeMillis();
                 for (Map.Entry<UUID, SourceChannel> entry : sourceChannels.entrySet()) {
-                    pumpSourceChannel(entry.getKey(), entry.getValue());
+                    pumpSourceChannel(entry.getKey(), entry.getValue(), now);
                 }
 
-                long now = System.currentTimeMillis();
                 if (now - lastLogTime >= LOG_INTERVAL_MILLIS) {
                     logChannelsThrottled();
                     lastLogTime = now;
@@ -368,12 +372,28 @@ public class PlaybackThread extends Thread {
         if (dev != MemoryUtil.NULL) ALC10.alcCloseDevice(dev);
     }
 
-    private void pumpSourceChannel(UUID sourceId, SourceChannel channel) {
+    private void pumpSourceChannel(UUID sourceId, SourceChannel channel, long now) {
         int processed = AL10.alGetSourcei(channel.alSource, AL10.AL_BUFFERS_PROCESSED);
         for (int i = 0; i < processed; i++) {
             channel.freeBuffers.add(AL10.alSourceUnqueueBuffers(channel.alSource));
         }
         checkAlError("alSourceUnqueueBuffers");
+
+        // OpenAL marks a STOPPED source's entire queue as processed instantly, even buffers that never played -
+        // so a source left STOPPED must be rewound to INITIAL before any new buffer is queued onto it, or the
+        // next tick's unqueue-processed step above will silently discard it before it ever primes.
+        if (AL10.alGetSourcei(channel.alSource, AL10.AL_SOURCE_STATE) == AL10.AL_STOPPED) {
+            int leftoverQueued = AL10.alGetSourcei(channel.alSource, AL10.AL_BUFFERS_QUEUED);
+            if (leftoverQueued > 0) {
+                GtnhVoice.LOG.warn(
+                    "[Playback] sourceId={} found STOPPED with {} buffers still queued after unqueue - a reset path was missed",
+                    sourceId,
+                    leftoverQueued);
+            }
+            channel.underruns++;
+            AL10.alSourceRewind(channel.alSource);
+            checkAlError("alSourceRewind");
+        }
 
         double[] position = manager.positionsView()
             .get(sourceId);
@@ -395,14 +415,25 @@ public class PlaybackThread extends Thread {
             AL10.alSourceQueueBuffers(channel.alSource, bufferId);
             checkAlError("alBufferData/alSourceQueueBuffers");
             channel.framesQueued++;
+            channel.lastFrameQueuedAtMillis = now;
         }
 
         int queued = AL10.alGetSourcei(channel.alSource, AL10.AL_BUFFERS_QUEUED);
         int state = AL10.alGetSourcei(channel.alSource, AL10.AL_SOURCE_STATE);
-        if (queued > 0 && state != AL10.AL_PLAYING) {
-            if (state == AL10.AL_STOPPED) channel.underruns++;
-            AL10.alSourcePlay(channel.alSource);
-            checkAlError("alSourcePlay");
+        if (state != AL10.AL_PLAYING && queued > 0) {
+            boolean primed = queued >= PRIME_BUFFERS;
+            boolean tailFlush = !primed && (now - channel.lastFrameQueuedAtMillis) > TAIL_FLUSH_MILLIS;
+            if (primed || tailFlush) {
+                if (tailFlush) {
+                    GtnhVoice.LOG.info(
+                        "[Playback] tail flush sourceId={} queued={} state={}",
+                        sourceId,
+                        queued,
+                        alSourceStateToString(state));
+                }
+                AL10.alSourcePlay(channel.alSource);
+                checkAlError("alSourcePlay");
+            }
         }
     }
 
@@ -495,18 +526,27 @@ public class PlaybackThread extends Thread {
             channel.freeBuffers.add(AL10.alSourceUnqueueBuffers(channel.alSource));
         }
         checkAlError("stopAndFlush unqueue");
+
+        // Rewind STOPPED -> INITIAL so a subsequent re-prime doesn't leave freshly queued buffers sitting on a
+        // STOPPED source, where OpenAL would mark them processed (and thus silently discarded) before they play.
+        AL10.alSourceRewind(channel.alSource);
+        checkAlError("alSourceRewind");
+
+        channel.lastFrameQueuedAtMillis = 0L;
     }
 
     private void logChannelsThrottled() {
         for (Map.Entry<UUID, SourceChannel> entry : sourceChannels.entrySet()) {
             SourceChannel channel = entry.getValue();
             int state = AL10.alGetSourcei(channel.alSource, AL10.AL_SOURCE_STATE);
+            int queuedAl = AL10.alGetSourcei(channel.alSource, AL10.AL_BUFFERS_QUEUED);
             GtnhVoice.LOG.info(
-                "[Playback] sourceId={} framesQueued={} underruns={} sourceState={}",
+                "[Playback] sourceId={} framesQueued={} underruns={} sourceState={} queuedAl={}",
                 entry.getKey(),
                 channel.framesQueued,
                 channel.underruns,
-                alSourceStateToString(state));
+                alSourceStateToString(state),
+                queuedAl);
         }
     }
 
@@ -560,6 +600,7 @@ public class PlaybackThread extends Thread {
 
         long framesQueued;
         long underruns;
+        long lastFrameQueuedAtMillis;
 
         SourceChannel(int alSource, int[] bufferIds, Deque<Integer> freeBuffers, BlockingQueue<short[]> frameQueue) {
             this.alSource = alSource;

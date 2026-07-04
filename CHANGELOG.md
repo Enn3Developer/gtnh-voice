@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Per-player volume (0-200%, default 100%) and mute for other players, client-side only: mute drops a speaker's audio at the UDP receive path itself, before a `VoiceSource`/decoder is ever created or fed, so a muted player never appears as speaking; volume is applied as `AL_GAIN` on the speaker's positioned AL source and survives an output-device/HRTF rebuild since it's re-read from the live setting on every packet rather than cached. Both are set from a new "Players" screen (opened from the existing settings GUI), which lists every other player currently in voice with their head icon, a volume slider, and a mute toggle; the who's-talking HUD gains a muted-marker row alongside the existing self-mute indicator. Persisted in the existing client config file, pruned back to defaults automatically
 
+### Fixed
+
+- Audible crackle during speech playback caused by an AL source restarting 5-10x/sec on single-buffer underruns: `PlaybackThread` now primes each source (3 buffers/60ms) before starting or restarting it, with a 60ms tail-flush so short utterances that never reach the prime threshold still play out in full instead of sitting stuck. Also fixes a stall, surfaced by this change, where a source left in `AL_STOPPED` (e.g. after a speech-segment inactivity reset) would never resume: OpenAL marks a stopped source's entire buffer queue as processed instantly, even buffers that were never played, silently discarding every newly queued frame until the source is explicitly rewound to `AL_INITIAL`
+
 ## [0.4.0] - 2026-07-04
 
 ### Added
