@@ -1,7 +1,10 @@
 package com.enn3developer.gtnhvoice.client;
 
 import java.net.InetSocketAddress;
+import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -34,6 +37,8 @@ import com.enn3developer.gtnhvoice.network.NetworkHandler;
 import com.enn3developer.gtnhvoice.network.ServerHelloPacket;
 import com.enn3developer.gtnhvoice.network.ServerRejectPacket;
 import com.enn3developer.gtnhvoice.network.VoiceProtocol;
+import com.enn3developer.gtnhvoice.network.VoiceRosterSnapshotPacket;
+import com.enn3developer.gtnhvoice.network.VoiceRosterUpdatePacket;
 
 import cpw.mods.fml.common.network.NetworkRegistry;
 import cpw.mods.fml.relauncher.Side;
@@ -74,6 +79,15 @@ public final class VoiceClientManager {
     private NoiseSuppressionFilter noiseSuppressionFilter;
     private CaptureSendWorker captureSendWorker;
     private volatile VoiceSourceManager voiceSourceManager;
+
+    /**
+     * Client-side view of the voice roster (UUID -&gt; player name) for every other player
+     * currently in voice, kept current from {@link VoiceRosterSnapshotPacket}/{@link
+     * VoiceRosterUpdatePacket}. The receiving player is never present in their own roster - the
+     * HUD reads local state for self. Looked up by {@link #resolveName} for the who's-talking
+     * HUD and future per-player mute/volume UI.
+     */
+    private final Map<UUID, String> roster = new ConcurrentHashMap<>();
 
     public static VoiceClientManager getInstance() {
         return INSTANCE;
@@ -132,6 +146,34 @@ public final class VoiceClientManager {
         closeUdp();
         session = VoiceClientSession.DISCONNECTED;
         pendingHost = null;
+        roster.clear();
+    }
+
+    /**
+     * Looks up a player's name by their voice sourceId (== player UUID). Backed by {@link #roster},
+     * which MC 1.7.10's tab list cannot provide client-side on its own since it carries no UUIDs.
+     */
+    public Optional<String> resolveName(@NotNull UUID sourceId) {
+        return Optional.ofNullable(roster.get(sourceId));
+    }
+
+    public synchronized void handleRosterSnapshot(@NotNull VoiceRosterSnapshotPacket packet) {
+        roster.clear();
+        roster.putAll(packet.getRoster());
+        GtnhVoice.LOG.info("Client voice roster snapshot applied: {}", roster);
+    }
+
+    public synchronized void handleRosterUpdate(@NotNull VoiceRosterUpdatePacket packet) {
+        if (packet.getMode() == VoiceRosterUpdatePacket.MODE_ADD) {
+            roster.put(packet.getPlayerUuid(), packet.getPlayerName());
+        } else {
+            roster.remove(packet.getPlayerUuid());
+        }
+        GtnhVoice.LOG.info(
+            "Client voice roster updated ({} {}): {}",
+            packet.getMode() == VoiceRosterUpdatePacket.MODE_ADD ? "ADD" : "REMOVE",
+            packet.getPlayerName(),
+            roster);
     }
 
     public synchronized void handleServerHello(@NotNull ServerHelloPacket packet) {

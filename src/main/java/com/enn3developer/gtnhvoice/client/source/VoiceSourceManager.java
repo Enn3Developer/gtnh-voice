@@ -10,6 +10,7 @@ import java.util.concurrent.TimeUnit;
 import org.jetbrains.annotations.NotNull;
 
 import com.enn3developer.gtnhvoice.GtnhVoice;
+import com.enn3developer.gtnhvoice.client.VoiceClientManager;
 import com.enn3developer.gtnhvoice.client.playback.PlaybackManager;
 import com.enn3developer.gtnhvoice.core.api.audio.codec.CodecException;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.clientbound.SourceAudioPacket;
@@ -101,6 +102,16 @@ public final class VoiceSourceManager {
             GtnhVoice.LOG.error("[VoiceSource] Failed to open decoder for sourceId={}", sourceId, e);
             return null;
         }
+
+        // One-shot per new source: proves the roster lookup actually answers the query the
+        // who's-talking HUD will make, without logging on every audio frame.
+        GtnhVoice.LOG.info(
+            "[VoiceSource] New source sourceId={} resolved via roster to name={}",
+            sourceId,
+            VoiceClientManager.getInstance()
+                .resolveName(sourceId)
+                .orElse("<unknown>"));
+
         return source;
     }
 

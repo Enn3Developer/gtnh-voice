@@ -37,6 +37,8 @@ import com.enn3developer.gtnhvoice.network.NetworkHandler;
 import com.enn3developer.gtnhvoice.network.ServerHelloPacket;
 import com.enn3developer.gtnhvoice.network.ServerRejectPacket;
 import com.enn3developer.gtnhvoice.network.VoiceProtocol;
+import com.enn3developer.gtnhvoice.network.VoiceRosterSnapshotPacket;
+import com.enn3developer.gtnhvoice.network.VoiceRosterUpdatePacket;
 
 import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
@@ -178,8 +180,17 @@ public final class VoiceServerManager implements UdpPacketListener {
 
         UUID playerUuid = player.getGameProfile()
             .getId();
+        boolean isNewSession = !sessionsByPlayerUuid.containsKey(playerUuid);
         VoiceServerSession session = sessionsByPlayerUuid
             .computeIfAbsent(playerUuid, id -> createSession(playerUuid, player.getCommandSenderName()));
+
+        if (isNewSession) {
+            // Only the first ClientHello of a session actually creates it (computeIfAbsent) - retried
+            // ClientHellos from the handshake-retry loop must not re-send the roster or re-broadcast the join.
+            pendingSends.add(() -> sendRosterSnapshot(player, playerUuid));
+            pendingSends.add(
+                () -> broadcastRosterUpdate(VoiceRosterUpdatePacket.MODE_ADD, playerUuid, session.getPlayerName()));
+        }
 
         ServerHelloPacket hello = new ServerHelloPacket(
             VoiceProtocol.PROTOCOL_VERSION,
@@ -411,7 +422,69 @@ public final class VoiceServerManager implements UdpPacketListener {
             lastNoSnapshotLogMillis.remove(playerUuid);
             GtnhVoice.LOG.info("Voice session ended for {} (logout)", session.getPlayerName());
             broadcastSourceEnd(session);
+            pendingSends.add(
+                () -> broadcastRosterUpdate(VoiceRosterUpdatePacket.MODE_REMOVE, playerUuid, session.getPlayerName()));
         }
+    }
+
+    /**
+     * Sends {@code recipient} the full current voice roster (every other in-voice player's
+     * UUID+name, excluding {@code recipient} themselves), right after their session is
+     * established. Runs from {@link #pendingSends} on the server thread, since resolving
+     * recipients later touches nothing here - the roster is just the session map.
+     */
+    private void sendRosterSnapshot(@NotNull EntityPlayerMP recipient, @NotNull UUID excludeUuid) {
+        Map<UUID, String> snapshot = new HashMap<>();
+        for (VoiceServerSession s : sessionsByPlayerUuid.values()) {
+            if (!s.getPlayerUuid()
+                .equals(excludeUuid)) {
+                snapshot.put(s.getPlayerUuid(), s.getPlayerName());
+            }
+        }
+
+        NetworkHandler.WRAPPER
+            .sendTo(new VoiceRosterSnapshotPacket(VoiceProtocol.PROTOCOL_VERSION, snapshot), recipient);
+
+        GtnhVoice.LOG.info(
+            "Sent voice roster snapshot to {} ({} entries): {}",
+            recipient.getCommandSenderName(),
+            snapshot.size(),
+            snapshot);
+    }
+
+    /**
+     * Broadcasts one roster add/remove delta to every other player currently in voice. Unlike
+     * {@link #broadcastSourceEnd}, this travels over the reliable {@link NetworkHandler#WRAPPER}
+     * channel rather than raw UDP, so recipients must be resolved as {@code EntityPlayerMP} - only
+     * safe on the server thread, hence always queued through {@link #pendingSends}.
+     */
+    private void broadcastRosterUpdate(byte mode, @NotNull UUID subjectUuid, @NotNull String subjectName) {
+        MinecraftServer server = FMLCommonHandler.instance()
+            .getMinecraftServerInstance();
+        if (server == null) return;
+
+        VoiceRosterUpdatePacket packet = new VoiceRosterUpdatePacket(
+            VoiceProtocol.PROTOCOL_VERSION,
+            mode,
+            subjectUuid,
+            subjectName);
+
+        List<String> recipients = new ArrayList<>();
+        for (EntityPlayerMP recipient : server.getConfigurationManager().playerEntityList) {
+            UUID recipientUuid = recipient.getGameProfile()
+                .getId();
+            if (recipientUuid.equals(subjectUuid) || !sessionsByPlayerUuid.containsKey(recipientUuid)) continue;
+
+            NetworkHandler.WRAPPER.sendTo(packet, recipient);
+            recipients.add(recipient.getCommandSenderName());
+        }
+
+        GtnhVoice.LOG.info(
+            "Broadcast voice roster {} for {} ({}) to [{}]",
+            mode == VoiceRosterUpdatePacket.MODE_ADD ? "ADD" : "REMOVE",
+            subjectName,
+            subjectUuid,
+            String.join(", ", recipients));
     }
 
     /**
