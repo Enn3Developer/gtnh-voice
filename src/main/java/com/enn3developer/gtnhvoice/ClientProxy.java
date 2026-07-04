@@ -2,6 +2,7 @@ package com.enn3developer.gtnhvoice;
 
 import com.enn3developer.gtnhvoice.client.ActivationGate;
 import com.enn3developer.gtnhvoice.client.ClientConnectionEventHandler;
+import com.enn3developer.gtnhvoice.client.MicMuteKeyHandler;
 import com.enn3developer.gtnhvoice.client.VoiceClientManager;
 import com.enn3developer.gtnhvoice.client.VoiceListenerTickHandler;
 import com.enn3developer.gtnhvoice.client.audio.AudioDeviceController;
@@ -20,6 +21,7 @@ public class ClientProxy extends CommonProxy {
     private final VoiceHudRenderer voiceHudRenderer = new VoiceHudRenderer();
     private final AudioDeviceController audioDeviceController = AudioDeviceController.getInstance();
     private final VoiceSettingsKeyHandler voiceSettingsKeyHandler = new VoiceSettingsKeyHandler();
+    private final MicMuteKeyHandler micMuteKeyHandler = new MicMuteKeyHandler();
 
     @Override
     public void preInit(FMLPreInitializationEvent event) {
@@ -30,11 +32,13 @@ public class ClientProxy extends CommonProxy {
         voiceListenerTickHandler.register();
         voiceHudRenderer.register();
         voiceSettingsKeyHandler.register();
+        micMuteKeyHandler.register();
 
         VoiceClientManager.getInstance()
             .bindCaptureManager(captureManager);
         VoiceClientManager.getInstance()
             .bindActivationGate(activationGate);
+        micMuteKeyHandler.bindCaptureManager(captureManager);
 
         // super.preInit() above already ran Config.synchronizeConfiguration, so this is the persisted value, not
         // the compile-time default - captureManager is constructed before preInit fires (FML processes @SidedProxy

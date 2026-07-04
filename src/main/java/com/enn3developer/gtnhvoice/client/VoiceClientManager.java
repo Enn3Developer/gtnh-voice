@@ -119,11 +119,24 @@ public final class VoiceClientManager {
     /**
      * Whether the client currently considers itself to be transmitting/speaking, per the active
      * {@link com.enn3developer.gtnhvoice.Config.ActivationMode}. {@code false} when no gate is bound yet or
-     * nothing has ever been evaluated.
+     * nothing has ever been evaluated, or whenever {@link #isMuted()} - muting sits above VA/PTT, and since a
+     * muted capture thread stops enqueueing frames altogether, {@link ActivationGate}'s own flag can otherwise sit
+     * stale at whatever it was the instant before muting.
      */
     public boolean isSpeaking() {
+        if (isMuted()) return false;
+
         ActivationGate gate = activationGate;
         return gate != null && gate.isSpeaking();
+    }
+
+    /**
+     * Whether the mic is currently self-muted (hard mute via {@code alcCaptureStop} on the capture thread).
+     * {@code false} when no capture manager is bound yet.
+     */
+    public boolean isMuted() {
+        CaptureManager manager = captureManager;
+        return manager != null && manager.isMuted();
     }
 
     /**

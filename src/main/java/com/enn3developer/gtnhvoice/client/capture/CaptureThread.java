@@ -20,7 +20,11 @@ import me.eigenraven.lwjgl3ify.api.Lwjgl3Aware;
  * handing them to a queue for a future consumer to pull from.
  * <p>
  * Must run on its own thread, never the client/render thread: {@code alcCaptureSamples} is polled in a spin/sleep
- * loop and blocking OpenAL calls have no place on the render thread.
+ * loop and blocking OpenAL calls have no place on the render thread. That includes muting: {@link #setMuted(boolean)}
+ * only records a request from whichever thread calls it (e.g. a keybind on the client thread) - the actual
+ * {@code alcCaptureStop}/{@code alcCaptureStart} calls happen inside this thread's own loop, since only the thread
+ * that owns the device may touch its ALC calls. While muted the loop idles with a short sleep instead of polling
+ * {@code ALC_CAPTURE_SAMPLES}, so it never mistakes "no samples because muted" for an error and never exits.
  */
 @Lwjgl3Aware
 public class CaptureThread extends Thread {
@@ -33,14 +37,18 @@ public class CaptureThread extends Thread {
 
     private final BlockingQueue<short[]> frameQueue;
     private final String deviceName;
+    private final boolean startMuted;
 
     private volatile boolean running = true;
     private volatile boolean openedSuccessfully = false;
+    private volatile boolean muteRequested;
 
-    public CaptureThread(BlockingQueue<short[]> frameQueue, String deviceName) {
+    public CaptureThread(BlockingQueue<short[]> frameQueue, String deviceName, boolean startMuted) {
         super("gtnhvoice-capture");
         this.frameQueue = frameQueue;
         this.deviceName = deviceName;
+        this.startMuted = startMuted;
+        this.muteRequested = startMuted;
         setDaemon(true);
     }
 
@@ -51,6 +59,16 @@ public class CaptureThread extends Thread {
     public void shutdown() {
         running = false;
         interrupt();
+    }
+
+    /**
+     * Requests a mute-state change, applied on the capture thread's own loop via {@code
+     * alcCaptureStop}/{@code alcCaptureStart} - never called directly from the requesting thread, since only the
+     * capture thread may touch the ALC device it owns. Safe to call from any thread (e.g. a keybind handler on
+     * the client thread).
+     */
+    public void setMuted(boolean muted) {
+        muteRequested = muted;
     }
 
     @Override
@@ -69,14 +87,21 @@ public class CaptureThread extends Thread {
             return;
         }
 
-        ALC11.alcCaptureStart(device);
-        if (!checkError(device, "alcCaptureStart")) {
-            ALC11.alcCaptureCloseDevice(device);
-            return;
+        boolean muted = startMuted;
+        if (!muted) {
+            ALC11.alcCaptureStart(device);
+            if (!checkError(device, "alcCaptureStart")) {
+                ALC11.alcCaptureCloseDevice(device);
+                return;
+            }
         }
 
         openedSuccessfully = true;
-        GtnhVoice.LOG.info("[Capture] Capture started: {}Hz mono16, {} samples/frame", SAMPLE_RATE, FRAME_SIZE);
+        GtnhVoice.LOG.info(
+            "[Capture] Capture started: {}Hz mono16, {} samples/frame{}",
+            SAMPLE_RATE,
+            FRAME_SIZE,
+            muted ? " (starting muted)" : "");
 
         ShortBuffer frameBuffer = MemoryUtil.memAllocShort(FRAME_SIZE);
         long framesCaptured = 0;
@@ -84,6 +109,32 @@ public class CaptureThread extends Thread {
 
         try {
             while (running) {
+                boolean wantMuted = muteRequested;
+                if (wantMuted != muted) {
+                    if (wantMuted) {
+                        ALC11.alcCaptureStop(device);
+                        checkError(device, "alcCaptureStop (mute)");
+                        GtnhVoice.LOG.info("[Capture] Mic muted: alcCaptureStop issued on capture thread");
+                    } else {
+                        ALC11.alcCaptureStart(device);
+                        checkError(device, "alcCaptureStart (unmute)");
+                        int drained = drainStaleSamples(device, frameBuffer);
+                        GtnhVoice.LOG.info(
+                            "[Capture] Mic unmuted: alcCaptureStart issued on capture thread, drained {} stale samples",
+                            drained);
+                    }
+                    muted = wantMuted;
+                }
+
+                if (muted) {
+                    try {
+                        Thread.sleep(POLL_INTERVAL_MILLIS);
+                    } catch (InterruptedException e) {
+                        break;
+                    }
+                    continue;
+                }
+
                 int available = ALC10.alcGetInteger(device, ALC11.ALC_CAPTURE_SAMPLES);
                 if (!checkError(device, "alcGetInteger(ALC_CAPTURE_SAMPLES)")) break;
 
@@ -130,6 +181,28 @@ public class CaptureThread extends Thread {
 
             GtnhVoice.LOG.info("[Capture] Capture stopped and device closed, {} frames captured total", framesCaptured);
         }
+    }
+
+    /**
+     * Discards whatever samples are sitting in the device's capture buffer - leftover from before {@code
+     * alcCaptureStop}, since stopping does not clear it - so the first frame handed to {@link #frameQueue} after
+     * unmuting is fresh audio, not a stale fragment or a stop/start click. Reuses {@code scratchBuffer} ({@link
+     * #FRAME_SIZE} capacity) in chunks since {@code alcCaptureSamples} needs a buffer at least as large as the
+     * sample count requested.
+     */
+    private int drainStaleSamples(long device, ShortBuffer scratchBuffer) {
+        int drained = 0;
+        int available = ALC10.alcGetInteger(device, ALC11.ALC_CAPTURE_SAMPLES);
+        while (available > 0) {
+            int toDrain = Math.min(available, FRAME_SIZE);
+            scratchBuffer.clear();
+            ALC11.alcCaptureSamples(device, scratchBuffer, toDrain);
+            if (!checkError(device, "alcCaptureSamples (drain)")) break;
+
+            drained += toDrain;
+            available -= toDrain;
+        }
+        return drained;
     }
 
     private void logAvailableDevices() {

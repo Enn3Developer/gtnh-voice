@@ -34,7 +34,9 @@ public class VoiceHudRenderer {
     private static final int LINE_HEIGHT = 10;
     private static final int MARGIN = 2;
     private static final int SPEAKING_DOT_COLOR = 0xFF55FF55;
+    private static final int MUTED_DOT_COLOR = 0xFFFF5555;
     private static final int TEXT_COLOR = 0xFFFFFF;
+    private static final String MUTED_LABEL = "Microphone muted";
 
     /**
      * Registers on {@link MinecraftForge#EVENT_BUS}, NOT {@code FMLCommonHandler.instance().bus()} - unlike
@@ -62,11 +64,20 @@ public class VoiceHudRenderer {
             .getState() != VoiceClientSession.State.CONNECTED) return;
 
         List<String> rows = buildRows(clientManager);
-        if (rows.isEmpty()) return;
+        boolean muted = clientManager.isMuted();
+        if (rows.isEmpty() && !muted) return;
 
         FontRenderer fontRenderer = mc.fontRenderer;
         int x = MARGIN;
         int y = MARGIN;
+
+        if (muted) {
+            Gui.drawRect(x, y + 1, x + DOT_SIZE, y + 1 + DOT_SIZE, MUTED_DOT_COLOR);
+            GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
+            fontRenderer.drawStringWithShadow(MUTED_LABEL, x + DOT_SIZE + DOT_TEXT_GAP, y, TEXT_COLOR);
+            y += LINE_HEIGHT;
+        }
+
         for (String row : rows) {
             Gui.drawRect(x, y + 1, x + DOT_SIZE, y + 1 + DOT_SIZE, SPEAKING_DOT_COLOR);
             GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);

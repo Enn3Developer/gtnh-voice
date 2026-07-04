@@ -17,6 +17,7 @@ public class CaptureManager {
     private final BlockingQueue<short[]> frameQueue = new ArrayBlockingQueue<>(QUEUE_CAPACITY);
 
     private volatile String deviceName; // null = system default
+    private volatile boolean muted; // never persisted - every new capture session starts unmuted
     private CaptureThread captureThread;
 
     /**
@@ -34,11 +35,33 @@ public class CaptureManager {
         return deviceName;
     }
 
+    /**
+     * Whether the mic is currently self-muted (hard mute: the capture device itself has been stopped via {@code
+     * alcCaptureStop}). Safe to poll from any thread, e.g. the HUD renderer.
+     */
+    public boolean isMuted() {
+        return muted;
+    }
+
+    /**
+     * Requests a mute-state change, forwarded to the live {@link CaptureThread} if capture is running - it, not
+     * this manager, actually calls {@code alcCaptureStop}/{@code alcCaptureStart} since it owns the ALC device.
+     * Safe to call from any thread (this is how the mute keybind reaches the capture thread). If no capture
+     * thread is running yet, the request is just remembered for the next {@link #start()}.
+     */
+    public synchronized void setMuted(boolean muted) {
+        this.muted = muted;
+        if (captureThread != null) {
+            captureThread.setMuted(muted);
+        }
+        GtnhVoice.LOG.info("[Capture] Mute requested: {} (speaking state forced false while muted)", muted);
+    }
+
     public synchronized void start() {
         if (isCapturing()) return;
 
         frameQueue.clear();
-        captureThread = new CaptureThread(frameQueue, deviceName);
+        captureThread = new CaptureThread(frameQueue, deviceName, muted);
         captureThread.start();
         GtnhVoice.LOG.info("[Capture] Toggled ON (device={})", deviceName == null ? "<default>" : deviceName);
     }
@@ -54,6 +77,7 @@ public class CaptureManager {
                 .interrupt();
         }
         captureThread = null;
+        muted = false; // every new voice session starts unmuted, per design - not persisted across sessions
         GtnhVoice.LOG.info("[Capture] Toggled OFF");
     }
 
