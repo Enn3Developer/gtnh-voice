@@ -81,8 +81,8 @@ public class PlaybackManager {
         positions.putIfAbsent(sourceId, new double[] { 0, 0, 0 });
         gains.putIfAbsent(sourceId, gain);
 
-        playbackThread.enqueueCommand(
-            () -> playbackThread.createSourceChannel(sourceId, queue, distance, gains.get(sourceId)));
+        playbackThread
+            .enqueueCommand(() -> playbackThread.createSourceChannel(sourceId, queue, distance, gains.get(sourceId)));
     }
 
     /**

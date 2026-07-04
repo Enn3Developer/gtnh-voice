@@ -92,8 +92,7 @@ public class VoiceHudRenderer {
             drawHeadIcon(mc, row.uuid, row.label, headX, y);
 
             GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
-            fontRenderer
-                .drawStringWithShadow(row.label + " (muted)", headX + HEAD_SIZE + HEAD_TEXT_GAP, y, TEXT_COLOR);
+            fontRenderer.drawStringWithShadow(row.label + " (muted)", headX + HEAD_SIZE + HEAD_TEXT_GAP, y, TEXT_COLOR);
             y += LINE_HEIGHT;
         }
 
