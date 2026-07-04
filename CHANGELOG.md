@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Microphone self-mute (default keybind: `M`): hard-mutes the local mic via `alcCaptureStop` on the capture device itself, rather than closing/reopening it, resuming with `alcCaptureStart` and a stale-buffer drain on unmute so the first frame after unmuting isn't a stop/start artifact; capture, activation gate, and the local speaking/HUD state all reflect the mute immediately, client-side only
+- Head icons (face + hat layer) in the who's-talking HUD, drawn to the left of each speaking player's name: reuses a loaded player's own resolved skin when available, otherwise lazily triggers and caches a one-shot `SkinManager` lookup by UUID for speakers outside render range, falling back to the default Steve head whenever a skin can't (yet) be resolved
 
 ## [0.3.2] - 2026-07-04
 

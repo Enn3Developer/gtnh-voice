@@ -160,6 +160,8 @@ public final class VoiceClientManager {
         session = VoiceClientSession.DISCONNECTED;
         pendingHost = null;
         roster.clear();
+        HeadIconCache.getInstance()
+            .clearAll();
     }
 
     /**
@@ -181,6 +183,8 @@ public final class VoiceClientManager {
             roster.put(packet.getPlayerUuid(), packet.getPlayerName());
         } else {
             roster.remove(packet.getPlayerUuid());
+            HeadIconCache.getInstance()
+                .evict(packet.getPlayerUuid());
         }
         GtnhVoice.LOG.info(
             "Client voice roster updated ({} {}): {}",
