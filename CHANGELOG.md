@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-04
+
 ### Added
 
 - Opus packet loss concealment (PLC) in the reception pipeline: an isolated lost/late packet is now masked with a synthesized 20ms frame (`decode(null)`) instead of stalling playback into an AL underrun hiccup. Concealment only fires for genuine mid-stream loss - the missing slot's playback time has passed, a later frame is already buffered (so a sender pause is never mistaken for loss and no audio is ever hallucinated after speech ends), and that later frame isn't itself already due (after a burst outage playback skips ahead to live audio rather than replaying the gap late and dragging extra latency for the rest of the segment) - capped at 5 consecutive synthesized frames (~100ms). A concealed slot consumes its sequence number, so a packet that arrives after its slot was concealed is discarded instead of being fed to the stateful decoder out of order
