@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Head icons in the HUD and Players screen showed the skin's right arm instead of the face for modern 64x64 skins
+
 ## [0.5.0] - 2026-07-04
 
 ### Added

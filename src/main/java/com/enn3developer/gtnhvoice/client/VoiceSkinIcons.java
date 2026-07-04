@@ -18,12 +18,12 @@ import org.lwjgl.opengl.GL11;
  */
 public final class VoiceSkinIcons {
 
-    // MC 1.7.10's SkinManager/ImageBufferDownload normalizes every downloaded skin onto a fixed 64x32 canvas
-    // regardless of the source image's format (legacy 64x32 or the newer 64x64 layout) - see
-    // ImageBufferDownload#parseUserSkin, which always allocates a 64x32 BufferedImage. So the face/hat UVs below
-    // are always sampled against a 64x32 tile, never 64x64.
+    // Vanilla 1.7.10's ImageBufferDownload flattens every skin onto 64x32, but GTNH patches the pipeline to
+    // preserve modern 64x64 skins, so the bound texture's height cannot be assumed - draw() queries the actual
+    // dimensions of the bound texture and normalizes against those. The face/hat blocks sit at the same
+    // 64x-layout coordinates in both formats (and scale uniformly for HD skins), so only the aspect ratio
+    // matters.
     private static final float SKIN_TEX_WIDTH = 64.0F;
-    private static final float SKIN_TEX_HEIGHT = 32.0F;
     private static final float FACE_U = 8.0F;
     private static final float FACE_V = 8.0F;
     private static final float HAT_U = 40.0F;
@@ -68,6 +68,9 @@ public final class VoiceSkinIcons {
 
         mc.getTextureManager()
             .bindTexture(skin);
+        int texWidth = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_WIDTH);
+        int texHeight = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_HEIGHT);
+        float tileHeight = texWidth > 0 ? SKIN_TEX_WIDTH * texHeight / texWidth : SKIN_TEX_WIDTH / 2.0F;
         GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
         GL11.glEnable(GL11.GL_BLEND);
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
@@ -82,7 +85,7 @@ public final class VoiceSkinIcons {
             size,
             size,
             SKIN_TEX_WIDTH,
-            SKIN_TEX_HEIGHT);
+            tileHeight);
         Gui.func_152125_a(
             x,
             y,
@@ -93,7 +96,7 @@ public final class VoiceSkinIcons {
             size,
             size,
             SKIN_TEX_WIDTH,
-            SKIN_TEX_HEIGHT);
+            tileHeight);
 
         GL11.glDisable(GL11.GL_BLEND);
     }
