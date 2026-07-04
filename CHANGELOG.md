@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-04
+
 ### Added
 
 - Microphone self-mute (default keybind: `M`): hard-mutes the local mic via `alcCaptureStop` on the capture device itself, rather than closing/reopening it, resuming with `alcCaptureStart` and a stale-buffer drain on unmute so the first frame after unmuting isn't a stop/start artifact; capture, activation gate, and the local speaking/HUD state all reflect the mute immediately, client-side only
