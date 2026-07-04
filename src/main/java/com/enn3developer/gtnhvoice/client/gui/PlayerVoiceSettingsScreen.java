@@ -7,6 +7,8 @@ import java.util.UUID;
 
 import net.minecraft.client.Minecraft;
 
+import org.jetbrains.annotations.NotNull;
+
 import com.cleanroommc.modularui.api.drawable.IKey;
 import com.cleanroommc.modularui.api.widget.IWidget;
 import com.cleanroommc.modularui.screen.CustomModularScreen;
@@ -29,7 +31,6 @@ import com.enn3developer.gtnhvoice.GtnhVoice;
 import com.enn3developer.gtnhvoice.client.PlayerVoiceController;
 import com.enn3developer.gtnhvoice.client.VoiceClientManager;
 import com.enn3developer.gtnhvoice.client.VoiceSkinIcons;
-import org.jetbrains.annotations.NotNull;
 
 /**
  * Per-player volume/mute screen (ModularUI2): one row per online voice-roster player (excluding self) with head
