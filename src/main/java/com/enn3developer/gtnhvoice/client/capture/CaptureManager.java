@@ -58,8 +58,8 @@ public class CaptureManager {
     }
 
     /**
-     * Live device hotswap (control API, driven for now by {@code AudioDeviceDebugDriver}): stops the current
-     * capture device and opens the newly named one ({@code null} = system default) on a fresh {@link
+     * Live device hotswap (control API, driven by the settings GUI via {@code AudioDeviceController}): stops the
+     * current capture device and opens the newly named one ({@code null} = system default) on a fresh {@link
      * CaptureThread}, without touching the voice session - {@link #frameQueue} is the same instance throughout, so
      * whatever's draining it (the encoder/send pipeline) never notices the swap beyond a brief gap in frames. Safe
      * to call while not currently capturing too; just records the preference for the next {@link #start()}.

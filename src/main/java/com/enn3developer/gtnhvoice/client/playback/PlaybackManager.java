@@ -133,8 +133,9 @@ public class PlaybackManager {
     }
 
     /**
-     * Control-API entry point (currently driven by {@code AudioDeviceDebugDriver}): rebuilds the output device
-     * and/or HRTF mode live, without tearing down any {@code VoiceSource}. No-op (besides a log line) if playback
+     * Control-API entry point (driven by the settings GUI via {@code AudioDeviceController}): rebuilds the output
+     * device and/or HRTF mode live, without tearing down any {@code VoiceSource}. No-op (besides a log line) if
+     * playback
      * isn't currently running - the new selection still gets picked up by the next {@link #start}, since callers
      * are expected to persist it to {@link Config} regardless of whether a rebuild happens here.
      */

@@ -46,10 +46,9 @@ public class Config {
     // switch.
     public static boolean hudEnabled = true;
 
-    // Client-side audio device selection + HRTF, hot-swappable at runtime via AudioDeviceController (currently
-    // driven by DEBUG keybinds - see AudioDeviceDebugDriver - until Task 2's settings GUI lands). Empty string
-    // means "system default" for both device fields, matching what AudioDeviceController hands to the ALC layer
-    // as {@code null}.
+    // Client-side audio device selection + HRTF, hot-swappable at runtime via AudioDeviceController (driven by the
+    // in-game settings GUI). Empty string means "system default" for both device fields, matching what
+    // AudioDeviceController hands to the ALC layer as {@code null}.
     public enum HrtfMode {
         AUTO,
         ON,
@@ -146,14 +145,31 @@ public class Config {
     }
 
     /**
-     * Persists a single live change to disk immediately, without re-synchronizing every other property. Used by
-     * {@link com.enn3developer.gtnhvoice.client.audio.AudioDeviceController} so device/HRTF picks (currently made
-     * via DEBUG keybinds, later the settings GUI) survive a restart right away rather than only on the next
-     * {@link #synchronizeConfiguration}.
+     * Persists every client-editable live setting to disk immediately, without re-synchronizing the
+     * server-authoritative properties above. Used by
+     * {@link com.enn3developer.gtnhvoice.client.audio.AudioDeviceController}
+     * (device/HRTF picks) and the settings GUI (activation mode, VA threshold/hangover, HUD, denoise) so a change
+     * survives a restart right away rather than only on the next {@link #synchronizeConfiguration}.
+     * <p>
+     * Each property is re-fetched via the same value-type overload used to originally create it in
+     * {@link #synchronizeConfiguration} (e.g. {@code vaThresholdDb} was created as a STRING property by
+     * {@code Configuration.getFloat}) - fetching it back via a mismatched-type overload (e.g. the {@code double}
+     * overload) makes {@code Configuration} think the property is being redefined with a new type and resets it to
+     * its default value.
      */
     public static void save() {
         if (configuration == null) return;
 
+        configuration.get(CATEGORY_VOICE, "activationMode", ActivationMode.VOICE_ACTIVATION.name())
+            .set(activationMode);
+        configuration.get(CATEGORY_VOICE, "vaThresholdDb", Double.toString(-40.0))
+            .set(vaThresholdDb);
+        configuration.get(CATEGORY_VOICE, "vaHangoverMs", 250)
+            .set(vaHangoverMs);
+        configuration.get(CATEGORY_VOICE, "denoiseEnabled", true)
+            .set(denoiseEnabled);
+        configuration.get(CATEGORY_VOICE, "hudEnabled", true)
+            .set(hudEnabled);
         configuration.get(CATEGORY_VOICE, "inputDevice", "")
             .set(inputDevice);
         configuration.get(CATEGORY_VOICE, "outputDevice", "")

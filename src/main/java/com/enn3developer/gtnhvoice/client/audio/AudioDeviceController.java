@@ -19,8 +19,7 @@ import com.enn3developer.gtnhvoice.client.source.VoiceSourceManager;
  * active, pushes it live to the running audio threads; if no session is active, the persisted value is simply
  * picked up the next time capture/playback starts.
  * <p>
- * For now the only callers are the DEBUG keybinds in {@code AudioDeviceDebugDriver} - this is the same API a future
- * settings GUI will call instead.
+ * Called by {@code GuiVoiceSettings} (the in-game settings screen).
  */
 public final class AudioDeviceController {
 
