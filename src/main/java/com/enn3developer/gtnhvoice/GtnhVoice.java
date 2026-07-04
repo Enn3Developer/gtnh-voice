@@ -11,7 +11,14 @@ import cpw.mods.fml.common.event.FMLPreInitializationEvent;
 import cpw.mods.fml.common.event.FMLServerStartingEvent;
 import cpw.mods.fml.common.event.FMLServerStoppingEvent;
 
-@Mod(modid = GtnhVoice.MODID, version = Tags.VERSION, name = "GTNH Voice", acceptedMinecraftVersions = "[1.7.10]")
+@Mod(
+    modid = GtnhVoice.MODID,
+    version = Tags.VERSION,
+    name = "GTNH Voice",
+    acceptedMinecraftVersions = "[1.7.10]",
+    // ModularUI2 renders every settings screen (see client.gui); hard-required so a missing/outdated
+    // MUI2 fails fast at load instead of crashing on first keybind press.
+    dependencies = "required-after:modularui2")
 public class GtnhVoice {
 
     public static final String MODID = "gtnhvoice";

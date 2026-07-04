@@ -5,13 +5,15 @@ import net.minecraft.client.settings.KeyBinding;
 
 import org.lwjgl.input.Keyboard;
 
+import com.cleanroommc.modularui.factory.ClientGUI;
+
 import cpw.mods.fml.client.registry.ClientRegistry;
 import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import cpw.mods.fml.common.gameevent.TickEvent;
 
 /**
- * Opens {@link GuiVoiceSettings} on a dedicated keybind, defaulting to comma ({@code ,}) - unused by vanilla,
+ * Opens {@link VoiceSettingsScreen} on a dedicated keybind, defaulting to comma ({@code ,}) - unused by vanilla,
  * rebindable via Controls like any other key. Only opens over the in-game HUD, not over another already-open
  * screen, mirroring how vanilla's own GUI-opening keys behave.
  * <p>
@@ -49,6 +51,6 @@ public class VoiceSettingsKeyHandler {
         Minecraft mc = Minecraft.getMinecraft();
         if (mc.currentScreen != null) return;
 
-        mc.displayGuiScreen(new GuiVoiceSettings());
+        ClientGUI.open(new VoiceSettingsScreen());
     }
 }

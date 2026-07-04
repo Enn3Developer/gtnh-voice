@@ -36,6 +36,11 @@
 dependencies {
     //runtimeOnlyNonPublishable("com.github.GTNewHorizons:NotEnoughItems:2.7.69-GTNH:dev")
 
+    // GTNH's ModularUI2 GUI framework (widget tree, layout engine, client/synced screens, JSON theming),
+    // used for every settings screen; a hard required-after runtime dependency (see GtnhVoice's @Mod
+    // dependencies), which is fine since GTNH packs ship it anyway.
+    implementation("com.github.GTNewHorizons:ModularUI2:2.3.79-1.7.10:dev")
+
     // Compile-time access to lwjgl3ify's API for Java 17-25 / LWJGL3 runtime support, not published as a
     // dependency of this mod. Deliberately not runtimeOnlyNonPublishable: that adds lwjgl3ify's relauncher
     // tweaker to both runClient and runServer, but the relauncher does not support server launches and
