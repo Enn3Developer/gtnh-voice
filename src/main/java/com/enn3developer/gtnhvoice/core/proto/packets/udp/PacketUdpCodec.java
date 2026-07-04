@@ -8,6 +8,8 @@ import java.io.IOException;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.jetbrains.annotations.NotNull;
 
 import com.enn3developer.gtnhvoice.core.api.encryption.Encryption;
@@ -27,6 +29,8 @@ import com.google.common.io.ByteArrayDataOutput;
 import com.google.common.io.ByteStreams;
 
 public class PacketUdpCodec {
+
+    private static final Logger LOGGER = LogManager.getLogger(PacketUdpCodec.class);
 
     // magic number is used to filter packets received not from us
     private static final int MAGIC_NUMBER = 0x4e9004e9;
@@ -62,7 +66,11 @@ public class PacketUdpCodec {
         try {
             packet.write(body);
         } catch (IOException e) {
-            e.printStackTrace();
+            LOGGER.error(
+                "Failed to serialize {}",
+                packet.getClass()
+                    .getSimpleName(),
+                e);
             return null;
         }
 
@@ -70,7 +78,11 @@ public class PacketUdpCodec {
         try {
             encryptedBody = encryption.encrypt(body.toByteArray());
         } catch (EncryptionException e) {
-            e.printStackTrace();
+            LOGGER.error(
+                "Failed to encrypt {}",
+                packet.getClass()
+                    .getSimpleName(),
+                e);
             return null;
         }
 
@@ -102,15 +114,13 @@ public class PacketUdpCodec {
         }
 
         Packet<?> packet = PACKETS.byType(in.readByte(), direction);
-        if (packet != null) {
-            UUID secret = PacketUtil.readUUID(in);
-            long timestamp = in.readLong();
-            byte[] encryptedBody = PacketUtil.readBytes(in, MAX_ENCRYPTED_BODY_SIZE);
+        if (packet == null) return Optional.empty();
 
-            return Optional.of(new PacketUdp(secret, timestamp, packet, encryptedBody));
-        }
+        UUID secret = PacketUtil.readUUID(in);
+        long timestamp = in.readLong();
+        byte[] encryptedBody = PacketUtil.readBytes(in, MAX_ENCRYPTED_BODY_SIZE);
 
-        return Optional.empty();
+        return Optional.of(new PacketUdp(secret, timestamp, packet, encryptedBody));
     }
 
     private PacketUdpCodec() {}

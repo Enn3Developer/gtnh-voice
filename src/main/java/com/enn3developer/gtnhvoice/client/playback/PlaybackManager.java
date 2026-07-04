@@ -127,7 +127,7 @@ public class PlaybackManager {
     /**
      * Submits a decoded 960-sample mono PCM frame for {@code sourceId}. Drops the oldest queued frame if that
      * source's queue is full, to keep playback latency bounded rather than growing unboundedly under sustained
-     * overload. No-op if the source hasn't been registered via {@link #createSource(UUID, int)}.
+     * overload. No-op if the source hasn't been registered via {@link #createSource(UUID, int, float)}.
      */
     public void submit(UUID sourceId, short[] frame) {
         BlockingQueue<short[]> queue = frameQueues.get(sourceId);

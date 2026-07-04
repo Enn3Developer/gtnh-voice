@@ -47,21 +47,20 @@ public final class HeadIconCache {
     public ResourceLocation get(UUID uuid, String name) {
         ResourceLocation cached = resolved.get(uuid);
         if (cached != null) return cached;
+        if (!requested.add(uuid)) return null; // load already in flight (or failed for good)
 
-        if (requested.add(uuid)) {
-            GtnhVoice.LOG
-                .info("Head icon: triggered skin load for {} ({}), showing Steve fallback until resolved", uuid, name);
+        GtnhVoice.LOG
+            .info("Head icon: triggered skin load for {} ({}), showing Steve fallback until resolved", uuid, name);
 
-            GameProfile profile = new GameProfile(uuid, name);
-            SkinManager skinManager = Minecraft.getMinecraft()
-                .func_152342_ad();
-            skinManager.func_152790_a(profile, (skinPart, skinLoc) -> {
-                if (skinPart == Type.SKIN) {
-                    resolved.put(uuid, skinLoc);
-                    GtnhVoice.LOG.info("Head icon: resolved and cached skin for {} ({}) -> {}", uuid, name, skinLoc);
-                }
-            }, true);
-        }
+        GameProfile profile = new GameProfile(uuid, name);
+        SkinManager skinManager = Minecraft.getMinecraft()
+            .func_152342_ad();
+        skinManager.func_152790_a(profile, (skinPart, skinLoc) -> {
+            if (skinPart != Type.SKIN) return;
+
+            resolved.put(uuid, skinLoc);
+            GtnhVoice.LOG.info("Head icon: resolved and cached skin for {} ({}) -> {}", uuid, name, skinLoc);
+        }, true);
 
         return null;
     }

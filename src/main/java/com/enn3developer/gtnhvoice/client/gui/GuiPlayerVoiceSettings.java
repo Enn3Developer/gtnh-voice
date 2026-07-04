@@ -17,6 +17,7 @@ import com.enn3developer.gtnhvoice.GtnhVoice;
 import com.enn3developer.gtnhvoice.client.PlayerVoiceController;
 import com.enn3developer.gtnhvoice.client.VoiceClientManager;
 import com.enn3developer.gtnhvoice.client.VoiceSkinIcons;
+import com.github.bsideup.jabel.Desugar;
 
 import cpw.mods.fml.client.config.GuiSlider;
 
@@ -142,10 +143,11 @@ public class GuiPlayerVoiceSettings extends GuiScreen implements GuiSlider.ISlid
         super.handleMouseInput();
 
         if (maxScroll <= 0) return;
+
         int wheel = Mouse.getEventDWheel();
-        if (wheel != 0) {
-            updateScroll(wheel > 0 ? -SCROLL_STEP : SCROLL_STEP);
-        }
+        if (wheel == 0) return;
+
+        updateScroll(wheel > 0 ? -SCROLL_STEP : SCROLL_STEP);
     }
 
     @Override
@@ -223,8 +225,7 @@ public class GuiPlayerVoiceSettings extends GuiScreen implements GuiSlider.ISlid
             return;
         }
 
-        if (button instanceof PlayerMuteButton) {
-            PlayerMuteButton muteButton = (PlayerMuteButton) button;
+        if (button instanceof PlayerMuteButton muteButton) {
             muteButton.muted = !muteButton.muted;
             muteButton.displayString = muteButton.muted ? "Unmute" : "Mute";
             PlayerVoiceController.getInstance()
@@ -235,8 +236,7 @@ public class GuiPlayerVoiceSettings extends GuiScreen implements GuiSlider.ISlid
 
     @Override
     public void onChangeSliderValue(GuiSlider slider) {
-        if (slider instanceof PlayerVolumeSlider) {
-            PlayerVolumeSlider volumeSlider = (PlayerVolumeSlider) slider;
+        if (slider instanceof PlayerVolumeSlider volumeSlider) {
             PlayerVoiceController.getInstance()
                 .setVolume(volumeSlider.playerUuid, volumeSlider.getValueInt() / 100.0f);
         }
@@ -247,22 +247,9 @@ public class GuiPlayerVoiceSettings extends GuiScreen implements GuiSlider.ISlid
         Config.save();
     }
 
-    private static final class PlayerRow {
-
-        final UUID uuid;
-        final String name;
-        final PlayerVolumeSlider slider;
-        final PlayerMuteButton muteButton;
-        final int baseY;
-
-        PlayerRow(UUID uuid, String name, PlayerVolumeSlider slider, PlayerMuteButton muteButton, int baseY) {
-            this.uuid = uuid;
-            this.name = name;
-            this.slider = slider;
-            this.muteButton = muteButton;
-            this.baseY = baseY;
-        }
-    }
+    @Desugar
+    private record PlayerRow(UUID uuid, String name, PlayerVolumeSlider slider, PlayerMuteButton muteButton,
+        int baseY) {}
 
     /**
      * Forge's {@link GuiSlider} carrying the {@code UUID} it controls, so {@link #onChangeSliderValue} (a single

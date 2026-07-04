@@ -98,12 +98,6 @@ public final class VoiceSourceManager {
     }
 
     /**
-     * Snapshot of sourceIds currently in an active speech segment, for the who's-talking HUD. Cheap and
-     * read-only: reuses the inactivity-timeout state each {@link VoiceSource} already tracks rather than adding a
-     * separate speaking-detection mechanism. Safe to call every render frame from the client thread while the
-     * watchdog thread concurrently flips segment state.
-     */
-    /**
      * The session's shared {@link PlaybackManager}, for {@code AudioDeviceController} to drive live output-device/
      * HRTF rebuilds against. Never {@code null} once constructed, but only meaningfully "playing" between
      * {@link #start()} and {@link #stop()}.
@@ -112,13 +106,19 @@ public final class VoiceSourceManager {
         return playbackManager;
     }
 
+    /**
+     * Snapshot of sourceIds currently in an active speech segment, for the who's-talking HUD. Cheap and
+     * read-only: reuses the inactivity-timeout state each {@link VoiceSource} already tracks rather than adding a
+     * separate speaking-detection mechanism. Safe to call every render frame from the client thread while the
+     * watchdog thread concurrently flips segment state.
+     */
     public Set<UUID> getSpeakingSourceIds() {
         Set<UUID> speaking = new HashSet<>();
         for (Map.Entry<UUID, VoiceSource> entry : sources.entrySet()) {
-            if (entry.getValue()
-                .isSegmentActive()) {
-                speaking.add(entry.getKey());
-            }
+            if (!entry.getValue()
+                .isSegmentActive()) continue;
+
+            speaking.add(entry.getKey());
         }
         return speaking;
     }

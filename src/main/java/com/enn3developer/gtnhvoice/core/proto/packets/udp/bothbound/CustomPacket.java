@@ -9,11 +9,16 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import java.io.IOException;
 
 import com.enn3developer.gtnhvoice.core.proto.packets.Packet;
+import com.enn3developer.gtnhvoice.core.proto.packets.PacketUtil;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.PacketUdpHandler;
 import com.google.common.io.ByteArrayDataInput;
 import com.google.common.io.ByteArrayDataOutput;
 
 public class CustomPacket implements Packet<PacketUdpHandler> {
+
+    // Mirrors PacketUdpCodec's bound on the whole encrypted body - a custom payload can never legitimately
+    // exceed what the datagram itself is allowed to carry.
+    private static final int MAX_PAYLOAD_SIZE = 4096;
 
     private String addonId;
     private byte[] payload;
@@ -36,6 +41,7 @@ public class CustomPacket implements Packet<PacketUdpHandler> {
     @Override
     public void read(ByteArrayDataInput in) throws IOException {
         this.addonId = in.readUTF();
+        this.payload = PacketUtil.readBytes(in, MAX_PAYLOAD_SIZE);
     }
 
     @Override

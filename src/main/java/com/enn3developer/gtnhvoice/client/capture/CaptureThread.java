@@ -109,66 +109,44 @@ public class CaptureThread extends Thread {
 
         try {
             while (running) {
-                boolean wantMuted = muteRequested;
-                if (wantMuted != muted) {
-                    if (wantMuted) {
-                        ALC11.alcCaptureStop(device);
-                        checkError(device, "alcCaptureStop (mute)");
-                        GtnhVoice.LOG.info("[Capture] Mic muted: alcCaptureStop issued on capture thread");
-                    } else {
-                        ALC11.alcCaptureStart(device);
-                        checkError(device, "alcCaptureStart (unmute)");
-                        int drained = drainStaleSamples(device, frameBuffer);
-                        GtnhVoice.LOG.info(
-                            "[Capture] Mic unmuted: alcCaptureStart issued on capture thread, drained {} stale samples",
-                            drained);
-                    }
-                    muted = wantMuted;
-                }
+                muted = applyMuteTransition(device, frameBuffer, muted);
 
                 if (muted) {
-                    try {
-                        Thread.sleep(POLL_INTERVAL_MILLIS);
-                    } catch (InterruptedException e) {
-                        break;
-                    }
+                    if (!sleepPollInterval()) break;
                     continue;
                 }
 
                 int available = ALC10.alcGetInteger(device, ALC11.ALC_CAPTURE_SAMPLES);
                 if (!checkError(device, "alcGetInteger(ALC_CAPTURE_SAMPLES)")) break;
 
-                if (available >= FRAME_SIZE) {
-                    frameBuffer.clear();
-                    ALC11.alcCaptureSamples(device, frameBuffer, FRAME_SIZE);
-                    if (!checkError(device, "alcCaptureSamples")) break;
+                if (available < FRAME_SIZE) {
+                    if (!sleepPollInterval()) break;
+                    continue;
+                }
 
-                    short[] frame = new short[FRAME_SIZE];
-                    frameBuffer.get(frame);
-                    framesCaptured++;
+                frameBuffer.clear();
+                ALC11.alcCaptureSamples(device, frameBuffer, FRAME_SIZE);
+                if (!checkError(device, "alcCaptureSamples")) break;
 
-                    if (!frameQueue.offer(frame)) {
-                        frameQueue.poll();
-                        frameQueue.offer(frame);
-                    }
+                short[] frame = new short[FRAME_SIZE];
+                frameBuffer.get(frame);
+                framesCaptured++;
 
-                    long now = System.currentTimeMillis();
-                    if (now - lastLogTime >= LOG_INTERVAL_MILLIS) {
-                        double rmsDb = AudioUtil.calculateAudioLevel(frame, 0, frame.length);
-                        short peak = AudioUtil.getHighestAbsoluteSample(frame);
-                        GtnhVoice.LOG.info(
-                            "[Capture] frames={} lastFrameRmsDb={} lastFramePeak={}",
-                            framesCaptured,
-                            Math.round(rmsDb),
-                            peak);
-                        lastLogTime = now;
-                    }
-                } else {
-                    try {
-                        Thread.sleep(POLL_INTERVAL_MILLIS);
-                    } catch (InterruptedException e) {
-                        break;
-                    }
+                if (!frameQueue.offer(frame)) {
+                    frameQueue.poll();
+                    frameQueue.offer(frame);
+                }
+
+                long now = System.currentTimeMillis();
+                if (now - lastLogTime >= LOG_INTERVAL_MILLIS) {
+                    double rmsDb = AudioUtil.calculateAudioLevel(frame, 0, frame.length);
+                    short peak = AudioUtil.getHighestAbsoluteSample(frame);
+                    GtnhVoice.LOG.info(
+                        "[Capture] frames={} lastFrameRmsDb={} lastFramePeak={}",
+                        framesCaptured,
+                        Math.round(rmsDb),
+                        peak);
+                    lastLogTime = now;
                 }
             }
         } finally {
@@ -180,6 +158,40 @@ public class CaptureThread extends Thread {
             ALC11.alcCaptureCloseDevice(device);
 
             GtnhVoice.LOG.info("[Capture] Capture stopped and device closed, {} frames captured total", framesCaptured);
+        }
+    }
+
+    /**
+     * Applies a pending mute-state change (requested via {@link #setMuted}) on this thread, which owns the ALC
+     * device: {@code alcCaptureStop} on mute, {@code alcCaptureStart} + stale-sample drain on unmute. Returns the
+     * new effective mute state (unchanged if no transition was pending).
+     */
+    private boolean applyMuteTransition(long device, ShortBuffer frameBuffer, boolean muted) {
+        boolean wantMuted = muteRequested;
+        if (wantMuted == muted) return muted;
+
+        if (wantMuted) {
+            ALC11.alcCaptureStop(device);
+            checkError(device, "alcCaptureStop (mute)");
+            GtnhVoice.LOG.info("[Capture] Mic muted: alcCaptureStop issued on capture thread");
+            return true;
+        }
+
+        ALC11.alcCaptureStart(device);
+        checkError(device, "alcCaptureStart (unmute)");
+        int drained = drainStaleSamples(device, frameBuffer);
+        GtnhVoice.LOG
+            .info("[Capture] Mic unmuted: alcCaptureStart issued on capture thread, drained {} stale samples", drained);
+        return false;
+    }
+
+    /** Sleeps one poll interval; returns {@code false} if interrupted, signalling the loop to exit. */
+    private static boolean sleepPollInterval() {
+        try {
+            Thread.sleep(POLL_INTERVAL_MILLIS);
+            return true;
+        } catch (InterruptedException e) {
+            return false;
         }
     }
 

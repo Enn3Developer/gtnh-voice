@@ -93,7 +93,9 @@ public class CaptureManager {
         if (!isCapturing()) return;
 
         GtnhVoice.LOG.info("[Capture] Hotswapping input device to {}", deviceName == null ? "<default>" : deviceName);
+        boolean wasMuted = muted;
         stop();
+        muted = wasMuted; // a device hotswap is not a new session - don't silently unmute the mic
         start();
     }
 }

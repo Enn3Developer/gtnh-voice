@@ -21,6 +21,7 @@ import com.enn3developer.gtnhvoice.client.VoiceClientManager;
 import com.enn3developer.gtnhvoice.client.VoiceClientSession;
 import com.enn3developer.gtnhvoice.client.VoiceSkinIcons;
 import com.enn3developer.gtnhvoice.client.source.VoiceSourceManager;
+import com.github.bsideup.jabel.Desugar;
 
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 
@@ -120,9 +121,9 @@ public class VoiceHudRenderer {
 
         for (Map.Entry<UUID, String> entry : clientManager.getRosterView()
             .entrySet()) {
-            if (settings.isMuted(entry.getKey())) {
-                rows.add(new SpeakerRow(entry.getKey(), entry.getValue()));
-            }
+            if (!settings.isMuted(entry.getKey())) continue;
+
+            rows.add(new SpeakerRow(entry.getKey(), entry.getValue()));
         }
 
         rows.sort((a, b) -> String.CASE_INSENSITIVE_ORDER.compare(a.label, b.label));
@@ -175,14 +176,6 @@ public class VoiceHudRenderer {
         VoiceSkinIcons.draw(mc, uuid, label, x, y, HEAD_SIZE);
     }
 
-    private static final class SpeakerRow {
-
-        final UUID uuid;
-        final String label;
-
-        SpeakerRow(UUID uuid, String label) {
-            this.uuid = uuid;
-            this.label = label;
-        }
-    }
+    @Desugar
+    private record SpeakerRow(UUID uuid, String label) {}
 }

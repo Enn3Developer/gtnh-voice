@@ -23,6 +23,7 @@ import org.jetbrains.annotations.NotNull;
 
 import com.enn3developer.gtnhvoice.Config;
 import com.enn3developer.gtnhvoice.GtnhVoice;
+import com.enn3developer.gtnhvoice.core.api.util.LogThrottle;
 import com.enn3developer.gtnhvoice.core.encryption.aes.AesEncryption;
 import com.enn3developer.gtnhvoice.core.proto.packets.Packet;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.PacketUdp;
@@ -237,10 +238,7 @@ public final class VoiceServerManager implements UdpPacketListener {
     public void onPacket(@NotNull PacketUdp packetUdp, @NotNull InetSocketAddress sender) {
         VoiceServerSession session = sessionsBySecret.get(packetUdp.getSecret());
         if (session == null) {
-            long now = System.currentTimeMillis();
-            long last = lastUnknownSecretLogMillis.get();
-            if (now - last >= UNKNOWN_SECRET_LOG_THROTTLE_MILLIS
-                && lastUnknownSecretLogMillis.compareAndSet(last, now)) {
+            if (LogThrottle.shouldLog(lastUnknownSecretLogMillis, UNKNOWN_SECRET_LOG_THROTTLE_MILLIS)) {
                 GtnhVoice.LOG.warn("Dropped UDP packet with unknown secret from {}", sender);
             }
             return;
@@ -343,9 +341,7 @@ public final class VoiceServerManager implements UdpPacketListener {
     private void logRoutingThrottled(@NotNull VoiceServerSession speakerSession, @NotNull PlayerSnapshot speakerPos,
         @NotNull List<String> recipients, @NotNull List<String> excluded) {
         AtomicLong last = lastRoutingLogMillis.computeIfAbsent(speakerSession.getPlayerUuid(), id -> new AtomicLong());
-        long now = System.currentTimeMillis();
-        long previous = last.get();
-        if (now - previous < ROUTING_LOG_THROTTLE_MILLIS || !last.compareAndSet(previous, now)) return;
+        if (!LogThrottle.shouldLog(last, ROUTING_LOG_THROTTLE_MILLIS)) return;
 
         GtnhVoice.LOG.info(
             "routing from {} pos({}, {}, {}) dim={} -> recipients [{}] excluded [{}]",
@@ -361,9 +357,7 @@ public final class VoiceServerManager implements UdpPacketListener {
     private void logNoSnapshotThrottled(@NotNull VoiceServerSession speakerSession) {
         AtomicLong last = lastNoSnapshotLogMillis
             .computeIfAbsent(speakerSession.getPlayerUuid(), id -> new AtomicLong());
-        long now = System.currentTimeMillis();
-        long previous = last.get();
-        if (now - previous < NO_SNAPSHOT_LOG_THROTTLE_MILLIS || !last.compareAndSet(previous, now)) return;
+        if (!LogThrottle.shouldLog(last, NO_SNAPSHOT_LOG_THROTTLE_MILLIS)) return;
 
         GtnhVoice.LOG.warn(
             "Dropped audio frame from {}: no position snapshot yet (just joined?)",
@@ -416,15 +410,15 @@ public final class VoiceServerManager implements UdpPacketListener {
         UUID playerUuid = event.player.getGameProfile()
             .getId();
         VoiceServerSession session = sessionsByPlayerUuid.remove(playerUuid);
-        if (session != null) {
-            sessionsBySecret.remove(session.getSecret());
-            lastRoutingLogMillis.remove(playerUuid);
-            lastNoSnapshotLogMillis.remove(playerUuid);
-            GtnhVoice.LOG.info("Voice session ended for {} (logout)", session.getPlayerName());
-            broadcastSourceEnd(session);
-            pendingSends.add(
-                () -> broadcastRosterUpdate(VoiceRosterUpdatePacket.MODE_REMOVE, playerUuid, session.getPlayerName()));
-        }
+        if (session == null) return;
+
+        sessionsBySecret.remove(session.getSecret());
+        lastRoutingLogMillis.remove(playerUuid);
+        lastNoSnapshotLogMillis.remove(playerUuid);
+        GtnhVoice.LOG.info("Voice session ended for {} (logout)", session.getPlayerName());
+        broadcastSourceEnd(session);
+        pendingSends
+            .add(() -> broadcastRosterUpdate(VoiceRosterUpdatePacket.MODE_REMOVE, playerUuid, session.getPlayerName()));
     }
 
     /**
@@ -436,10 +430,10 @@ public final class VoiceServerManager implements UdpPacketListener {
     private void sendRosterSnapshot(@NotNull EntityPlayerMP recipient, @NotNull UUID excludeUuid) {
         Map<UUID, String> snapshot = new HashMap<>();
         for (VoiceServerSession s : sessionsByPlayerUuid.values()) {
-            if (!s.getPlayerUuid()
-                .equals(excludeUuid)) {
-                snapshot.put(s.getPlayerUuid(), s.getPlayerName());
-            }
+            if (s.getPlayerUuid()
+                .equals(excludeUuid)) continue;
+
+            snapshot.put(s.getPlayerUuid(), s.getPlayerName());
         }
 
         NetworkHandler.WRAPPER
@@ -522,17 +516,17 @@ public final class VoiceServerManager implements UdpPacketListener {
         while (it.hasNext()) {
             VoiceServerSession session = it.next()
                 .getValue();
-            if (now - session.getLastSeenMillis() > SESSION_TIMEOUT_MILLIS) {
-                it.remove();
-                sessionsByPlayerUuid.remove(session.getPlayerUuid());
-                lastRoutingLogMillis.remove(session.getPlayerUuid());
-                lastNoSnapshotLogMillis.remove(session.getPlayerUuid());
-                GtnhVoice.LOG.info(
-                    "Reaped stale voice session for {} (secret {}, no traffic for {}ms)",
-                    session.getPlayerName(),
-                    VoiceProtocol.abbreviateSecret(session.getSecret()),
-                    now - session.getLastSeenMillis());
-            }
+            if (now - session.getLastSeenMillis() <= SESSION_TIMEOUT_MILLIS) continue;
+
+            it.remove();
+            sessionsByPlayerUuid.remove(session.getPlayerUuid());
+            lastRoutingLogMillis.remove(session.getPlayerUuid());
+            lastNoSnapshotLogMillis.remove(session.getPlayerUuid());
+            GtnhVoice.LOG.info(
+                "Reaped stale voice session for {} (secret {}, no traffic for {}ms)",
+                session.getPlayerName(),
+                VoiceProtocol.abbreviateSecret(session.getSecret()),
+                now - session.getLastSeenMillis());
         }
     }
 }

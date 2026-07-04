@@ -36,19 +36,28 @@ public final class VoiceSkinIcons {
     private VoiceSkinIcons() {}
 
     public static ResourceLocation resolveSkin(Minecraft mc, UUID uuid, String label) {
-        if (mc.theWorld != null) {
-            for (EntityPlayer player : mc.theWorld.playerEntities) {
-                if (player instanceof AbstractClientPlayer && uuid.equals(
-                    player.getGameProfile()
-                        .getId())) {
-                    return ((AbstractClientPlayer) player).getLocationSkin();
-                }
-            }
-        }
+        ResourceLocation loaded = loadedPlayerSkin(mc, uuid);
+        if (loaded != null) return loaded;
 
         ResourceLocation cached = HeadIconCache.getInstance()
             .get(uuid, label);
         return cached != null ? cached : AbstractClientPlayer.locationStevePng;
+    }
+
+    private static ResourceLocation loadedPlayerSkin(Minecraft mc, UUID uuid) {
+        if (mc.theWorld == null) return null;
+
+        for (EntityPlayer player : mc.theWorld.playerEntities) {
+            if (!(player instanceof AbstractClientPlayer)) continue;
+            if (!uuid.equals(
+                player.getGameProfile()
+                    .getId()))
+                continue;
+
+            return ((AbstractClientPlayer) player).getLocationSkin();
+        }
+
+        return null;
     }
 
     /**

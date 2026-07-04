@@ -156,10 +156,11 @@ public class GuiVoiceSettings extends GuiScreen implements GuiSlider.ISlider {
         super.handleMouseInput();
 
         if (maxScroll <= 0) return;
+
         int wheel = Mouse.getEventDWheel();
-        if (wheel != 0) {
-            updateScroll(wheel > 0 ? -SCROLL_STEP : SCROLL_STEP);
-        }
+        if (wheel == 0) return;
+
+        updateScroll(wheel > 0 ? -SCROLL_STEP : SCROLL_STEP);
     }
 
     @Override

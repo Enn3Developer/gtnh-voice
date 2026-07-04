@@ -2,6 +2,7 @@ package com.enn3developer.gtnhvoice.core.audio.jitter;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
@@ -92,6 +93,57 @@ class AdaptiveJitterBufferTest {
         assertTrue(
             jitteryDelay > PACKET_DELAY_FRAMES * FRAME_MILLIS,
             "adaptive delay should grow above the base pre-buffer under sustained jitter, was " + jitteryDelay);
+    }
+
+    @Test
+    void discardThroughDropsLateFramesAndPeekTracksTheHead() {
+        FakeClock clock = new FakeClock();
+        AdaptiveJitterBuffer buffer = new AdaptiveJitterBuffer(clock, PACKET_DELAY_FRAMES);
+
+        buffer.offer(3, payloadFor(3));
+        buffer.offer(5, payloadFor(5));
+        buffer.offer(7, payloadFor(7));
+
+        assertEquals(
+            3L,
+            buffer.peekSequenceNumber()
+                .longValue());
+
+        buffer.discardThrough(5);
+        assertEquals(
+            7L,
+            buffer.peekSequenceNumber()
+                .longValue(),
+            "frames at or below the discard watermark must be dropped");
+
+        buffer.discardThrough(7);
+        assertTrue(buffer.isEmpty());
+        assertNull(buffer.peekSequenceNumber());
+    }
+
+    @Test
+    void overdueQueryTracksTheScheduleEvenForSequencesThatNeverArrived() {
+        FakeClock clock = new FakeClock();
+        AdaptiveJitterBuffer buffer = new AdaptiveJitterBuffer(clock, PACKET_DELAY_FRAMES);
+
+        assertFalse(buffer.isSequenceOverdue(0), "nothing can be overdue before the buffer is anchored");
+
+        clock.set(0);
+        buffer.offer(0, payloadFor(0));
+        // The adaptive delay is initialized to the base pre-buffer before the estimator warms up, so slot 0
+        // becomes overdue at 2x the base delay.
+        long slot0Overdue = 2L * PACKET_DELAY_FRAMES * FRAME_MILLIS;
+
+        clock.set(slot0Overdue - 1);
+        assertFalse(buffer.isSequenceOverdue(0));
+        clock.set(slot0Overdue);
+        assertTrue(buffer.isSequenceOverdue(0));
+
+        // Sequence 1 was never offered, but its slot is one frame after slot 0's regardless.
+        clock.set(slot0Overdue + FRAME_MILLIS - 1);
+        assertFalse(buffer.isSequenceOverdue(1));
+        clock.set(slot0Overdue + FRAME_MILLIS);
+        assertTrue(buffer.isSequenceOverdue(1));
     }
 
     private static void assertDoesNotThrowWhileDraining(Runnable runnable) {

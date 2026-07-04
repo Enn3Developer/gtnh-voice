@@ -22,6 +22,7 @@ import com.enn3developer.gtnhvoice.client.capture.CaptureManager;
 import com.enn3developer.gtnhvoice.client.source.VoiceSourceManager;
 import com.enn3developer.gtnhvoice.core.api.audio.codec.AudioEncoder;
 import com.enn3developer.gtnhvoice.core.api.audio.codec.CodecException;
+import com.enn3developer.gtnhvoice.core.api.util.LogThrottle;
 import com.enn3developer.gtnhvoice.core.audio.codec.opus.OpusCodecSupplier;
 import com.enn3developer.gtnhvoice.core.audio.filter.rnnoise.NoiseSuppressionFilter;
 import com.enn3developer.gtnhvoice.core.audio.filter.rnnoise.NoiseSuppressionFilterSupplier;
@@ -373,9 +374,7 @@ public final class VoiceClientManager {
         try {
             client.send(new PingPacket(), secret, encryption);
 
-            long now = System.currentTimeMillis();
-            long last = lastPingLogMillis.get();
-            if (now - last >= PING_LOG_THROTTLE_MILLIS && lastPingLogMillis.compareAndSet(last, now)) {
+            if (LogThrottle.shouldLog(lastPingLogMillis, PING_LOG_THROTTLE_MILLIS)) {
                 GtnhVoice.LOG.info("Voice ping sent (secret={})", VoiceProtocol.abbreviateSecret(secret));
             }
         } catch (Exception e) {
@@ -395,10 +394,7 @@ public final class VoiceClientManager {
 
         if (!packetUdp.getSecret()
             .equals(currentSession.getSecret())) {
-            long now = System.currentTimeMillis();
-            long last = lastUnknownSecretLogMillis.get();
-            if (now - last >= UNKNOWN_SECRET_LOG_THROTTLE_MILLIS
-                && lastUnknownSecretLogMillis.compareAndSet(last, now)) {
+            if (LogThrottle.shouldLog(lastUnknownSecretLogMillis, UNKNOWN_SECRET_LOG_THROTTLE_MILLIS)) {
                 GtnhVoice.LOG.warn("Dropped UDP packet with unexpected secret from {}", sender);
             }
             return;
@@ -407,27 +403,30 @@ public final class VoiceClientManager {
         try {
             Packet<?> packet = packetUdp.getPacketUntyped(currentSession.getEncryption());
             if (packet instanceof SourceAudioPacket) {
-                SourceAudioPacket audioPacket = (SourceAudioPacket) packet;
-                UUID sourceId = audioPacket.getSourceId();
-
-                // Ingress-level mute: dropped here, before a VoiceSource is ever fed or lazily created, so a
-                // muted player never decodes, never allocates AL state, and never appears as speaking.
-                if (PlayerVoiceSettings.getInstance()
-                    .isMuted(sourceId)) {
-                    if (PlayerVoiceSettings.getInstance()
-                        .markMuteDropLogged(sourceId)) {
-                        GtnhVoice.LOG.info("[PlayerVoice] Dropping audio from muted sourceId={}", sourceId);
-                    }
-                    return;
-                }
-
-                sourceManager.onSourceAudio(audioPacket, session.getDistance());
+                handleSourceAudio((SourceAudioPacket) packet, sourceManager, currentSession.getDistance());
             } else if (packet instanceof SourceEndPacket) {
                 sourceManager.onSourceEnd((SourceEndPacket) packet);
             }
         } catch (Exception e) {
             GtnhVoice.LOG.error("Failed to read voice UDP packet from {}", sender, e);
         }
+    }
+
+    private void handleSourceAudio(@NotNull SourceAudioPacket audioPacket, @NotNull VoiceSourceManager sourceManager,
+        int distance) {
+        UUID sourceId = audioPacket.getSourceId();
+
+        // Ingress-level mute: dropped here, before a VoiceSource is ever fed or lazily created, so a
+        // muted player never decodes, never allocates AL state, and never appears as speaking.
+        PlayerVoiceSettings settings = PlayerVoiceSettings.getInstance();
+        if (settings.isMuted(sourceId)) {
+            if (settings.markMuteDropLogged(sourceId)) {
+                GtnhVoice.LOG.info("[PlayerVoice] Dropping audio from muted sourceId={}", sourceId);
+            }
+            return;
+        }
+
+        sourceManager.onSourceAudio(audioPacket, distance);
     }
 
     private void startCaptureSending(UUID secret, AesEncryption encryption, byte opusModeOrdinal, int sampleRate) {

@@ -56,8 +56,12 @@ public class PlaybackThread extends Thread {
     private static final float REFERENCE_DISTANCE = 1.0f;
     private static final float ROLLOFF_FACTOR = 1.0f;
 
-    // Prime-and-hysteresis tuning for AL source start, see pumpSourceChannel().
-    private static final int PRIME_BUFFERS = 3;
+    // Prime-and-hysteresis tuning for AL source start, see pumpSourceChannel(). 2 is the floor: one buffer
+    // playing plus one queued as cushion against decode-poller scheduling slop - the poller's frame cadence is
+    // Thread.sleep-based, not phase-locked to the AL playback clock, so with a single buffer any wakeup drift
+    // underruns the source. Lowered from 3 once VoiceSource gained packet-loss concealment, which keeps frames
+    // flowing through genuine packet gaps instead of relying on queue depth to ride them out.
+    private static final int PRIME_BUFFERS = 2;
     private static final long TAIL_FLUSH_MILLIS = 60L;
 
     private final PlaybackManager manager;
@@ -420,21 +424,21 @@ public class PlaybackThread extends Thread {
 
         int queued = AL10.alGetSourcei(channel.alSource, AL10.AL_BUFFERS_QUEUED);
         int state = AL10.alGetSourcei(channel.alSource, AL10.AL_SOURCE_STATE);
-        if (state != AL10.AL_PLAYING && queued > 0) {
-            boolean primed = queued >= PRIME_BUFFERS;
-            boolean tailFlush = !primed && (now - channel.lastFrameQueuedAtMillis) > TAIL_FLUSH_MILLIS;
-            if (primed || tailFlush) {
-                if (tailFlush) {
-                    GtnhVoice.LOG.info(
-                        "[Playback] tail flush sourceId={} queued={} state={}",
-                        sourceId,
-                        queued,
-                        alSourceStateToString(state));
-                }
-                AL10.alSourcePlay(channel.alSource);
-                checkAlError("alSourcePlay");
-            }
+        if (state == AL10.AL_PLAYING || queued == 0) return;
+
+        boolean primed = queued >= PRIME_BUFFERS;
+        boolean tailFlush = !primed && (now - channel.lastFrameQueuedAtMillis) > TAIL_FLUSH_MILLIS;
+        if (!primed && !tailFlush) return;
+
+        if (tailFlush) {
+            GtnhVoice.LOG.info(
+                "[Playback] tail flush sourceId={} queued={} state={}",
+                sourceId,
+                queued,
+                alSourceStateToString(state));
         }
+        AL10.alSourcePlay(channel.alSource);
+        checkAlError("alSourcePlay");
     }
 
     private void applyListenerSnapshot() {

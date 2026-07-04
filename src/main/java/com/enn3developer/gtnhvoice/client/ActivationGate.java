@@ -63,16 +63,16 @@ public class ActivationGate {
      */
     boolean shouldTransmit(short[] frame) {
         Config.ActivationMode mode = Config.getActivationMode();
-        boolean transmit;
         long now = System.currentTimeMillis();
         boolean shouldLog = now - lastLogMillis >= LOG_INTERVAL_MILLIS;
+        if (shouldLog) lastLogMillis = now;
 
+        boolean transmit;
         if (mode == Config.ActivationMode.PUSH_TO_TALK) {
             transmit = pushToTalkKeyDown;
 
             if (shouldLog) {
-                GtnhVoice.LOG.info("[Voice] activation mode={} transmitting={} keyDown={}", mode, transmit, transmit);
-                lastLogMillis = now;
+                GtnhVoice.LOG.info("[Voice] activation mode={} transmitting={}", mode, transmit);
             }
         } else {
             double levelDb = AudioUtil.calculateAudioLevel(frame, 0, frame.length);
@@ -89,7 +89,6 @@ public class ActivationGate {
                     transmit,
                     Math.round(levelDb),
                     Config.vaThresholdDb);
-                lastLogMillis = now;
             }
         }
 

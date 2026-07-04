@@ -41,12 +41,14 @@ public class VoiceSettingsKeyHandler {
         if (event.phase != TickEvent.Phase.END) return;
 
         boolean keyDown = openSettingsKey.getIsKeyPressed();
-        if (keyDown && !keyWasDown) {
-            Minecraft mc = Minecraft.getMinecraft();
-            if (mc.currentScreen == null) {
-                mc.displayGuiScreen(new GuiVoiceSettings());
-            }
-        }
+        boolean pressedThisTick = keyDown && !keyWasDown;
         keyWasDown = keyDown;
+
+        if (!pressedThisTick) return;
+
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.currentScreen != null) return;
+
+        mc.displayGuiScreen(new GuiVoiceSettings());
     }
 }

@@ -19,7 +19,9 @@ import com.enn3developer.gtnhvoice.core.audio.jitter.AdaptiveJitterBuffer;
  * <p>
  * Raw (undecoded) frames are offered into the jitter buffer keyed by sequence number as packets arrive; a
  * dedicated poller thread drains it once per 20ms playback tick and decodes in the order the buffer hands frames
- * back, so out-of-order UDP arrival doesn't feed the stateful decoder out of order.
+ * back, so out-of-order UDP arrival doesn't feed the stateful decoder out of order. Isolated mid-stream packet
+ * loss is masked with Opus packet loss concealment instead of stalling playback - see {@link #emitNextFrame()}
+ * for the exact conditions.
  * <p>
  * Created lazily by {@link VoiceSourceManager} on the first {@code SourceAudioPacket} seen for a given sourceId,
  * which stays stable for the speaker's whole session. Two distinct lifecycle events, both driven by the manager:
@@ -31,9 +33,17 @@ final class VoiceSource {
 
     private static final int SAMPLE_RATE = 48_000;
     private static final int FRAME_SIZE = 960; // 20ms @ 48kHz mono
-    private static final int JITTER_PACKET_DELAY_FRAMES = 2; // 40ms initial pre-buffer; adapts from there
+    // 20ms base pre-buffer; the adaptive component grows it under real jitter. 1 is the floor: the buffer never
+    // drops late packets, so with no base window an out-of-order frame would reach the stateful decoder late and
+    // out of order. Values >= 2 are no longer needed for reordering since the jitter buffer always priority-orders
+    // by sequence number.
+    private static final int JITTER_PACKET_DELAY_FRAMES = 1;
     private static final long TICK_MILLIS = 20L;
     private static final long LOG_INTERVAL_MILLIS = 2_000L;
+    // Upper bound on back-to-back synthesized (PLC) frames (~100ms, roughly WebRTC's expand limit): a safety
+    // net against fabricating audio indefinitely if sequence numbers ever jump pathologically. In practice the
+    // stream-still-flowing and head-not-yet-due conditions in emitNextFrame() bound concealment much tighter.
+    private static final int MAX_CONSECUTIVE_PLC_FRAMES = 5;
 
     private final UUID sourceId;
     private final PlaybackManager playbackManager;
@@ -43,8 +53,19 @@ final class VoiceSource {
     private volatile long lastPacketMillis;
     private volatile boolean segmentActive;
     private volatile boolean running;
+    // Set by the manager's watchdog thread, consumed by the poller thread: the decoder is stateful native code
+    // and must only ever be touched from the poller, so an inactivity reset is requested here rather than
+    // calling decoder.reset() from the watchdog while a decode may be in flight.
+    private volatile boolean decoderResetPending;
     private Thread pollerThread;
     private int distance;
+
+    // Decode bookkeeping, only ever touched from the poller thread.
+    private long lastEmittedSequence = -1;
+    private int consecutivePlcFrames;
+    private boolean emittedSinceReset;
+    private long framesEmitted;
+    private long framesConcealed;
 
     VoiceSource(@NotNull UUID sourceId, @NotNull PlaybackManager playbackManager) {
         this.sourceId = sourceId;
@@ -99,14 +120,15 @@ final class VoiceSource {
      * found idle past {@code timeoutMillis}; stays quiet on subsequent checks until a new packet arrives.
      */
     void checkInactivity(long now, long timeoutMillis) {
-        if (segmentActive && now - lastPacketMillis > timeoutMillis) {
-            segmentActive = false;
-            decoder.reset();
-            jitterBuffer.clear();
-            playbackManager.resetSource(sourceId);
-            GtnhVoice.LOG
-                .info("[VoiceSource] Inactivity reset for sourceId={} (idle {}ms)", sourceId, now - lastPacketMillis);
-        }
+        if (!segmentActive) return;
+        if (now - lastPacketMillis <= timeoutMillis) return;
+
+        segmentActive = false;
+        decoderResetPending = true; // applied by the poller thread, which owns the decoder
+        jitterBuffer.clear();
+        playbackManager.resetSource(sourceId);
+        GtnhVoice.LOG
+            .info("[VoiceSource] Inactivity reset for sourceId={} (idle {}ms)", sourceId, now - lastPacketMillis);
     }
 
     /**
@@ -137,29 +159,29 @@ final class VoiceSource {
     }
 
     private void runPoller() {
-        long framesEmitted = 0;
         long lastLogTime = System.currentTimeMillis();
 
         while (running) {
-            AdaptiveJitterBuffer.Frame frame = jitterBuffer.poll();
-            if (frame != null) {
-                try {
-                    short[] decoded = decoder.decode(frame.data);
-                    playbackManager.submit(sourceId, decoded);
-                    framesEmitted++;
-                } catch (CodecException e) {
-                    GtnhVoice.LOG.error("[VoiceSource] Failed to decode frame for sourceId={}", sourceId, e);
-                }
+            if (decoderResetPending) {
+                decoderResetPending = false;
+                decoder.reset();
+                consecutivePlcFrames = 0;
+                // Block concealment until the next segment's first real frame anchors the decoder again -
+                // otherwise the stale lastEmittedSequence would look like a huge "gap" to conceal.
+                emittedSinceReset = false;
             }
+
+            emitNextFrame();
 
             long now = System.currentTimeMillis();
             if (now - lastLogTime >= LOG_INTERVAL_MILLIS) {
                 GtnhVoice.LOG.info(
-                    "[JitterBuffer] sourceId={} buffered={} targetDelayMs={} framesEmitted={}",
+                    "[JitterBuffer] sourceId={} buffered={} targetDelayMs={} framesEmitted={} framesConcealed={}",
                     sourceId,
                     jitterBuffer.size(),
                     jitterBuffer.currentTargetDelayMillis(),
-                    framesEmitted);
+                    framesEmitted,
+                    framesConcealed);
                 lastLogTime = now;
             }
 
@@ -168,6 +190,67 @@ final class VoiceSource {
             } catch (InterruptedException e) {
                 break;
             }
+        }
+    }
+
+    /**
+     * Emits at most one 20ms frame into playback per tick: the next in-order frame if it's due, else a
+     * packet-loss-concealment frame for a genuinely missing slot. Concealment only fires for isolated
+     * mid-stream loss - the missing slot's playback time has passed, a later frame is already buffered (proof
+     * the stream is still flowing, so this isn't the sender pausing), and that later frame isn't itself due yet
+     * (if it is, the whole gap is stale and we skip ahead rather than replaying the outage late and dragging
+     * extra latency behind us for the rest of the segment).
+     */
+    private void emitNextFrame() {
+        // Frames at or below the last emitted sequence arrived too late - their slot was already played or
+        // concealed, and decoding them now would feed the stateful decoder out of order.
+        jitterBuffer.discardThrough(lastEmittedSequence);
+
+        Long headSequence = jitterBuffer.peekSequenceNumber();
+        if (headSequence == null) return; // nothing buffered: sender pause or stream end - never concealed
+
+        if (headSequence > lastEmittedSequence + 1 && shouldConcealGap(headSequence)) {
+            emitConcealment();
+            return;
+        }
+
+        AdaptiveJitterBuffer.Frame frame = jitterBuffer.poll();
+        if (frame == null) return; // head frame isn't due yet (pre-buffering phase)
+
+        lastEmittedSequence = frame.sequenceNumber;
+        consecutivePlcFrames = 0;
+        try {
+            short[] decoded = decoder.decode(frame.data);
+            playbackManager.submit(sourceId, decoded);
+            framesEmitted++;
+            emittedSinceReset = true;
+        } catch (CodecException e) {
+            GtnhVoice.LOG.error("[VoiceSource] Failed to decode frame for sourceId={}", sourceId, e);
+        }
+    }
+
+    private boolean shouldConcealGap(long headSequence) {
+        if (!emittedSinceReset) return false; // never synthesize ahead of a segment's first real frame
+        if (consecutivePlcFrames >= MAX_CONSECUTIVE_PLC_FRAMES) return false;
+        if (!jitterBuffer.isSequenceOverdue(lastEmittedSequence + 1)) return false;
+
+        // If the buffered head is itself already due, the entire gap is stale (e.g. a burst outage) - skip
+        // ahead to real audio instead of stacking concealment frames in front of it.
+        return !jitterBuffer.isSequenceOverdue(headSequence);
+    }
+
+    private void emitConcealment() {
+        // The slot is consumed either way, so a late arrival for it gets discarded rather than decoded out of
+        // order after the concealment frame already advanced the decoder state.
+        lastEmittedSequence++;
+        consecutivePlcFrames++;
+
+        try {
+            short[] concealed = decoder.decode(null); // null input = Opus packet loss concealment
+            playbackManager.submit(sourceId, concealed);
+            framesConcealed++;
+        } catch (CodecException e) {
+            GtnhVoice.LOG.error("[VoiceSource] Failed to conceal lost frame for sourceId={}", sourceId, e);
         }
     }
 }

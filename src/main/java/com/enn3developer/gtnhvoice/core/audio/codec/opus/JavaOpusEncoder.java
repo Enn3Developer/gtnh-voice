@@ -77,13 +77,11 @@ public final class JavaOpusEncoder implements BaseOpusEncoder {
     }
 
     private void setApplication(OpusMode opusMode) {
-        if (opusMode == OpusMode.VOIP) {
-            this.application = OpusApplication.OPUS_APPLICATION_VOIP;
-        } else if (opusMode == OpusMode.AUDIO) {
-            this.application = OpusApplication.OPUS_APPLICATION_AUDIO;
-        } else if (opusMode == OpusMode.RESTRICTED_LOWDELAY) {
-            this.application = OpusApplication.OPUS_APPLICATION_RESTRICTED_LOWDELAY;
-        }
+        this.application = switch (opusMode) {
+            case VOIP -> OpusApplication.OPUS_APPLICATION_VOIP;
+            case AUDIO -> OpusApplication.OPUS_APPLICATION_AUDIO;
+            case RESTRICTED_LOWDELAY -> OpusApplication.OPUS_APPLICATION_RESTRICTED_LOWDELAY;
+        };
     }
 
     @Override

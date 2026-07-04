@@ -5,7 +5,6 @@
 package com.enn3developer.gtnhvoice.core.audio.jitter;
 
 import java.util.Comparator;
-import java.util.LinkedList;
 import java.util.PriorityQueue;
 import java.util.Queue;
 import java.util.function.LongSupplier;
@@ -44,10 +43,9 @@ public final class AdaptiveJitterBuffer {
         this.timeSupplier = timeSupplier;
         this.packetDelayMillis = packetDelayFrames * FRAME_DURATION_MILLIS;
         this.adaptiveDelayMillis = packetDelayMillis;
-        this.queue = packetDelayFrames <= 1 ? new LinkedList<>()
-            : new PriorityQueue<>(
-                Math.max(2, packetDelayFrames * 2),
-                Comparator.comparingLong(entry -> entry.frame.sequenceNumber));
+        this.queue = new PriorityQueue<>(
+            Math.max(2, packetDelayFrames * 2),
+            Comparator.comparingLong(entry -> entry.frame.sequenceNumber));
     }
 
     public synchronized void offer(long sequenceNumber, byte[] data) {
@@ -90,6 +88,40 @@ public final class AdaptiveJitterBuffer {
         }
 
         return null;
+    }
+
+    /**
+     * Sequence number of the frame at the head of the buffer - regardless of whether it's due yet - or
+     * {@code null} if the buffer is empty. Lets the consumer distinguish "next frame simply isn't due" from
+     * "the next slot's frame is missing while later frames already arrived" (a concealable gap).
+     */
+    public synchronized Long peekSequenceNumber() {
+        Entry next = queue.peek();
+        return next == null ? null : next.frame.sequenceNumber;
+    }
+
+    /**
+     * Drops every buffered frame with sequence number at or below {@code sequenceNumber}: late arrivals and
+     * duplicates whose playback slot was already played or concealed. Decoding them anyway would feed the
+     * stateful Opus decoder out of order.
+     */
+    public synchronized void discardThrough(long sequenceNumber) {
+        while (!queue.isEmpty() && queue.peek().frame.sequenceNumber <= sequenceNumber) {
+            queue.poll();
+        }
+    }
+
+    /**
+     * Whether {@code sequenceNumber}'s scheduled playback slot (plus the current adaptive delay) has already
+     * passed - whether or not a frame for it ever arrived. Always {@code false} before the buffer is anchored
+     * by its first packet (or re-anchored after {@link #clear()}).
+     */
+    public synchronized boolean isSequenceOverdue(long sequenceNumber) {
+        if (firstSequenceNumber == null) return false;
+
+        long scheduled = firstPacketArrival + packetDelayMillis
+            + (sequenceNumber - firstSequenceNumber) * FRAME_DURATION_MILLIS;
+        return timeSupplier.getAsLong() >= scheduled + adaptiveDelayMillis;
     }
 
     public synchronized boolean isEmpty() {
