@@ -91,6 +91,15 @@ final class VoiceSource {
         }
     }
 
+    /**
+     * Whether this source is currently in an active speech segment (frames have arrived within the
+     * inactivity timeout). Read by {@link VoiceSourceManager#getSpeakingSourceIds()} for the who's-talking HUD -
+     * reuses this existing lifecycle flag rather than adding a separate speaking-detection mechanism.
+     */
+    boolean isSegmentActive() {
+        return segmentActive;
+    }
+
     void destroy() {
         running = false;
         if (pollerThread != null) {

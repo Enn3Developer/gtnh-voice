@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Server-synced voice roster (UUID -> player name) over the reliable control channel, sent as a full snapshot when a player's voice session is established and kept current via add/remove deltas as players join/leave voice; lets the client resolve a speaker's name from its UUID, which MC 1.7.10's tab list cannot provide on its own
+- Who's-talking HUD: a compact top-left overlay listing every player currently speaking (by name, with a short-UUID fallback for the brief window before a just-joined speaker's roster entry arrives), including the local player when transmitting; disable via the `voice.hudEnabled` config option
 
 ## [0.2.0] - 2026-07-04
 

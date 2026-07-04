@@ -38,6 +38,10 @@ public class Config {
     // of this setting (see NoiseSuppressionFilterSupplier).
     public static boolean denoiseEnabled = true;
 
+    // Client-side who's-talking HUD overlay. No position/scale customization in this version - just an on/off
+    // switch.
+    public static boolean hudEnabled = true;
+
     public static void synchronizeConfiguration(File configFile) {
         Configuration configuration = new Configuration(configFile);
 
@@ -97,6 +101,11 @@ public class Config {
             CATEGORY_VOICE,
             denoiseEnabled,
             "Apply RNNoise noise suppression to captured mic audio before sending. Only takes effect if the native RNNoise library loads for your platform - voice keeps working without denoising either way. Set to false to disable even when available.");
+        hudEnabled = configuration.getBoolean(
+            "hudEnabled",
+            CATEGORY_VOICE,
+            hudEnabled,
+            "Show the who's-talking HUD overlay (top-left list of currently speaking players). Set to false to disable it entirely.");
 
         if (configuration.hasChanged()) {
             configuration.save();

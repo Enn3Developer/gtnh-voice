@@ -1,6 +1,8 @@
 package com.enn3developer.gtnhvoice.client.source;
 
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -92,6 +94,23 @@ public final class VoiceSourceManager {
      */
     public void updateListener(double x, double y, double z, float lookX, float lookY, float lookZ) {
         playbackManager.updateListener(x, y, z, lookX, lookY, lookZ);
+    }
+
+    /**
+     * Snapshot of sourceIds currently in an active speech segment, for the who's-talking HUD. Cheap and
+     * read-only: reuses the inactivity-timeout state each {@link VoiceSource} already tracks rather than adding a
+     * separate speaking-detection mechanism. Safe to call every render frame from the client thread while the
+     * watchdog thread concurrently flips segment state.
+     */
+    public Set<UUID> getSpeakingSourceIds() {
+        Set<UUID> speaking = new HashSet<>();
+        for (Map.Entry<UUID, VoiceSource> entry : sources.entrySet()) {
+            if (entry.getValue()
+                .isSegmentActive()) {
+                speaking.add(entry.getKey());
+            }
+        }
+        return speaking;
     }
 
     private VoiceSource createSource(UUID sourceId, int distance) {
