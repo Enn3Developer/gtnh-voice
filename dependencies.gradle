@@ -70,7 +70,7 @@ dependencies {
     // Pure-Java Opus codec (Concentus), fetched from JitPack since it isn't published to Maven Central.
     // Pinned to the current master HEAD commit (short SHA); MC doesn't ship it, so it must be bundled at
     // runtime.
-    implementation("com.github.lostromb.concentus:Concentus:3885c4e")
+    shadowImplementation("com.github.lostromb.concentus:Concentus:3885c4e")
 
     // Plasmo's native JNI Opus binding (see NativeOpusEncoder/NativeOpusDecoder), used as an
     // optional acceleration over the pure-Java Concentus codec above via OpusCodecSupplier, which
