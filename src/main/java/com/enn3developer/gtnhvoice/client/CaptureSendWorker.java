@@ -2,7 +2,6 @@ package com.enn3developer.gtnhvoice.client;
 
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 import com.enn3developer.gtnhvoice.GtnhVoice;
@@ -73,46 +72,44 @@ final class CaptureSendWorker extends Thread {
         while (running) {
             short[] frame;
             try {
-                frame = captureFrameQueue.poll(20, TimeUnit.MILLISECONDS);
+                frame = captureFrameQueue.take();
             } catch (InterruptedException e) {
                 break;
             }
 
-            if (frame != null) {
-                if (noiseSuppressionFilter != null) {
-                    try {
-                        frame = noiseSuppressionFilter.process(frame);
-                    } catch (CodecException e) {
-                        GtnhVoice.LOG.error("[Voice] Failed to denoise captured frame, sending it unprocessed", e);
-                    }
+            if (noiseSuppressionFilter != null) {
+                try {
+                    frame = noiseSuppressionFilter.process(frame);
+                } catch (CodecException e) {
+                    GtnhVoice.LOG.error("[Voice] Failed to denoise captured frame, sending it unprocessed", e);
                 }
-
-                boolean transmitting = activationGate.shouldTransmit(frame);
-
-                if (transmitting) {
-                    try {
-                        // Closed->open edge: fresh speech segment, don't carry encoder state across the gap.
-                        if (!wasTransmitting) {
-                            encoder.reset();
-                        }
-
-                        byte[] encoded = encoder.encode(frame);
-
-                        PlayerAudioPacket packet = new PlayerAudioPacket(
-                            sequenceNumber.getAndIncrement(),
-                            encoded,
-                            activationId,
-                            DISTANCE,
-                            false);
-                        client.send(packet, secret, encryption);
-                        framesSent++;
-                    } catch (CodecException e) {
-                        GtnhVoice.LOG.error("[Voice] Failed to encode captured frame", e);
-                    }
-                }
-
-                wasTransmitting = transmitting;
             }
+
+            boolean transmitting = activationGate.shouldTransmit(frame);
+
+            if (transmitting) {
+                try {
+                    // Closed->open edge: fresh speech segment, don't carry encoder state across the gap.
+                    if (!wasTransmitting) {
+                        encoder.reset();
+                    }
+
+                    byte[] encoded = encoder.encode(frame);
+
+                    PlayerAudioPacket packet = new PlayerAudioPacket(
+                        sequenceNumber.getAndIncrement(),
+                        encoded,
+                        activationId,
+                        DISTANCE,
+                        false);
+                    client.send(packet, secret, encryption);
+                    framesSent++;
+                } catch (CodecException e) {
+                    GtnhVoice.LOG.error("[Voice] Failed to encode captured frame", e);
+                }
+            }
+
+            wasTransmitting = transmitting;
 
             long now = System.currentTimeMillis();
             if (now - lastLogTime >= LOG_INTERVAL_MILLIS) {

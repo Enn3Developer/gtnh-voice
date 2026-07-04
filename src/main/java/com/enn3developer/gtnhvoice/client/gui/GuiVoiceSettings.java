@@ -47,6 +47,7 @@ public class GuiVoiceSettings extends GuiScreen implements GuiSlider.ISlider {
     private static final int BUTTON_INPUT_DEVICE = 6;
     private static final int BUTTON_OUTPUT_DEVICE = 7;
     private static final int BUTTON_HRTF = 8;
+    private static final int BUTTON_PLAYERS = 9;
 
     private final List<ScrollEntry> scrollEntries = new ArrayList<>();
     private List<String> inputDevices = Collections.emptyList();
@@ -119,6 +120,8 @@ public class GuiVoiceSettings extends GuiScreen implements GuiSlider.ISlider {
             y);
         y += ROW_PITCH;
         addRow(new GuiButton(BUTTON_HRTF, x, 0, CONTROL_WIDTH, ROW_HEIGHT, "HRTF: " + controller.getHrtfMode()), y);
+        y += ROW_PITCH;
+        addRow(new GuiButton(BUTTON_PLAYERS, x, 0, CONTROL_WIDTH, ROW_HEIGHT, "Players..."), y);
         y += ROW_PITCH;
 
         contentHeight = y - ROW_GAP;
@@ -250,6 +253,9 @@ public class GuiVoiceSettings extends GuiScreen implements GuiSlider.ISlider {
                 button.displayString = "HRTF: " + next;
                 break;
             }
+            case BUTTON_PLAYERS:
+                mc.displayGuiScreen(new GuiPlayerVoiceSettings(this));
+                break;
             default:
                 break;
         }

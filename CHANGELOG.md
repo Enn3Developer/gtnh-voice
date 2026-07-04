@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Per-player volume (0-200%, default 100%) and mute for other players, client-side only: mute drops a speaker's audio at the UDP receive path itself, before a `VoiceSource`/decoder is ever created or fed, so a muted player never appears as speaking; volume is applied as `AL_GAIN` on the speaker's positioned AL source and survives an output-device/HRTF rebuild since it's re-read from the live setting on every packet rather than cached. Both are set from a new "Players" screen (opened from the existing settings GUI), which lists every other player currently in voice with their head icon, a volume slider, and a mute toggle; the who's-talking HUD gains a muted-marker row alongside the existing self-mute indicator. Persisted in the existing client config file, pruned back to defaults automatically
+
 ## [0.4.0] - 2026-07-04
 
 ### Added

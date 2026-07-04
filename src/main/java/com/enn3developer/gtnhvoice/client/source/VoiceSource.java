@@ -5,6 +5,7 @@ import java.util.UUID;
 import org.jetbrains.annotations.NotNull;
 
 import com.enn3developer.gtnhvoice.GtnhVoice;
+import com.enn3developer.gtnhvoice.client.PlayerVoiceSettings;
 import com.enn3developer.gtnhvoice.client.playback.PlaybackManager;
 import com.enn3developer.gtnhvoice.core.api.audio.codec.AudioDecoder;
 import com.enn3developer.gtnhvoice.core.api.audio.codec.CodecException;
@@ -60,7 +61,11 @@ final class VoiceSource {
         pollerThread.setDaemon(true);
         pollerThread.start();
 
-        playbackManager.createSource(sourceId, distance);
+        playbackManager.createSource(
+            sourceId,
+            distance,
+            PlayerVoiceSettings.getInstance()
+                .getVolume(sourceId));
 
         lastPacketMillis = System.currentTimeMillis();
         segmentActive = true;
@@ -77,8 +82,14 @@ final class VoiceSource {
         // Idempotent no-op in the common case (createSource() is documented safe to call repeatedly); this is
         // what makes AL-source recreation after an output-device/HRTF rebuild "lazy" - if the rebuild wiped our
         // positioned AL source, this call is what re-creates it on the new context, without this VoiceSource ever
-        // needing to know a rebuild happened or touching its decoder/jitter state.
-        playbackManager.createSource(sourceId, distance);
+        // needing to know a rebuild happened or touching its decoder/jitter state. Re-reading the gain from
+        // PlayerVoiceSettings fresh on every call (rather than caching it) is what makes that recreation also
+        // pick up the correct volume instead of silently resetting to 100%.
+        playbackManager.createSource(
+            sourceId,
+            distance,
+            PlayerVoiceSettings.getInstance()
+                .getVolume(sourceId));
         playbackManager.updateSourcePosition(sourceId, x, y, z);
         jitterBuffer.offer(sequenceNumber, opusData);
     }

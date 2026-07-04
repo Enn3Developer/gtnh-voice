@@ -27,6 +27,7 @@ public class PlaybackManager {
 
     private final Map<UUID, BlockingQueue<short[]>> frameQueues = new ConcurrentHashMap<>();
     private final Map<UUID, double[]> positions = new ConcurrentHashMap<>();
+    private final Map<UUID, Float> gains = new ConcurrentHashMap<>();
 
     private volatile ListenerSnapshot listenerSnapshot = ListenerSnapshot.ORIGIN;
     private PlaybackThread playbackThread;
@@ -40,6 +41,7 @@ public class PlaybackManager {
 
         frameQueues.clear();
         positions.clear();
+        gains.clear();
         listenerSnapshot = ListenerSnapshot.ORIGIN;
         playbackThread = new PlaybackThread(this, deviceName, hrtfMode);
         playbackThread.start();
@@ -60,21 +62,27 @@ public class PlaybackManager {
         playbackThread = null;
         frameQueues.clear();
         positions.clear();
+        gains.clear();
         GtnhVoice.LOG.info("[Playback] Stopped");
     }
 
     /**
-     * Lazily registers a new positioned AL source for {@code sourceId}. Safe to call multiple times; only the first
-     * call for a given id has any effect.
+     * Lazily registers a new positioned AL source for {@code sourceId}, seeded with {@code gain} the first time
+     * it's created for this session (subsequent calls, including the one that lazily recreates the AL source
+     * after an output-device/HRTF rebuild - see {@code VoiceSource#handleAudio} - are no-ops on this map, since
+     * the caller always re-derives the current value from {@code PlayerVoiceSettings} before calling, not a
+     * cached one). Safe to call repeatedly; only the first call for a given id has any AL effect.
      */
-    public void createSource(UUID sourceId, int distance) {
+    public void createSource(UUID sourceId, int distance, float gain) {
         if (!isPlaying()) return;
 
         BlockingQueue<short[]> queue = frameQueues
             .computeIfAbsent(sourceId, id -> new ArrayBlockingQueue<>(QUEUE_CAPACITY));
         positions.putIfAbsent(sourceId, new double[] { 0, 0, 0 });
+        gains.putIfAbsent(sourceId, gain);
 
-        playbackThread.enqueueCommand(() -> playbackThread.createSourceChannel(sourceId, queue, distance));
+        playbackThread.enqueueCommand(
+            () -> playbackThread.createSourceChannel(sourceId, queue, distance, gains.get(sourceId)));
     }
 
     /**
@@ -84,9 +92,24 @@ public class PlaybackManager {
     public void destroySource(UUID sourceId) {
         frameQueues.remove(sourceId);
         positions.remove(sourceId);
+        gains.remove(sourceId);
 
         if (!isPlaying()) return;
         playbackThread.enqueueCommand(() -> playbackThread.destroySourceChannel(sourceId));
+    }
+
+    /**
+     * Live gain hotswap for an already-registered source (no-op if {@code sourceId} has no AL source yet - a
+     * volume change for an offline/never-spoken player only needs to update {@code PlayerVoiceSettings}, which
+     * {@link #createSource} will read fresh whenever a source does get created). Posts an {@code AL_GAIN} update to
+     * the playback thread so the change is audible immediately.
+     */
+    public void setGain(UUID sourceId, float gain) {
+        if (!frameQueues.containsKey(sourceId)) return;
+
+        gains.put(sourceId, gain);
+        if (!isPlaying()) return;
+        playbackThread.enqueueCommand(() -> playbackThread.applyGain(sourceId, gain));
     }
 
     /**

@@ -4,6 +4,7 @@ import java.io.File;
 
 import net.minecraftforge.common.config.Configuration;
 
+import com.enn3developer.gtnhvoice.client.PlayerVoiceSettings;
 import com.enn3developer.gtnhvoice.core.proto.data.audio.codec.opus.OpusMode;
 
 public class Config {
@@ -58,6 +59,12 @@ public class Config {
     public static String inputDevice = "";
     public static String outputDevice = "";
     public static String hrtfMode = HrtfMode.AUTO.name();
+
+    // Client-side per-player volume/mute overrides of OTHER players, set via the in-game Players screen.
+    // Runtime source of truth lives in PlayerVoiceSettings (a concurrent map/set, not a static field here like
+    // everything else in this class) since it's read from the UDP receive path and written from the GUI far more
+    // often than this config file is touched; this class only loads it in and exports it back out.
+    private static final String PROPERTY_PLAYER_OVERRIDES = "playerOverrides";
 
     public static void synchronizeConfiguration(File configFile) {
         configuration = new Configuration(configFile);
@@ -138,6 +145,13 @@ public class Config {
             CATEGORY_VOICE,
             hrtfMode,
             "HRTF mode for 3D-positioned voice playback: AUTO (driver default), ON, or OFF. Set via in-game audio controls; applied at voice-session startup and hot-swappable while connected.");
+        String[] playerOverrides = configuration.getStringList(
+            PROPERTY_PLAYER_OVERRIDES,
+            CATEGORY_VOICE,
+            new String[0],
+            "Per-player volume/mute overrides for other players, set via the in-game Players screen. Client-side only, no effect on the server. One entry per overridden player: '<uuid>,<volume 0.0-2.0>,<muted true/false>'. Players at default volume (1.0) and unmuted are pruned automatically - do not edit by hand.");
+        PlayerVoiceSettings.getInstance()
+            .loadOverrides(playerOverrides);
 
         if (configuration.hasChanged()) {
             configuration.save();
@@ -176,6 +190,10 @@ public class Config {
             .set(outputDevice);
         configuration.get(CATEGORY_VOICE, "hrtfMode", HrtfMode.AUTO.name())
             .set(hrtfMode);
+        configuration.get(CATEGORY_VOICE, PROPERTY_PLAYER_OVERRIDES, new String[0])
+            .set(
+                PlayerVoiceSettings.getInstance()
+                    .exportOverrides());
         configuration.save();
     }
 

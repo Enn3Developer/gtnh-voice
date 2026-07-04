@@ -419,7 +419,7 @@ public class PlaybackThread extends Thread {
      * for a newly seen {@code sourceId}. No-op if one already exists - including right after a rebuild wiped
      * {@link #sourceChannels}, in which case this is exactly what lazily recreates it.
      */
-    void createSourceChannel(UUID sourceId, BlockingQueue<short[]> frameQueue, int distance) {
+    void createSourceChannel(UUID sourceId, BlockingQueue<short[]> frameQueue, int distance, float gain) {
         if (sourceChannels.containsKey(sourceId)) return;
 
         int source = AL10.alGenSources();
@@ -428,6 +428,7 @@ public class PlaybackThread extends Thread {
         AL10.alSourcef(source, AL10.AL_REFERENCE_DISTANCE, REFERENCE_DISTANCE);
         AL10.alSourcef(source, AL10.AL_MAX_DISTANCE, distance);
         AL10.alSourcef(source, AL10.AL_ROLLOFF_FACTOR, ROLLOFF_FACTOR);
+        AL10.alSourcef(source, AL10.AL_GAIN, gain);
 
         int[] bufferIds = new int[BUFFER_POOL_SIZE];
         AL10.alGenBuffers(bufferIds);
@@ -440,7 +441,22 @@ public class PlaybackThread extends Thread {
         for (int bufferId : bufferIds) freeBuffers.add(bufferId);
 
         sourceChannels.put(sourceId, new SourceChannel(source, bufferIds, freeBuffers, frameQueue));
-        GtnhVoice.LOG.info("[Playback] AL source created for sourceId={}", sourceId);
+        GtnhVoice.LOG.info("[Playback] AL source created for sourceId={} gain={}", sourceId, gain);
+    }
+
+    /**
+     * Runs on this thread only (queued via {@link PlaybackManager#setGain}): applies a live {@code AL_GAIN} update
+     * to {@code sourceId}'s AL source. No-op if it doesn't currently have one - the value is still recorded in
+     * {@link PlaybackManager}'s gain map and will be picked up whenever {@link #createSourceChannel} next runs for
+     * it (e.g. the player starts speaking, or a rebuild recreates the channel).
+     */
+    void applyGain(UUID sourceId, float gain) {
+        SourceChannel channel = sourceChannels.get(sourceId);
+        if (channel == null) return;
+
+        AL10.alSourcef(channel.alSource, AL10.AL_GAIN, gain);
+        checkAlError("applyGain");
+        GtnhVoice.LOG.info("[Playback] Gain applied for sourceId={} gain={}", sourceId, gain);
     }
 
     /**

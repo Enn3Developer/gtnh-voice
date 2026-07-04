@@ -1,6 +1,7 @@
 package com.enn3developer.gtnhvoice.client;
 
 import java.net.InetSocketAddress;
+import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -170,6 +171,15 @@ public final class VoiceClientManager {
      */
     public Optional<String> resolveName(@NotNull UUID sourceId) {
         return Optional.ofNullable(roster.get(sourceId));
+    }
+
+    /**
+     * Read-only view of every other player currently in voice (UUID -&gt; name), backed by the live {@link
+     * #roster} map. Used by the who's-talking HUD's muted-marker row and the Players GUI's row list - never
+     * includes the receiving player themselves (see {@link #roster}'s own doc).
+     */
+    public Map<UUID, String> getRosterView() {
+        return Collections.unmodifiableMap(roster);
     }
 
     public synchronized void handleRosterSnapshot(@NotNull VoiceRosterSnapshotPacket packet) {
@@ -397,7 +407,21 @@ public final class VoiceClientManager {
         try {
             Packet<?> packet = packetUdp.getPacketUntyped(currentSession.getEncryption());
             if (packet instanceof SourceAudioPacket) {
-                sourceManager.onSourceAudio((SourceAudioPacket) packet, session.getDistance());
+                SourceAudioPacket audioPacket = (SourceAudioPacket) packet;
+                UUID sourceId = audioPacket.getSourceId();
+
+                // Ingress-level mute: dropped here, before a VoiceSource is ever fed or lazily created, so a
+                // muted player never decodes, never allocates AL state, and never appears as speaking.
+                if (PlayerVoiceSettings.getInstance()
+                    .isMuted(sourceId)) {
+                    if (PlayerVoiceSettings.getInstance()
+                        .markMuteDropLogged(sourceId)) {
+                        GtnhVoice.LOG.info("[PlayerVoice] Dropping audio from muted sourceId={}", sourceId);
+                    }
+                    return;
+                }
+
+                sourceManager.onSourceAudio(audioPacket, session.getDistance());
             } else if (packet instanceof SourceEndPacket) {
                 sourceManager.onSourceEnd((SourceEndPacket) packet);
             }
