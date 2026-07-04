@@ -11,7 +11,7 @@ import com.enn3developer.gtnhvoice.GtnhVoice;
 
 /**
  * Owns the lifecycle of the {@link PlaybackThread} and the per-source frame/position hand-off. Nothing touches
- * OpenAL until {@link #start()} is called. A single dedicated ALC device+context+thread is shared across every
+ * OpenAL until {@link #start(String, Config.HrtfMode)} is called. A single dedicated ALC device+context+thread is shared across every
  * {@code VoiceSource} that registers here - each gets its own positioned AL source, not its own device.
  * <p>
  * Frame queues and positions are kept in plain {@link ConcurrentHashMap}s so the hot path ({@link #submit} /

@@ -1,7 +1,6 @@
 package com.enn3developer.gtnhvoice.client.hud;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -92,7 +91,7 @@ public class VoiceHudRenderer {
                     clientManager.resolveName(sourceId)
                         .orElseGet(() -> shortId(sourceId)));
             }
-            Collections.sort(otherNames, String.CASE_INSENSITIVE_ORDER);
+            otherNames.sort(String.CASE_INSENSITIVE_ORDER);
             rows.addAll(otherNames);
         }
 

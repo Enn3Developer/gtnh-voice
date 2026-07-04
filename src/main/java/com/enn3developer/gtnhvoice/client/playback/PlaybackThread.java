@@ -511,35 +511,24 @@ public class PlaybackThread extends Thread {
     }
 
     private static String alErrorToString(int error) {
-        switch (error) {
-            case AL10.AL_INVALID_NAME:
-                return "AL_INVALID_NAME";
-            case AL10.AL_INVALID_ENUM:
-                return "AL_INVALID_ENUM";
-            case AL10.AL_INVALID_VALUE:
-                return "AL_INVALID_VALUE";
-            case AL10.AL_INVALID_OPERATION:
-                return "AL_INVALID_OPERATION";
-            case AL10.AL_OUT_OF_MEMORY:
-                return "AL_OUT_OF_MEMORY";
-            default:
-                return "unknown error code " + error;
-        }
+        return switch (error) {
+            case AL10.AL_INVALID_NAME -> "AL_INVALID_NAME";
+            case AL10.AL_INVALID_ENUM -> "AL_INVALID_ENUM";
+            case AL10.AL_INVALID_VALUE -> "AL_INVALID_VALUE";
+            case AL10.AL_INVALID_OPERATION -> "AL_INVALID_OPERATION";
+            case AL10.AL_OUT_OF_MEMORY -> "AL_OUT_OF_MEMORY";
+            default -> "unknown error code " + error;
+        };
     }
 
     private static String alSourceStateToString(int state) {
-        switch (state) {
-            case AL10.AL_PLAYING:
-                return "PLAYING";
-            case AL10.AL_PAUSED:
-                return "PAUSED";
-            case AL10.AL_STOPPED:
-                return "STOPPED";
-            case AL10.AL_INITIAL:
-                return "INITIAL";
-            default:
-                return "unknown state " + state;
-        }
+        return switch (state) {
+            case AL10.AL_PLAYING -> "PLAYING";
+            case AL10.AL_PAUSED -> "PAUSED";
+            case AL10.AL_STOPPED -> "STOPPED";
+            case AL10.AL_INITIAL -> "INITIAL";
+            default -> "unknown state " + state;
+        };
     }
 
     /**
