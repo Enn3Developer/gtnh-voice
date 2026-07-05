@@ -9,9 +9,11 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicLong;
 
 import com.enn3developer.gtnhvoice.Config;
 import com.enn3developer.gtnhvoice.GtnhVoice;
+import com.enn3developer.gtnhvoice.core.api.util.LogThrottle;
 
 /**
  * Owns the lifecycle of the {@link PlaybackThread} and the per-source frame/position hand-off. Nothing touches
@@ -28,6 +30,8 @@ import com.enn3developer.gtnhvoice.GtnhVoice;
 public class PlaybackManager {
 
     private static final int QUEUE_CAPACITY = 50; // ~1s of 20ms frames
+    private static final int FRAME_SAMPLES = 960; // 20ms @ 48kHz mono
+    private static final long FILTER_ERROR_LOG_INTERVAL_MILLIS = 1_000L;
 
     private final Map<UUID, BlockingQueue<short[]>> frameQueues = new ConcurrentHashMap<>();
     private final Map<UUID, double[]> positions = new ConcurrentHashMap<>();
@@ -38,6 +42,11 @@ public class PlaybackManager {
     // current PlaybackThread reads it through its manager reference at every fire site. CopyOnWrite so the
     // playback thread iterates a stable snapshot while other threads register/unregister concurrently.
     private final List<PlaybackLifecycleListener> lifecycleListeners = new CopyOnWriteArrayList<>();
+
+    // Same placement rationale as the lifecycle listeners above; iterated per frame on the decode path, where
+    // CopyOnWrite's snapshot iteration is free and registration churn is rare.
+    private final List<PlaybackPcmFilter> pcmFilters = new CopyOnWriteArrayList<>();
+    private final AtomicLong lastFilterErrorLogMillis = new AtomicLong();
 
     private volatile ListenerSnapshot listenerSnapshot = ListenerSnapshot.ORIGIN;
     // Volatile because the AudioThreadExecutor seam reads it from arbitrary (future addon) threads while the
@@ -141,18 +150,56 @@ public class PlaybackManager {
     }
 
     /**
-     * Submits a decoded 960-sample mono PCM frame for {@code sourceId}. Drops the oldest queued frame if that
-     * source's queue is full, to keep playback latency bounded rather than growing unboundedly under sustained
-     * overload. No-op if the source hasn't been registered via {@link #createSource(UUID, int, float)}.
+     * Submits a decoded 960-sample mono PCM frame for {@code sourceId}. The frame first passes through the
+     * registered {@link PlaybackPcmFilter} chain (on this calling thread - see the interface for the full
+     * threading and isolation contract), then drops the oldest queued frame if that source's queue is full, to
+     * keep playback latency bounded rather than growing unboundedly under sustained overload. No-op if the
+     * source hasn't been registered via {@link #createSource(UUID, int, float)}.
      */
     public void submit(UUID sourceId, short[] frame) {
         BlockingQueue<short[]> queue = frameQueues.get(sourceId);
         if (queue == null) return;
 
+        frame = applyPcmFilters(sourceId, frame);
         if (!queue.offer(frame)) {
             queue.poll();
             queue.offer(frame);
         }
+    }
+
+    /**
+     * Runs {@code frame} through the filter chain in registration order, feeding each filter's output to the
+     * next. A filter that throws, returns {@code null}, or returns a wrong-length array is skipped for this
+     * frame - the current frame continues unfiltered into the rest of the chain - with an error log throttled to
+     * one per {@value #FILTER_ERROR_LOG_INTERVAL_MILLIS}ms, mirroring {@code PlaybackThread}'s command isolation
+     * (minus its AL error drain, which has no business on this non-AL thread). With no filters registered this
+     * is a single {@code isEmpty} check.
+     */
+    private short[] applyPcmFilters(UUID sourceId, short[] frame) {
+        if (pcmFilters.isEmpty()) return frame;
+
+        for (PlaybackPcmFilter filter : pcmFilters) {
+            try {
+                short[] processed = filter.process(sourceId, frame);
+                if (processed != null && processed.length == FRAME_SAMPLES) {
+                    frame = processed;
+                    continue;
+                }
+                logFilterFailure(filter, "returned " + describeBadOutput(processed), null);
+            } catch (Throwable t) {
+                logFilterFailure(filter, "threw", t);
+            }
+        }
+        return frame;
+    }
+
+    private static String describeBadOutput(short[] processed) {
+        return processed == null ? "null" : processed.length + " samples instead of " + FRAME_SAMPLES;
+    }
+
+    private void logFilterFailure(PlaybackPcmFilter filter, String what, Throwable cause) {
+        if (!LogThrottle.shouldLog(lastFilterErrorLogMillis, FILTER_ERROR_LOG_INTERVAL_MILLIS)) return;
+        GtnhVoice.LOG.error("[Playback] PCM filter {} {}; skipped for this frame", filter, what, cause);
     }
 
     /**
@@ -263,12 +310,32 @@ public class PlaybackManager {
         lifecycleListeners.remove(listener);
     }
 
+    /**
+     * Registers a PCM filter on the playback path - see {@link PlaybackPcmFilter} for the threading and failure
+     * contract. Callable from any thread; like lifecycle listeners, the registration outlives
+     * {@link #start}/{@link #stop} cycles. Chain order is registration order, deterministically - a priority
+     * scheme is deliberately not provided until a real consumer needs one.
+     */
+    void addPcmFilter(PlaybackPcmFilter filter) {
+        Objects.requireNonNull(filter, "filter");
+        pcmFilters.add(filter);
+    }
+
+    /** Unregisters a previously added PCM filter; no-op if it was never registered. */
+    void removePcmFilter(PlaybackPcmFilter filter) {
+        pcmFilters.remove(filter);
+    }
+
     List<PlaybackLifecycleListener> lifecycleListenersView() {
         return lifecycleListeners;
     }
 
     Map<UUID, double[]> positionsView() {
         return positions;
+    }
+
+    Map<UUID, BlockingQueue<short[]>> frameQueuesView() {
+        return frameQueues;
     }
 
     Map<UUID, Boolean> positionalModesView() {
