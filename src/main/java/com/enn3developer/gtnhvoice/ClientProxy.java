@@ -5,6 +5,7 @@ import com.enn3developer.gtnhvoice.client.ClientConnectionEventHandler;
 import com.enn3developer.gtnhvoice.client.MicMuteKeyHandler;
 import com.enn3developer.gtnhvoice.client.VoiceClientManager;
 import com.enn3developer.gtnhvoice.client.VoiceListenerTickHandler;
+import com.enn3developer.gtnhvoice.client.api.ClientApiBackend;
 import com.enn3developer.gtnhvoice.client.audio.AudioDeviceController;
 import com.enn3developer.gtnhvoice.client.capture.CaptureManager;
 import com.enn3developer.gtnhvoice.client.gui.VoiceSettingsKeyHandler;
@@ -39,6 +40,11 @@ public class ClientProxy extends CommonProxy {
         VoiceClientManager.getInstance()
             .bindActivationGate(activationGate);
         micMuteKeyHandler.bindCaptureManager(captureManager);
+
+        // Before the first session can ever start: sessionStarted is what wires stored addon-API bundles onto
+        // each fresh per-session PlaybackManager, so the bridge's session listener must already be registered.
+        ClientApiBackend.getInstance()
+            .initSessionBridging();
 
         // super.preInit() above already ran Config.synchronizeConfiguration, so this is the persisted value, not
         // the compile-time default - captureManager is constructed before preInit fires (FML processes @SidedProxy

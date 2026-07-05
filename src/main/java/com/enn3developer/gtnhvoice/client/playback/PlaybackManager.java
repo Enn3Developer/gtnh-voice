@@ -13,6 +13,8 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import com.enn3developer.gtnhvoice.Config;
 import com.enn3developer.gtnhvoice.GtnhVoice;
+import com.enn3developer.gtnhvoice.api.client.IAudioLifecycleListener;
+import com.enn3developer.gtnhvoice.api.client.IPlaybackPcmFilter;
 import com.enn3developer.gtnhvoice.api.client.ISourceMetadata;
 import com.enn3developer.gtnhvoice.core.api.util.LogThrottle;
 
@@ -312,6 +314,70 @@ public class PlaybackManager {
      */
     public Optional<ISourceMetadata> sourceMetadataFor(UUID sourceId) {
         return sourceMetadata(sourceId).map(ISourceMetadata.class::cast);
+    }
+
+    /**
+     * API-backing seam for the public client API's audio lifecycle listeners (like {@link #runOnAudioThread}):
+     * attaches {@code listener}, wrapped in a per-addon isolating adapter attributed to {@code addonName},
+     * race-free with respect to real lifecycle events. The registry add AND the catch-up replay run as ONE
+     * audio-thread command - see {@link PlaybackThread#replayLiveStateTo} for why that serialization makes
+     * replay-vs-real double delivery impossible by construction, with no flags or dedup. When no playback
+     * thread is live the command is rejected and nothing is registered - correct: with no session there is
+     * nothing to replay, and the session bridge re-wires stored bundles onto the next session's manager.
+     * <p>
+     * Returns the opaque handle {@link #detachAddonListener} takes; the API backend tracks it per bundle.
+     */
+    public Object attachAddonListener(String addonName, IAudioLifecycleListener listener) {
+        Objects.requireNonNull(addonName, "addonName");
+        Objects.requireNonNull(listener, "listener");
+
+        AddonListenerAdapter adapter = new AddonListenerAdapter(addonName, listener);
+        // Capture THIS thread instance: the replay must read the state of exactly the thread the command runs
+        // on, even across a racing stop()/start() swapping the volatile field.
+        PlaybackThread thread = playbackThread;
+        if (thread == null) return adapter;
+
+        thread.enqueueCommand(() -> {
+            addLifecycleListener(adapter);
+            thread.replayLiveStateTo(adapter);
+        });
+        return adapter;
+    }
+
+    /**
+     * Detaches a handle returned by {@link #attachAddonListener}. Removal runs as an audio-thread command so
+     * it is serialized with every fire site: once the command has run the adapter receives nothing more (one
+     * final in-flight event, delivered by a CopyOnWrite iteration already underway when the command ran, is
+     * acceptable and part of the contract). A rejected command (no live thread) falls back to a direct
+     * registry remove, race-free precisely because with no live playback thread nothing fires.
+     */
+    public void detachAddonListener(Object handle) {
+        AddonListenerAdapter adapter = (AddonListenerAdapter) Objects.requireNonNull(handle, "handle");
+
+        PlaybackThread thread = playbackThread;
+        boolean accepted = thread != null && thread.enqueueCommand(() -> removeLifecycleListener(adapter));
+        if (!accepted) removeLifecycleListener(adapter);
+    }
+
+    /**
+     * API-backing seam for the public client API's playback PCM filters (like {@link #runOnAudioThread}):
+     * registers {@code filter} wrapped in a per-addon isolating adapter attributed to {@code addonName}. A
+     * plain registry add, no audio-thread command: filters have no event-ordering coupling - frames simply
+     * start flowing through on the receive path. Returns the opaque handle
+     * {@link #detachAddonPlaybackFilter} takes.
+     */
+    public Object attachAddonPlaybackFilter(String addonName, IPlaybackPcmFilter filter) {
+        Objects.requireNonNull(addonName, "addonName");
+        Objects.requireNonNull(filter, "filter");
+
+        AddonFilterAdapter adapter = new AddonFilterAdapter(addonName, filter);
+        addPcmFilter(adapter);
+        return adapter;
+    }
+
+    /** Detaches a handle returned by {@link #attachAddonPlaybackFilter}; frames simply stop flowing through. */
+    public void detachAddonPlaybackFilter(Object handle) {
+        removePcmFilter((AddonFilterAdapter) Objects.requireNonNull(handle, "handle"));
     }
 
     /**

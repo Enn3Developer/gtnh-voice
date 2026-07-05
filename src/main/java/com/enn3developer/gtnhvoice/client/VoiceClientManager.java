@@ -3,6 +3,7 @@ package com.enn3developer.gtnhvoice.client;
 import java.net.InetSocketAddress;
 import java.util.Collections;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -18,6 +19,7 @@ import org.jetbrains.annotations.Nullable;
 import com.enn3developer.gtnhvoice.Config;
 import com.enn3developer.gtnhvoice.GtnhVoice;
 import com.enn3developer.gtnhvoice.Tags;
+import com.enn3developer.gtnhvoice.api.client.ICapturePcmFilter;
 import com.enn3developer.gtnhvoice.client.capture.CaptureManager;
 import com.enn3developer.gtnhvoice.client.source.VoiceSourceManager;
 import com.enn3developer.gtnhvoice.core.api.audio.codec.AudioEncoder;
@@ -191,6 +193,55 @@ public final class VoiceClientManager {
      */
     VoiceSessionListeners sessionListenersView() {
         return sessionListeners;
+    }
+
+    /**
+     * API-backing seam for the public client API's capture PCM filters (like {@code
+     * PlaybackManager#runOnAudioThread}, public only so the API backend outside this package can reach it):
+     * registers {@code filter} on the durable {@link #capturePcmFilterChain}, wrapped in a per-addon isolating
+     * adapter attributed to {@code addonName}. Deliberately NO session involvement, unlike the playback-side
+     * seams: the chain is singleton-durable and handed to every per-session {@code CaptureSendWorker}, so one
+     * attach outlives every disconnect/reconnect cycle. Returns the opaque handle
+     * {@link #detachAddonCaptureFilter} takes; the API backend tracks it per bundle.
+     */
+    public Object attachAddonCaptureFilter(String addonName, ICapturePcmFilter filter) {
+        Objects.requireNonNull(addonName, "addonName");
+        Objects.requireNonNull(filter, "filter");
+
+        AddonCaptureFilterAdapter adapter = new AddonCaptureFilterAdapter(addonName, filter);
+        capturePcmFilterChain.add(adapter);
+        return adapter;
+    }
+
+    /** Detaches a handle returned by {@link #attachAddonCaptureFilter}; frames simply stop flowing through. */
+    public void detachAddonCaptureFilter(Object handle) {
+        capturePcmFilterChain.remove((AddonCaptureFilterAdapter) Objects.requireNonNull(handle, "handle"));
+    }
+
+    /**
+     * API-backing seam registering the addon-API bridging layer as a session lifecycle observer (public only
+     * so {@code ClientApiBackend} outside this package can reach the package-private {@link
+     * VoiceSessionListeners} registry). Both callbacks inherit the {@link VoiceSessionListener} contract: they
+     * run on the session-transition thread while this manager's monitor is held, so they must stay fast and
+     * non-blocking and must not re-enter session control. Not idempotent - the single caller
+     * ({@code ClientApiBackend.initSessionBridging}) guards against double registration.
+     */
+    public void attachAddonSessionBridge(Runnable onSessionStarted, Runnable onSessionStopping) {
+        Objects.requireNonNull(onSessionStarted, "onSessionStarted");
+        Objects.requireNonNull(onSessionStopping, "onSessionStopping");
+
+        sessionListeners.add(new VoiceSessionListener() {
+
+            @Override
+            public void sessionStarted() {
+                onSessionStarted.run();
+            }
+
+            @Override
+            public void sessionStopping() {
+                onSessionStopping.run();
+            }
+        });
     }
 
     public synchronized void onConnectedToServer(@NotNull String host) {

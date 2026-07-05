@@ -59,10 +59,12 @@ public class PlaybackThread extends Thread {
     private final PlaybackManager manager;
     private final ConcurrentLinkedQueue<Runnable> commands = new ConcurrentLinkedQueue<>();
 
-    private final OutputDeviceContext deviceContext;
+    // Package-private only so replayLiveStateTo is unit-testable with an adopted fake context and a seeded
+    // channel map, no AL device needed; every real access happens on this thread.
+    final OutputDeviceContext deviceContext;
     private final IsolatedRunner isolatedRunner;
     private final LifecycleEventDispatcher dispatcher;
-    private final SourceChannelPool channelPool;
+    final SourceChannelPool channelPool;
 
     private volatile boolean running = true;
     private volatile boolean openedSuccessfully = false;
@@ -327,6 +329,29 @@ public class PlaybackThread extends Thread {
         AL10.alListenerfv(
             AL10.AL_ORIENTATION,
             new float[] { snapshot.lookX(), snapshot.lookY(), snapshot.lookZ(), 0f, 1f, 0f });
+    }
+
+    /**
+     * Runs on this thread only (queued via {@link PlaybackManager#attachAddonListener}'s command, which also
+     * does the registry add): replays the current live state to JUST {@code listener} - {@code contextCreated}
+     * with the live device handle, then {@code sourceCreated} for every existing AL channel - or does nothing
+     * when no context is live (nothing exists to replay; session wiring covers the next one).
+     * <p>
+     * Why this is race-free with no flags or dedup: command drains are serialized with every lifecycle fire
+     * site on this thread, and the first drain of a session happens after startup's real
+     * {@code contextCreated} has already fired. So by the time the attach command runs, the adapter either
+     * missed the real event (it wasn't registered yet - the replay delivers the catch-up) or there is no live
+     * context (the replay no-ops and the real event, fired after the registry add, reaches it). Replay-vs-real
+     * double delivery is impossible by construction.
+     */
+    void replayLiveStateTo(PlaybackLifecycleListener listener) {
+        if (!deviceContext.hasLiveContext()) return;
+
+        listener.contextCreated(deviceContext.deviceHandle());
+        for (Map.Entry<UUID, SourceChannelPool.SourceChannel> entry : channelPool.channelsView()
+            .entrySet()) {
+            listener.sourceCreated(entry.getKey(), entry.getValue().alSource);
+        }
     }
 
     /**
