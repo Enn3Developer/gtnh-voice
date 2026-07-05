@@ -7,9 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
+### Added
 
-- Playback context create/destroy now fires internal lifecycle events on the playback thread, groundwork for a future EFX addon API; no behavior change
+- Public client addon API (`com.enn3developer.gtnhvoice.api.client`): OpenAL context/source lifecycle events, audio-thread tick, playback/capture PCM filters, source position queries, `runOnAudioThread` — enough for EFX-style addons (e.g. sound physics)
+- Releases now ship a separate `-api.jar`; also resolvable via JitPack
 
 ## [0.6.0] - 2026-07-05
 
