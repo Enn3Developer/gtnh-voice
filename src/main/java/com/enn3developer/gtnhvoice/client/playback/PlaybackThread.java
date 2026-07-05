@@ -475,7 +475,7 @@ public class PlaybackThread extends Thread {
     }
 
     private static boolean deviceNamesEqual(String a, String b) {
-        return a == null ? b == null : a.equals(b);
+        return Objects.equals(a, b);
     }
 
     /**
