@@ -7,7 +7,7 @@ import java.util.UUID;
  * addon API (EFX effect slots/filters, which must be created after a context exists and freed before it dies, plus
  * per-source filters/aux sends attached to individual AL sources) will build on. Listeners are registered on
  * {@link PlaybackManager} so registrations survive start/stop cycles and rebuilds; dispatch happens in
- * {@link PlaybackThread}.
+ * {@link LifecycleEventDispatcher}, always on the playback thread.
  * <p>
  * Threading contract: all callbacks run on the playback thread with the live context bound and current, so
  * implementations may call {@code AL10}/{@code ALC10} directly - which also means an implementor class that
@@ -23,7 +23,7 @@ import java.util.UUID;
  * source is deleted - whether it dies individually (speaker disconnect) or with the whole context (rebuild or
  * shutdown teardown).
  * <p>
- * No event fires for a source <em>reset</em> (speech-segment inactivity, {@code PlaybackThread#resetSourceChannel}):
+ * No event fires for a source <em>reset</em> (speech-segment inactivity, {@code SourceChannelPool#resetSourceChannel}):
  * the AL source survives a reset, so any listener state attached to the handle stays valid - do not expect
  * create/destroy churn per speech segment. After a device/HRTF rebuild, AL sources are recreated lazily (next audio
  * packet for each speaker), so listeners see fresh {@link #sourceCreated} events with new handles on the new context

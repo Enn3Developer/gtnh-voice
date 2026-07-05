@@ -1,31 +1,19 @@
 package com.enn3developer.gtnhvoice.client.playback;
 
-import java.nio.IntBuffer;
-import java.util.ArrayDeque;
-import java.util.Deque;
-import java.util.HashMap;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.atomic.AtomicLong;
 
 import org.lwjgl.openal.AL;
 import org.lwjgl.openal.AL10;
-import org.lwjgl.openal.ALC;
 import org.lwjgl.openal.ALC10;
-import org.lwjgl.openal.ALCCapabilities;
-import org.lwjgl.openal.ALCapabilities;
 import org.lwjgl.openal.EXTThreadLocalContext;
-import org.lwjgl.openal.SOFTHRTF;
-import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 
 import com.enn3developer.gtnhvoice.Config;
 import com.enn3developer.gtnhvoice.GtnhVoice;
-import com.enn3developer.gtnhvoice.core.api.util.LogThrottle;
 
 import me.eigenraven.lwjgl3ify.api.Lwjgl3Aware;
 
@@ -39,6 +27,13 @@ import me.eigenraven.lwjgl3ify.api.Lwjgl3Aware;
  * {@link EXTThreadLocalContext#alcSetThreadContext}, so this thread can drive its own OpenAL playback independently
  * of MC's audio engine.
  * <p>
+ * This class is the orchestrator; the real work lives in thread-confined collaborators it owns: the ALC
+ * device/context handles and their open/create/bind/teardown primitives in {@link OutputDeviceContext}, the
+ * per-source AL channels and the pump in {@link SourceChannelPool}, lifecycle event dispatch in
+ * {@link LifecycleEventDispatcher}, and Throwable isolation (one shared instance - and thus one shared error-log
+ * throttle - behind both queued commands and listener dispatch) in {@link IsolatedRunner}. What stays here: the
+ * command queue, run()'s startup/pump/teardown skeleton, and {@link #performRebuild} orchestration.
+ * <p>
  * AL source creation/destruction/reset is marshalled onto this thread via {@link #enqueueCommand}, since only the
  * thread holding the ALC context may call {@code AL10} functions; frame and position hand-off instead reads directly
  * from the {@link PlaybackManager}'s concurrent maps every loop iteration, avoiding per-frame command overhead.
@@ -46,59 +41,39 @@ import me.eigenraven.lwjgl3ify.api.Lwjgl3Aware;
  * The output device and HRTF mode can be rebuilt live via {@link #requestRebuild}, which is itself just another
  * command run through {@link #enqueueCommand} - it executes inline in this thread's own command-drain step, so it's
  * automatically serialized with every other AL call this thread makes and the pump loop is naturally quiesced for
- * its duration. The device/context are instance fields (not {@code run()} locals) specifically so that command can
- * mutate them in place; the OS thread itself never stops for a rebuild, only for real shutdown.
+ * its duration. The device/context live on the {@link OutputDeviceContext} instance field (not {@code run()}
+ * locals) specifically so that command can mutate them in place; the OS thread itself never stops for a rebuild,
+ * only for real shutdown.
  * <p>
  * Every context create/destroy and AL source create/destroy is announced to the
- * {@link PlaybackLifecycleListener}s registered on the manager, always through the {@code fire*} helpers
- * ({@link #fireContextCreated}, {@link #fireSourceCreated}, {@link #fireSourceDestroying},
- * {@link #fireContextTeardown}/{@link #fireContextDestroying}, {@link #fireAudioTick}) and always on this thread -
- * see those helpers and
- * the listener interface for the exact pairing and ordering contracts. Any future lifecycle site must go through
- * the same funnel.
+ * {@link PlaybackLifecycleListener}s registered on the manager, always through the
+ * {@link LifecycleEventDispatcher} funnel and always on this thread - see that class and the listener interface
+ * for the exact pairing and ordering contracts. Any future lifecycle site must go through the same funnel.
  */
 @Lwjgl3Aware
 public class PlaybackThread extends Thread {
 
-    private static final int SAMPLE_RATE = 48_000;
-    private static final int BUFFER_POOL_SIZE = 6;
     private static final long POLL_INTERVAL_MILLIS = 5L;
     private static final long LOG_INTERVAL_MILLIS = 500L;
-    private static final long COMMAND_ERROR_LOG_INTERVAL_MILLIS = 1_000L;
-    private static final float REFERENCE_DISTANCE = 1.0f;
-    private static final float ROLLOFF_FACTOR = 1.0f;
-
-    // Prime-and-hysteresis tuning for AL source start, see pumpSourceChannel(). 2 is the floor: one buffer
-    // playing plus one queued as cushion against decode-poller scheduling slop - the poller's frame cadence is
-    // Thread.sleep-based, not phase-locked to the AL playback clock, so with a single buffer any wakeup drift
-    // underruns the source. Lowered from 3 once VoiceSource gained packet-loss concealment, which keeps frames
-    // flowing through genuine packet gaps instead of relying on queue depth to ride them out.
-    private static final int PRIME_BUFFERS = 2;
-    private static final long TAIL_FLUSH_MILLIS = 60L;
 
     private final PlaybackManager manager;
     private final ConcurrentLinkedQueue<Runnable> commands = new ConcurrentLinkedQueue<>();
-    // Package-private only so fireContextTeardown's sources-then-context ordering is unit-testable with a seeded
-    // map and no AL device; every real access happens on this thread (see the thread-confinement note below).
-    final Map<UUID, SourceChannel> sourceChannels = new HashMap<>();
-    private final AtomicLong lastCommandErrorLogMillis = new AtomicLong();
+
+    private final OutputDeviceContext deviceContext;
+    private final IsolatedRunner isolatedRunner;
+    private final LifecycleEventDispatcher dispatcher;
+    private final SourceChannelPool channelPool;
 
     private volatile boolean running = true;
     private volatile boolean openedSuccessfully = false;
 
-    // Thread-confined (only ever read/written from this thread's own run() or from commands run inline within it,
-    // see the class javadoc) - no volatile/synchronization needed despite being mutated by requestRebuild's command.
-    private long device = MemoryUtil.NULL;
-    private long context = MemoryUtil.NULL;
-    private ALCCapabilities alcCaps;
-    private String currentDeviceName;
-    private Config.HrtfMode appliedHrtfMode = Config.HrtfMode.AUTO;
-
     public PlaybackThread(PlaybackManager manager, String initialDeviceName, Config.HrtfMode initialHrtfMode) {
         super("gtnhvoice-playback");
         this.manager = manager;
-        this.currentDeviceName = initialDeviceName;
-        this.appliedHrtfMode = initialHrtfMode;
+        this.deviceContext = new OutputDeviceContext(initialDeviceName, initialHrtfMode);
+        this.isolatedRunner = new IsolatedRunner(deviceContext::drainAlErrorAfterFailedCommand);
+        this.dispatcher = new LifecycleEventDispatcher(manager, isolatedRunner);
+        this.channelPool = new SourceChannelPool(manager, dispatcher);
         setDaemon(true);
     }
 
@@ -138,7 +113,7 @@ public class PlaybackThread extends Thread {
      * the same command queue every other AL lifecycle op uses - see the class javadoc.
      * <p>
      * {@link #performRebuild} handles every expected failure itself (fallback device, clean disable); a
-     * Throwable escaping it is an internal bug that leaves the device/context fields desynced from reality, so
+     * Throwable escaping it is an internal bug that leaves the device/context state desynced from reality, so
      * rather than letting {@link #runCommandIsolated} swallow it and limp on, this wrapper fails loud: log
      * unthrottled and disable output via {@link #running}.
      */
@@ -155,38 +130,36 @@ public class PlaybackThread extends Thread {
 
     @Override
     public void run() {
-        device = openDevice(currentDeviceName);
+        long device = deviceContext.openDevice(deviceContext.currentDeviceName());
         if (device == MemoryUtil.NULL) {
             GtnhVoice.LOG.error("[Playback] Failed to open any playback device (requested or default)");
             abortStartup();
             return;
         }
 
-        context = createContext(device, appliedHrtfMode);
+        long context = deviceContext.createContext(device, deviceContext.appliedHrtfMode());
         if (context == MemoryUtil.NULL) {
-            closeDevice(device);
-            device = MemoryUtil.NULL;
+            deviceContext.closeDevice(device);
             abortStartup();
             return;
         }
 
-        if (!bindContext(context)) {
+        if (!deviceContext.bindContext(context)) {
             ALC10.alcDestroyContext(context);
-            context = MemoryUtil.NULL;
-            closeDevice(device);
-            device = MemoryUtil.NULL;
+            deviceContext.closeDevice(device);
             abortStartup();
             return;
         }
 
+        deviceContext.adopt(device, context, deviceContext.currentDeviceName());
         openedSuccessfully = true;
-        fireContextCreated();
+        dispatcher.fireContextCreated(deviceContext.deviceHandle());
         GtnhVoice.LOG.info(
             "[Playback] Playback started: {}Hz mono16, {} buffer pool per source, device={}, hrtf={}",
-            SAMPLE_RATE,
-            BUFFER_POOL_SIZE,
-            currentDeviceName == null ? "<default>" : currentDeviceName,
-            appliedHrtfMode);
+            SourceChannelPool.SAMPLE_RATE,
+            SourceChannelPool.BUFFER_POOL_SIZE,
+            deviceContext.currentDeviceName() == null ? "<default>" : deviceContext.currentDeviceName(),
+            deviceContext.appliedHrtfMode());
 
         long lastLogTime = System.currentTimeMillis();
 
@@ -198,15 +171,17 @@ public class PlaybackThread extends Thread {
 
                 applyListenerSnapshot();
 
-                fireAudioTick();
+                // The dispatcher documents it: the CALLER owns audioTick's fires-only-with-sources condition.
+                if (!channelPool.isEmpty()) dispatcher.fireAudioTick();
 
                 long now = System.currentTimeMillis();
-                for (Map.Entry<UUID, SourceChannel> entry : sourceChannels.entrySet()) {
-                    pumpSourceChannel(entry.getKey(), entry.getValue(), now);
+                for (Map.Entry<UUID, SourceChannelPool.SourceChannel> entry : channelPool.channelsView()
+                    .entrySet()) {
+                    channelPool.pumpSourceChannel(entry.getKey(), entry.getValue(), now);
                 }
 
                 if (now - lastLogTime >= LOG_INTERVAL_MILLIS) {
-                    logChannelsThrottled();
+                    channelPool.logChannelsThrottled();
                     lastLogTime = now;
                 }
 
@@ -217,14 +192,14 @@ public class PlaybackThread extends Thread {
                 }
             }
         } finally {
-            // Guarded so destroying never double-fires: after a total rebuild failure the context field is
-            // already NULL (performRebuild nulled it, having announced the old context's teardown at its top),
-            // so this only announces a context whose destroying hasn't fired yet.
-            if (context != MemoryUtil.NULL) fireContextTeardown();
-            teardownAlSources();
-            teardownContext();
-            closeDevice(device);
-            device = MemoryUtil.NULL;
+            // Guarded so destroying never double-fires: after a total rebuild failure the context is already
+            // gone (performRebuild cleared it, having announced the old context's teardown at its top), so this
+            // only announces a context whose destroying hasn't fired yet.
+            if (deviceContext.hasLiveContext()) dispatcher.fireContextTeardown(channelPool.channelsView());
+            channelPool.teardownAlSources();
+            deviceContext.teardownContext();
+            deviceContext.closeDevice(deviceContext.deviceHandle());
+            deviceContext.clear();
             openedSuccessfully = false;
             // Drop anything that won the enqueueCommand acceptance race against shutdown (see its javadoc) -
             // nothing will ever drain this queue again.
@@ -257,141 +232,14 @@ public class PlaybackThread extends Thread {
     }
 
     /**
-     * Runs {@code command}, catching any {@link Throwable} it throws - deliberately including errors, since an
-     * addon command whose class is missing lwjgl3ify's {@code @Lwjgl3Aware} dies with {@code
-     * NoClassDefFoundError}, and that must not tear down playback. Failures are logged at error level, throttled
-     * to one per {@value #COMMAND_ERROR_LOG_INTERVAL_MILLIS}ms. After a failure with the context bound, the AL
-     * error state is drained so a half-executed command's dangling error isn't misattributed to this thread's
-     * next internal {@link #checkAlError}.
+     * Runs {@code command} through the shared {@link IsolatedRunner} - see that class for the full isolation
+     * contract (catch-Throwable, throttled error log, AL error drain).
      * <p>
      * Package-private only so the isolation contract is unit-testable without an AL device; every real call
      * happens on this thread from {@link #drainCommands}.
      */
     void runCommandIsolated(Runnable command) {
-        runIsolated(command, "Queued command");
-    }
-
-    /**
-     * Shared isolation wrapper behind both {@link #runCommandIsolated} and listener dispatch
-     * ({@link #fireContextCreated}/{@link #fireContextDestroying}): runs {@code task}, catching any
-     * {@link Throwable} with a throttled error log naming {@code what}, then drains the AL error state so a
-     * half-executed task's dangling error isn't misattributed to this thread's next internal
-     * {@link #checkAlError}.
-     */
-    private void runIsolated(Runnable task, String what) {
-        try {
-            task.run();
-        } catch (Throwable t) {
-            if (LogThrottle.shouldLog(lastCommandErrorLogMillis, COMMAND_ERROR_LOG_INTERVAL_MILLIS)) {
-                GtnhVoice.LOG.error("[Playback] {} threw on the playback thread", what, t);
-            }
-            drainAlErrorAfterFailedCommand();
-        }
-    }
-
-    /**
-     * The single funnel announcing that a context has become the live output - called from run()'s startup path
-     * and {@link #performRebuild}'s success path (which covers the default-device fallback too), always with the
-     * new context bound and current and before any AL sources exist on it. Passes {@link #device} so listeners
-     * can run ALC extension checks. Each listener is dispatched isolated via {@link #runIsolated} - a broken one
-     * can't kill the pump loop or starve the others.
-     * <p>
-     * Package-private only so listener dispatch is unit-testable without an AL device; every real call happens
-     * on this thread.
-     */
-    void fireContextCreated() {
-        for (PlaybackLifecycleListener listener : manager.lifecycleListenersView()) {
-            runIsolated(() -> listener.contextCreated(device), "Lifecycle listener contextCreated");
-        }
-    }
-
-    /**
-     * The single funnel announcing that the live context is about to die - called before ANY AL teardown at the
-     * top of {@link #performRebuild} and in run()'s finally, both guarded on a live {@link #context} so a
-     * never-announced (or already-announced) context can never fire destroying. The context is still bound and
-     * every AL source still exists when listeners run. Isolation and visibility rationale as
-     * {@link #fireContextCreated}.
-     */
-    void fireContextDestroying() {
-        for (PlaybackLifecycleListener listener : manager.lifecycleListenersView()) {
-            runIsolated(listener::contextDestroying, "Lifecycle listener contextDestroying");
-        }
-    }
-
-    /**
-     * The single funnel announcing that an AL source now exists - called from {@link #createSourceChannel}'s one
-     * success point, after the source is fully configured and registered in {@link #sourceChannels}; the
-     * alGenSources/alGenBuffers failure returns never announce, since no channel came into existence. Isolation
-     * and visibility rationale as {@link #fireContextCreated}.
-     */
-    void fireSourceCreated(UUID sourceId, int sourceHandle) {
-        for (PlaybackLifecycleListener listener : manager.lifecycleListenersView()) {
-            runIsolated(() -> listener.sourceCreated(sourceId, sourceHandle), "Lifecycle listener sourceCreated");
-        }
-    }
-
-    /**
-     * The single funnel announcing that an AL source is about to be deleted - called from
-     * {@link #destroySourceChannel} for an individual death and from {@link #fireContextTeardown} for every live
-     * source ahead of a whole-context teardown, always before any of that source's AL state is touched. The two
-     * paths can't double-fire for one source: the individual path removes the channel from {@link #sourceChannels}
-     * before firing, so a mass teardown's iteration never sees it. Isolation and visibility rationale as
-     * {@link #fireContextCreated}.
-     */
-    void fireSourceDestroying(UUID sourceId, int sourceHandle) {
-        for (PlaybackLifecycleListener listener : manager.lifecycleListenersView()) {
-            runIsolated(
-                () -> listener.sourceDestroying(sourceId, sourceHandle),
-                "Lifecycle listener sourceDestroying");
-        }
-    }
-
-    /**
-     * Announces a whole-context teardown in destruction order, one step ahead of it: {@link #fireSourceDestroying}
-     * for every channel still in {@link #sourceChannels}, then {@link #fireContextDestroying} - all before ANY
-     * actual AL teardown begins. The single helper both teardown paths ({@link #performRebuild}'s top and run()'s
-     * finally) call, so their announcement order can't drift apart; callers keep the live-context guard and must
-     * still run {@link #teardownAlSources}/{@link #teardownContext} afterwards - this only announces, it destroys
-     * nothing.
-     */
-    void fireContextTeardown() {
-        for (Map.Entry<UUID, SourceChannel> entry : sourceChannels.entrySet()) {
-            fireSourceDestroying(entry.getKey(), entry.getValue().alSource);
-        }
-        fireContextDestroying();
-    }
-
-    /**
-     * The single funnel for the periodic {@link PlaybackLifecycleListener#audioTick} heartbeat - called once per
-     * pump iteration from run(), after {@link #applyListenerSnapshot} (so listeners computing spatial state see
-     * the freshest AL listener position) and before the {@link #pumpSourceChannel} loop. The emptiness guard lives
-     * here rather than at the call site so the fires-only-with-sources condition is unit-testable with a seeded
-     * {@link #sourceChannels} map: no AL sources means no per-source state to update, so idle iterations cost
-     * nothing beyond this one check. Isolation and visibility rationale as {@link #fireContextCreated}.
-     */
-    void fireAudioTick() {
-        if (sourceChannels.isEmpty()) return;
-
-        for (PlaybackLifecycleListener listener : manager.lifecycleListenersView()) {
-            runIsolated(listener::audioTick, "Lifecycle listener audioTick");
-        }
-    }
-
-    /**
-     * Best-effort {@code alGetError} drain after a failed command. The {@link #context} field says a context
-     * should be bound, but a hostile/broken command may have unbound this thread's AL binding before throwing -
-     * then {@code alGetError} itself throws (LWJGL's no-capabilities {@code IllegalStateException}), and that
-     * must not escape {@link #runCommandIsolated}'s catch block and kill the pump loop this isolation exists to
-     * protect.
-     */
-    private void drainAlErrorAfterFailedCommand() {
-        if (context == MemoryUtil.NULL) return;
-
-        try {
-            AL10.alGetError();
-        } catch (Throwable ignored) {
-            // Nothing to drain if the binding itself is gone; the next internal checkAlError will complain.
-        }
+        isolatedRunner.run(command, "Queued command");
     }
 
     /**
@@ -416,20 +264,22 @@ public class PlaybackThread extends Thread {
         // and its sources still exist - that's the listener contract. Guarded: a rebuild queued behind one that
         // already failed totally runs with no live context, and a context that was never announced must never get
         // a destroying.
-        if (context != MemoryUtil.NULL) fireContextTeardown();
-        teardownAlSources();
-        teardownContext();
+        if (deviceContext.hasLiveContext()) dispatcher.fireContextTeardown(channelPool.channelsView());
+        channelPool.teardownAlSources();
+        deviceContext.teardownContext();
 
-        boolean deviceChanging = !deviceNamesEqual(currentDeviceName, targetDeviceName);
-        long newDevice = device;
+        boolean deviceChanging = !OutputDeviceContext
+            .deviceNamesEqual(deviceContext.currentDeviceName(), targetDeviceName);
+        long newDevice = deviceContext.deviceHandle();
         if (deviceChanging) {
-            closeDevice(device);
-            device = MemoryUtil.NULL;
-            newDevice = openDevice(targetDeviceName);
+            deviceContext.closeDevice(deviceContext.deviceHandle());
+            deviceContext.clear(); // the context is already torn down, so this just un-dangles the device handle
+            newDevice = deviceContext.openDevice(targetDeviceName);
         }
 
-        long newContext = newDevice == MemoryUtil.NULL ? MemoryUtil.NULL : createContext(newDevice, targetHrtfMode);
-        boolean bound = newContext != MemoryUtil.NULL && bindContext(newContext);
+        long newContext = newDevice == MemoryUtil.NULL ? MemoryUtil.NULL
+            : deviceContext.createContext(newDevice, targetHrtfMode);
+        boolean bound = newContext != MemoryUtil.NULL && deviceContext.bindContext(newContext);
 
         if (!bound) {
             GtnhVoice.LOG.error(
@@ -437,19 +287,18 @@ public class PlaybackThread extends Thread {
                 targetDeviceName == null ? "<default>" : targetDeviceName,
                 targetHrtfMode);
             if (newContext != MemoryUtil.NULL) ALC10.alcDestroyContext(newContext);
-            if (newDevice != MemoryUtil.NULL) closeDevice(newDevice);
+            if (newDevice != MemoryUtil.NULL) deviceContext.closeDevice(newDevice);
 
-            newDevice = openDevice(null);
+            newDevice = deviceContext.openDevice(null);
             newContext = newDevice == MemoryUtil.NULL ? MemoryUtil.NULL
-                : createContext(newDevice, Config.HrtfMode.AUTO);
-            bound = newContext != MemoryUtil.NULL && bindContext(newContext);
+                : deviceContext.createContext(newDevice, Config.HrtfMode.AUTO);
+            bound = newContext != MemoryUtil.NULL && deviceContext.bindContext(newContext);
 
             if (!bound) {
                 GtnhVoice.LOG.error("[Playback] Rebuild failed entirely; disabling output until next reconnect");
                 if (newContext != MemoryUtil.NULL) ALC10.alcDestroyContext(newContext);
-                if (newDevice != MemoryUtil.NULL) closeDevice(newDevice);
-                device = MemoryUtil.NULL;
-                context = MemoryUtil.NULL;
+                if (newDevice != MemoryUtil.NULL) deviceContext.closeDevice(newDevice);
+                deviceContext.clear();
                 running = false; // clean shutdown on the next loop check; run()'s finally is now a no-op teardown
                 return;
             }
@@ -458,236 +307,18 @@ public class PlaybackThread extends Thread {
             targetHrtfMode = Config.HrtfMode.AUTO;
         }
 
-        device = newDevice;
-        context = newContext;
-        currentDeviceName = targetDeviceName;
-        // appliedHrtfMode already set by createContext(), which may have degraded targetHrtfMode to AUTO.
+        // appliedHrtfMode was already recorded by createContext(), which may have degraded targetHrtfMode to AUTO.
+        deviceContext.adopt(newDevice, newContext, targetDeviceName);
 
         // Single created-fire point for both the target and the fallback outcome - either way the new context
         // is bound and live by now, and no AL sources exist on it yet (they reappear lazily via commands).
-        fireContextCreated();
+        dispatcher.fireContextCreated(deviceContext.deviceHandle());
 
         GtnhVoice.LOG.info(
             "[Playback] Rebuild complete: device={} hrtfRequested={} hrtfApplied={}",
-            currentDeviceName == null ? "<default>" : currentDeviceName,
+            deviceContext.currentDeviceName() == null ? "<default>" : deviceContext.currentDeviceName(),
             targetHrtfMode,
-            appliedHrtfMode);
-    }
-
-    private static boolean deviceNamesEqual(String a, String b) {
-        return Objects.equals(a, b);
-    }
-
-    /**
-     * Opens {@code requestedDevice} by name, or the system default if {@code null}, and loads its {@link
-     * ALCCapabilities} into {@link #alcCaps}. Falls back to the default device (logging a warning, never crashing)
-     * if a named device fails to open or lacks {@code ALC_EXT_thread_local_context}. Returns {@code
-     * MemoryUtil#NULL} only if even the default device is unusable.
-     */
-    private long openDevice(String requestedDevice) {
-        long dev = requestedDevice == null ? ALC10.alcOpenDevice((CharSequence) null)
-            : ALC10.alcOpenDevice(requestedDevice);
-        if (dev == MemoryUtil.NULL && requestedDevice != null) {
-            GtnhVoice.LOG.warn(
-                "[Playback] Failed to open requested output device '{}', falling back to default",
-                requestedDevice);
-            dev = ALC10.alcOpenDevice((CharSequence) null);
-        }
-        if (dev == MemoryUtil.NULL) {
-            GtnhVoice.LOG.error("[Playback] Failed to open default playback device");
-            return MemoryUtil.NULL;
-        }
-
-        ALCCapabilities caps = ALC.createCapabilities(dev);
-        if (!caps.ALC_EXT_thread_local_context) {
-            GtnhVoice.LOG.error("[Playback] ALC_EXT_thread_local_context is not supported by this OpenAL driver");
-            ALC10.alcCloseDevice(dev);
-            return MemoryUtil.NULL;
-        }
-
-        alcCaps = caps;
-        return dev;
-    }
-
-    /**
-     * Creates a context on {@code dev} with the HRTF attributes for {@code mode}, feature-detecting {@code
-     * ALC_SOFT_HRTF} via {@link #alcCaps} (the LWJGL-computed equivalent of {@code alcIsExtensionPresent}) and
-     * degrading to AUTO (no explicit attribute - openal-soft's own default) if unsupported. Sets {@link
-     * #appliedHrtfMode} to whatever was actually applied. Returns {@code MemoryUtil#NULL} on ALC failure.
-     */
-    private long createContext(long dev, Config.HrtfMode mode) {
-        boolean hrtfSupported = alcCaps.ALC_SOFT_HRTF;
-        Config.HrtfMode applied = mode;
-        long ctx;
-
-        if (mode != Config.HrtfMode.AUTO && hrtfSupported) {
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                IntBuffer attribs = stack.mallocInt(3);
-                attribs.put(SOFTHRTF.ALC_HRTF_SOFT)
-                    .put(mode == Config.HrtfMode.ON ? ALC10.ALC_TRUE : ALC10.ALC_FALSE)
-                    .put(0)
-                    .flip();
-                ctx = ALC10.alcCreateContext(dev, attribs);
-            }
-        } else {
-            if (mode != Config.HrtfMode.AUTO) {
-                GtnhVoice.LOG.warn(
-                    "[Playback] ALC_SOFT_HRTF not supported by this driver; requested {} but applying AUTO",
-                    mode);
-                applied = Config.HrtfMode.AUTO;
-            }
-            ctx = ALC10.alcCreateContext(dev, (IntBuffer) null);
-        }
-
-        if (ctx == MemoryUtil.NULL || !checkAlcError(dev, "alcCreateContext")) {
-            return MemoryUtil.NULL;
-        }
-
-        appliedHrtfMode = applied;
-        GtnhVoice.LOG.info("[Playback] HRTF requested={} applied={} extensionPresent={}", mode, applied, hrtfSupported);
-        return ctx;
-    }
-
-    /**
-     * Binds {@code ctx} thread-locally and builds this thread's {@link ALCapabilities}/{@code AL10} function
-     * pointers against it. {@link #alcCaps} must already correspond to the same device {@code ctx} was created on
-     * - true by construction since {@link #openDevice} and {@link #createContext} are always called back-to-back
-     * for the same device.
-     */
-    private boolean bindContext(long ctx) {
-        if (!EXTThreadLocalContext.alcSetThreadContext(ctx)) {
-            GtnhVoice.LOG.error("[Playback] alcSetThreadContext failed");
-            return false;
-        }
-
-        ALCapabilities alCaps = AL.createCapabilities(alcCaps);
-        AL.setCurrentThread(alCaps);
-        AL10.alDistanceModel(AL10.AL_INVERSE_DISTANCE_CLAMPED);
-        return true;
-    }
-
-    /**
-     * Stops, flushes, and deletes every active {@link SourceChannel}'s AL source and buffers (step b of a
-     * rebuild), leaving {@link #sourceChannels} empty. Never touches the owning {@code VoiceSource}s - their
-     * decoder/jitter state lives entirely outside this class.
-     */
-    private void teardownAlSources() {
-        for (Iterator<SourceChannel> it = sourceChannels.values()
-            .iterator(); it.hasNext();) {
-            SourceChannel channel = it.next();
-            stopAndFlush(channel);
-            AL10.alDeleteSources(channel.alSource);
-            AL10.alDeleteBuffers(channel.bufferIds);
-            it.remove();
-        }
-        checkAlError("teardownAlSources");
-    }
-
-    private void teardownContext() {
-        AL.setCurrentThread(null);
-        EXTThreadLocalContext.alcSetThreadContext(MemoryUtil.NULL);
-        if (context != MemoryUtil.NULL) {
-            ALC10.alcDestroyContext(context);
-            context = MemoryUtil.NULL;
-        }
-    }
-
-    private void closeDevice(long dev) {
-        if (dev != MemoryUtil.NULL) ALC10.alcCloseDevice(dev);
-    }
-
-    private void pumpSourceChannel(UUID sourceId, SourceChannel channel, long now) {
-        int processed = AL10.alGetSourcei(channel.alSource, AL10.AL_BUFFERS_PROCESSED);
-        for (int i = 0; i < processed; i++) {
-            channel.freeBuffers.add(AL10.alSourceUnqueueBuffers(channel.alSource));
-        }
-        checkAlError("alSourceUnqueueBuffers");
-
-        // OpenAL marks a STOPPED source's entire queue as processed instantly, even buffers that never played -
-        // so a source left STOPPED must be rewound to INITIAL before any new buffer is queued onto it, or the
-        // next tick's unqueue-processed step above will silently discard it before it ever primes.
-        if (AL10.alGetSourcei(channel.alSource, AL10.AL_SOURCE_STATE) == AL10.AL_STOPPED) {
-            int leftoverQueued = AL10.alGetSourcei(channel.alSource, AL10.AL_BUFFERS_QUEUED);
-            if (leftoverQueued > 0) {
-                GtnhVoice.LOG.warn(
-                    "[Playback] sourceId={} found STOPPED with {} buffers still queued after unqueue - a reset path was missed",
-                    sourceId,
-                    leftoverQueued);
-            }
-            channel.underruns++;
-            AL10.alSourceRewind(channel.alSource);
-            checkAlError("alSourceRewind");
-        }
-
-        Boolean positionalMode = manager.positionalModesView()
-            .get(sourceId);
-        boolean positional = positionalMode == null || positionalMode;
-        if (positional != channel.positional) {
-            applySourceMode(channel, sourceId, positional);
-        }
-
-        if (channel.positional) {
-            double[] position = manager.positionsView()
-                .get(sourceId);
-            if (position != null) {
-                AL10.alSource3f(
-                    channel.alSource,
-                    AL10.AL_POSITION,
-                    (float) position[0],
-                    (float) position[1],
-                    (float) position[2]);
-            }
-        }
-
-        while (!channel.freeBuffers.isEmpty()) {
-            short[] frame = channel.frameQueue.poll();
-            if (frame == null) break;
-
-            int bufferId = channel.freeBuffers.poll();
-            AL10.alBufferData(bufferId, AL10.AL_FORMAT_MONO16, frame, SAMPLE_RATE);
-            AL10.alSourceQueueBuffers(channel.alSource, bufferId);
-            checkAlError("alBufferData/alSourceQueueBuffers");
-            channel.framesQueued++;
-            channel.lastFrameQueuedAtMillis = now;
-        }
-
-        int queued = AL10.alGetSourcei(channel.alSource, AL10.AL_BUFFERS_QUEUED);
-        int state = AL10.alGetSourcei(channel.alSource, AL10.AL_SOURCE_STATE);
-        if (state == AL10.AL_PLAYING || queued == 0) return;
-
-        boolean primed = queued >= PRIME_BUFFERS;
-        boolean tailFlush = !primed && (now - channel.lastFrameQueuedAtMillis) > TAIL_FLUSH_MILLIS;
-        if (!primed && !tailFlush) return;
-
-        if (tailFlush) {
-            GtnhVoice.LOG.info(
-                "[Playback] tail flush sourceId={} queued={} state={}",
-                sourceId,
-                queued,
-                alSourceStateToString(state));
-        }
-        AL10.alSourcePlay(channel.alSource);
-        checkAlError("alSourcePlay");
-    }
-
-    /**
-     * Runs on this thread only, from {@link #pumpSourceChannel}'s per-iteration mode check: flips one AL source
-     * between positional (world-positioned, distance-attenuated - exactly how {@link #createSourceChannel} builds
-     * it) and flat (listener-relative at the origin with zero rolloff, so it plays at full gain regardless of
-     * where anyone stands). The desired mode arrives with every audio packet, so a speaker switching groups
-     * mid-stream flips their existing source in place - no teardown, and this only executes on an actual change.
-     * On a flip back to positional the pump re-applies the source's world position in the same iteration.
-     */
-    private void applySourceMode(SourceChannel channel, UUID sourceId, boolean positional) {
-        AL10.alSourcei(channel.alSource, AL10.AL_SOURCE_RELATIVE, positional ? AL10.AL_FALSE : AL10.AL_TRUE);
-        AL10.alSourcef(channel.alSource, AL10.AL_ROLLOFF_FACTOR, positional ? ROLLOFF_FACTOR : 0f);
-        if (!positional) {
-            AL10.alSource3f(channel.alSource, AL10.AL_POSITION, 0f, 0f, 0f);
-        }
-        checkAlError("applySourceMode");
-
-        channel.positional = positional;
-        GtnhVoice.LOG.info("[Playback] Source mode switched for sourceId={} positional={}", sourceId, positional);
+            deviceContext.appliedHrtfMode());
     }
 
     private void applyListenerSnapshot() {
@@ -699,179 +330,25 @@ public class PlaybackThread extends Thread {
     }
 
     /**
-     * Runs on this thread only (queued via {@link #enqueueCommand}): allocates a positioned AL source + buffer pool
-     * for a newly seen {@code sourceId}. No-op if one already exists - including right after a rebuild wiped
-     * {@link #sourceChannels}, in which case this is exactly what lazily recreates it (and what naturally gives
-     * lifecycle listeners a fresh {@link #fireSourceCreated} with the new handle on the new context).
+     * Delegates to {@link SourceChannelPool#createSourceChannel} - kept (like the three below) so
+     * {@link PlaybackManager}'s command lambdas need only this thread, not its collaborators.
      */
     void createSourceChannel(UUID sourceId, BlockingQueue<short[]> frameQueue, int distance, float gain) {
-        if (sourceChannels.containsKey(sourceId)) return;
-
-        int source = AL10.alGenSources();
-        if (!checkAlError("alGenSources")) return;
-
-        AL10.alSourcef(source, AL10.AL_REFERENCE_DISTANCE, REFERENCE_DISTANCE);
-        AL10.alSourcef(source, AL10.AL_MAX_DISTANCE, distance);
-        AL10.alSourcef(source, AL10.AL_ROLLOFF_FACTOR, ROLLOFF_FACTOR);
-        AL10.alSourcef(source, AL10.AL_GAIN, gain);
-
-        int[] bufferIds = new int[BUFFER_POOL_SIZE];
-        AL10.alGenBuffers(bufferIds);
-        if (!checkAlError("alGenBuffers")) {
-            AL10.alDeleteSources(source);
-            return;
-        }
-
-        Deque<Integer> freeBuffers = new ArrayDeque<>(BUFFER_POOL_SIZE);
-        for (int bufferId : bufferIds) freeBuffers.add(bufferId);
-
-        sourceChannels.put(sourceId, new SourceChannel(source, bufferIds, freeBuffers, frameQueue));
-        fireSourceCreated(sourceId, source);
-        GtnhVoice.LOG.info("[Playback] AL source created for sourceId={} gain={}", sourceId, gain);
+        channelPool.createSourceChannel(sourceId, frameQueue, distance, gain);
     }
 
-    /**
-     * Runs on this thread only (queued via {@link PlaybackManager#setGain}): applies a live {@code AL_GAIN} update
-     * to {@code sourceId}'s AL source. No-op if it doesn't currently have one - the value is still recorded in
-     * {@link PlaybackManager}'s gain map and will be picked up whenever {@link #createSourceChannel} next runs for
-     * it (e.g. the player starts speaking, or a rebuild recreates the channel).
-     */
+    /** Delegates to {@link SourceChannelPool#applyGain}. */
     void applyGain(UUID sourceId, float gain) {
-        SourceChannel channel = sourceChannels.get(sourceId);
-        if (channel == null) return;
-
-        AL10.alSourcef(channel.alSource, AL10.AL_GAIN, gain);
-        checkAlError("applyGain");
-        GtnhVoice.LOG.info("[Playback] Gain applied for sourceId={} gain={}", sourceId, gain);
+        channelPool.applyGain(sourceId, gain);
     }
 
-    /**
-     * Runs on this thread only: fully stops, unqueues, and deletes {@code sourceId}'s AL source and buffers, freeing
-     * the handles. Used when the speaker disconnects. Announces {@link #fireSourceDestroying} first, while the
-     * handle is still fully valid; the remove-before-fire discipline keeps a later mass teardown from re-announcing
-     * this source.
-     */
+    /** Delegates to {@link SourceChannelPool#destroySourceChannel}. */
     void destroySourceChannel(UUID sourceId) {
-        SourceChannel channel = sourceChannels.remove(sourceId);
-        if (channel == null) return;
-
-        fireSourceDestroying(sourceId, channel.alSource);
-        stopAndFlush(channel);
-        AL10.alDeleteSources(channel.alSource);
-        AL10.alDeleteBuffers(channel.bufferIds);
-        checkAlError("destroySourceChannel");
-        GtnhVoice.LOG.info("[Playback] AL source destroyed for sourceId={}", sourceId);
+        channelPool.destroySourceChannel(sourceId);
     }
 
-    /**
-     * Runs on this thread only: stops {@code sourceId}'s AL source and returns its queued buffers to the free pool,
-     * but keeps the AL source handle alive. Used on speech-segment inactivity reset. Deliberately fires no
-     * lifecycle event: the AL source survives a reset, so listener state attached to the handle stays valid - see
-     * {@link PlaybackLifecycleListener}.
-     */
+    /** Delegates to {@link SourceChannelPool#resetSourceChannel}. */
     void resetSourceChannel(UUID sourceId) {
-        SourceChannel channel = sourceChannels.get(sourceId);
-        if (channel == null) return;
-
-        stopAndFlush(channel);
-        GtnhVoice.LOG.info("[Playback] AL source reset for sourceId={}", sourceId);
-    }
-
-    private void stopAndFlush(SourceChannel channel) {
-        AL10.alSourceStop(channel.alSource);
-        checkAlError("alSourceStop");
-
-        int queued = AL10.alGetSourcei(channel.alSource, AL10.AL_BUFFERS_QUEUED);
-        for (int i = 0; i < queued; i++) {
-            channel.freeBuffers.add(AL10.alSourceUnqueueBuffers(channel.alSource));
-        }
-        checkAlError("stopAndFlush unqueue");
-
-        // Rewind STOPPED -> INITIAL so a subsequent re-prime doesn't leave freshly queued buffers sitting on a
-        // STOPPED source, where OpenAL would mark them processed (and thus silently discarded) before they play.
-        AL10.alSourceRewind(channel.alSource);
-        checkAlError("alSourceRewind");
-
-        channel.lastFrameQueuedAtMillis = 0L;
-    }
-
-    private void logChannelsThrottled() {
-        for (Map.Entry<UUID, SourceChannel> entry : sourceChannels.entrySet()) {
-            SourceChannel channel = entry.getValue();
-            int state = AL10.alGetSourcei(channel.alSource, AL10.AL_SOURCE_STATE);
-            int queuedAl = AL10.alGetSourcei(channel.alSource, AL10.AL_BUFFERS_QUEUED);
-            GtnhVoice.LOG.info(
-                "[Playback] sourceId={} framesQueued={} underruns={} sourceState={} queuedAl={}",
-                entry.getKey(),
-                channel.framesQueued,
-                channel.underruns,
-                alSourceStateToString(state),
-                queuedAl);
-        }
-    }
-
-    private boolean checkAlError(String context) {
-        int error = AL10.alGetError();
-        if (error == AL10.AL_NO_ERROR) return true;
-
-        GtnhVoice.LOG.error("[Playback] AL error after {}: {}", context, alErrorToString(error));
-        return false;
-    }
-
-    private boolean checkAlcError(long device, String context) {
-        int error = ALC10.alcGetError(device);
-        if (error == ALC10.ALC_NO_ERROR) return true;
-
-        GtnhVoice.LOG.error("[Playback] ALC error after {}: {}", context, error);
-        return false;
-    }
-
-    private static String alErrorToString(int error) {
-        return switch (error) {
-            case AL10.AL_INVALID_NAME -> "AL_INVALID_NAME";
-            case AL10.AL_INVALID_ENUM -> "AL_INVALID_ENUM";
-            case AL10.AL_INVALID_VALUE -> "AL_INVALID_VALUE";
-            case AL10.AL_INVALID_OPERATION -> "AL_INVALID_OPERATION";
-            case AL10.AL_OUT_OF_MEMORY -> "AL_OUT_OF_MEMORY";
-            default -> "unknown error code " + error;
-        };
-    }
-
-    private static String alSourceStateToString(int state) {
-        return switch (state) {
-            case AL10.AL_PLAYING -> "PLAYING";
-            case AL10.AL_PAUSED -> "PAUSED";
-            case AL10.AL_STOPPED -> "STOPPED";
-            case AL10.AL_INITIAL -> "INITIAL";
-            default -> "unknown state " + state;
-        };
-    }
-
-    /**
-     * Per-source AL state: one positioned source, its buffer pool, and the frame queue it pulls from. Only ever
-     * touched from {@link PlaybackThread}'s own thread. Package-private (rather than private) only so tests can
-     * seed {@link #sourceChannels} - see that field's note.
-     */
-    static final class SourceChannel {
-
-        final int alSource;
-        final int[] bufferIds;
-        final Deque<Integer> freeBuffers;
-        final BlockingQueue<short[]> frameQueue;
-
-        long framesQueued;
-        long underruns;
-        long lastFrameQueuedAtMillis;
-        // Freshly created channels are positional - that's exactly how createSourceChannel configures the AL
-        // source (also after a rebuild recreates it; the pump's per-iteration mode check re-flattens it if the
-        // manager's map says so). Flipped only by applySourceMode on this thread.
-        boolean positional = true;
-
-        SourceChannel(int alSource, int[] bufferIds, Deque<Integer> freeBuffers, BlockingQueue<short[]> frameQueue) {
-            this.alSource = alSource;
-            this.bufferIds = bufferIds;
-            this.freeBuffers = freeBuffers;
-            this.frameQueue = frameQueue;
-        }
+        channelPool.resetSourceChannel(sourceId);
     }
 }

@@ -16,16 +16,15 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
 
-import com.enn3developer.gtnhvoice.Config;
-
 /**
  * Exercises the {@link PlaybackLifecycleListener} registry and dispatch contracts that don't need an AL device:
- * registration/removal on {@link PlaybackManager}, the {@link PlaybackThread} fire helpers invoking listeners
- * (context and per-source), per-listener Throwable isolation, {@code fireContextTeardown}'s
- * sources-before-context ordering via a seeded {@code sourceChannels} map, and {@code fireAudioTick}'s
- * fires-only-with-sources condition via the same seeding. As in {@link PlaybackThreadCommandTest},
- * the thread is deliberately never started, so no OpenAL device is opened - the actual fire sites in
- * run()/performRebuild/createSourceChannel/destroySourceChannel can only be exercised in-game.
+ * registration/removal on {@link PlaybackManager}, the {@link LifecycleEventDispatcher} fire helpers invoking
+ * listeners (context and per-source), per-listener Throwable isolation, {@code fireContextTeardown}'s
+ * sources-before-context ordering via a seeded {@link SourceChannelPool}, and the audioTick call-site guard
+ * ({@code if (!pool.isEmpty()) dispatcher.fireAudioTick()}, exactly as {@code PlaybackThread.run()} phrases it)
+ * via the same seeding. The dispatcher is constructed standalone - no {@link PlaybackThread} and no OpenAL device
+ * - so the actual fire sites in run()/performRebuild/createSourceChannel/destroySourceChannel can only be
+ * exercised in-game.
  */
 class PlaybackLifecycleListenerTest {
 
@@ -79,19 +78,32 @@ class PlaybackLifecycleListenerTest {
         }
     }
 
-    private static PlaybackThread.SourceChannel channelWithHandle(int alSource) {
-        return new PlaybackThread.SourceChannel(alSource, new int[0], new ArrayDeque<>(), new LinkedBlockingQueue<>());
+    /** Standalone dispatcher over {@code manager}'s registry, with a no-op post-failure hook (no AL to drain). */
+    private static LifecycleEventDispatcher newDispatcher(PlaybackManager manager) {
+        return new LifecycleEventDispatcher(manager, new IsolatedRunner(() -> {}));
+    }
+
+    private static SourceChannelPool newPool(PlaybackManager manager, LifecycleEventDispatcher dispatcher) {
+        return new SourceChannelPool(manager, dispatcher);
+    }
+
+    private static SourceChannelPool.SourceChannel channelWithHandle(int alSource) {
+        return new SourceChannelPool.SourceChannel(
+            alSource,
+            new int[0],
+            new ArrayDeque<>(),
+            new LinkedBlockingQueue<>());
     }
 
     @Test
     void fireHelpersInvokeRegisteredListener() {
         PlaybackManager manager = new PlaybackManager();
-        PlaybackThread thread = new PlaybackThread(manager, null, Config.HrtfMode.AUTO);
+        LifecycleEventDispatcher dispatcher = newDispatcher(manager);
         CountingListener listener = new CountingListener();
         manager.addLifecycleListener(listener);
 
-        thread.fireContextCreated();
-        thread.fireContextDestroying();
+        dispatcher.fireContextCreated(0L);
+        dispatcher.fireContextDestroying();
 
         assertEquals(1, listener.created.get());
         assertEquals(1, listener.destroying.get());
@@ -100,12 +112,12 @@ class PlaybackLifecycleListenerTest {
     @Test
     void sourceFireHelpersPassSourceIdAndHandle() {
         PlaybackManager manager = new PlaybackManager();
-        PlaybackThread thread = new PlaybackThread(manager, null, Config.HrtfMode.AUTO);
+        LifecycleEventDispatcher dispatcher = newDispatcher(manager);
         RecordingListener listener = new RecordingListener();
         manager.addLifecycleListener(listener);
 
-        thread.fireSourceCreated(SOURCE_A, 42);
-        thread.fireSourceDestroying(SOURCE_A, 42);
+        dispatcher.fireSourceCreated(SOURCE_A, 42);
+        dispatcher.fireSourceDestroying(SOURCE_A, 42);
 
         assertEquals(Arrays.asList("sourceCreated:" + SOURCE_A + ":42", "sourceDestroying:" + SOURCE_A + ":42"),
             listener.events);
@@ -116,12 +128,12 @@ class PlaybackLifecycleListenerTest {
         // Default-method compatibility: CountingListener predates the per-source events and must neither break
         // compilation (proved by this file compiling) nor react to them at runtime.
         PlaybackManager manager = new PlaybackManager();
-        PlaybackThread thread = new PlaybackThread(manager, null, Config.HrtfMode.AUTO);
+        LifecycleEventDispatcher dispatcher = newDispatcher(manager);
         CountingListener listener = new CountingListener();
         manager.addLifecycleListener(listener);
 
-        assertDoesNotThrow(() -> thread.fireSourceCreated(SOURCE_A, 7));
-        assertDoesNotThrow(() -> thread.fireSourceDestroying(SOURCE_A, 7));
+        assertDoesNotThrow(() -> dispatcher.fireSourceCreated(SOURCE_A, 7));
+        assertDoesNotThrow(() -> dispatcher.fireSourceDestroying(SOURCE_A, 7));
 
         assertEquals(0, listener.created.get());
         assertEquals(0, listener.destroying.get());
@@ -130,15 +142,16 @@ class PlaybackLifecycleListenerTest {
     @Test
     void contextTeardownAnnouncesAllSourcesBeforeContext() {
         PlaybackManager manager = new PlaybackManager();
-        PlaybackThread thread = new PlaybackThread(manager, null, Config.HrtfMode.AUTO);
+        LifecycleEventDispatcher dispatcher = newDispatcher(manager);
+        SourceChannelPool pool = newPool(manager, dispatcher);
         RecordingListener listener = new RecordingListener();
         manager.addLifecycleListener(listener);
 
-        // Safe off-thread only because the thread was never started - see the class javadoc.
-        thread.sourceChannels.put(SOURCE_A, channelWithHandle(11));
-        thread.sourceChannels.put(SOURCE_B, channelWithHandle(22));
+        // Safe off-thread only because no playback thread exists - see the class javadoc.
+        pool.sourceChannels.put(SOURCE_A, channelWithHandle(11));
+        pool.sourceChannels.put(SOURCE_B, channelWithHandle(22));
 
-        thread.fireContextTeardown();
+        dispatcher.fireContextTeardown(pool.channelsView());
 
         assertEquals(3, listener.events.size());
         assertEquals("contextDestroying", listener.events.get(2), "contextDestroying must fire last");
@@ -152,28 +165,29 @@ class PlaybackLifecycleListenerTest {
     @Test
     void removedListenerNoLongerFires() {
         PlaybackManager manager = new PlaybackManager();
-        PlaybackThread thread = new PlaybackThread(manager, null, Config.HrtfMode.AUTO);
+        LifecycleEventDispatcher dispatcher = newDispatcher(manager);
         CountingListener listener = new CountingListener();
         manager.addLifecycleListener(listener);
         manager.removeLifecycleListener(listener);
 
-        thread.fireContextCreated();
-        thread.fireContextDestroying();
+        dispatcher.fireContextCreated(0L);
+        dispatcher.fireContextDestroying();
 
         assertEquals(0, listener.created.get());
         assertEquals(0, listener.destroying.get());
     }
 
     @Test
-    void registrationsSurviveAcrossThreadInstances() {
-        // The registry lives on the manager, not the thread - a listener registered once must still be seen by
-        // a later PlaybackThread instance, mirroring what a start()/stop() cycle does.
+    void registrationsSurviveAcrossDispatcherInstances() {
+        // The registry lives on the manager, not the dispatcher - a listener registered once must still be seen
+        // by a later dispatcher instance, mirroring what a start()/stop() cycle does (each PlaybackThread builds
+        // its own dispatcher).
         PlaybackManager manager = new PlaybackManager();
         CountingListener listener = new CountingListener();
         manager.addLifecycleListener(listener);
 
-        new PlaybackThread(manager, null, Config.HrtfMode.AUTO).fireContextCreated();
-        new PlaybackThread(manager, null, Config.HrtfMode.AUTO).fireContextCreated();
+        newDispatcher(manager).fireContextCreated(0L);
+        newDispatcher(manager).fireContextCreated(0L);
 
         assertEquals(2, listener.created.get());
     }
@@ -181,7 +195,7 @@ class PlaybackLifecycleListenerTest {
     @Test
     void throwingListenerDoesNotStarveLaterListeners() {
         PlaybackManager manager = new PlaybackManager();
-        PlaybackThread thread = new PlaybackThread(manager, null, Config.HrtfMode.AUTO);
+        LifecycleEventDispatcher dispatcher = newDispatcher(manager);
         AtomicBoolean secondRan = new AtomicBoolean();
 
         // The exact failure mode addon listeners hit when their class is missing @Lwjgl3Aware.
@@ -205,15 +219,15 @@ class PlaybackLifecycleListenerTest {
             }
         });
 
-        assertDoesNotThrow(thread::fireContextCreated);
-        assertDoesNotThrow(thread::fireContextDestroying);
+        assertDoesNotThrow(() -> dispatcher.fireContextCreated(0L));
+        assertDoesNotThrow(dispatcher::fireContextDestroying);
         assertTrue(secondRan.get(), "a well-behaved listener must still run after an earlier one threw");
     }
 
     @Test
     void throwingListenerDoesNotStarveLaterListenersOnSourceEvents() {
         PlaybackManager manager = new PlaybackManager();
-        PlaybackThread thread = new PlaybackThread(manager, null, Config.HrtfMode.AUTO);
+        LifecycleEventDispatcher dispatcher = newDispatcher(manager);
         RecordingListener second = new RecordingListener();
 
         manager.addLifecycleListener(new PlaybackLifecycleListener() {
@@ -230,8 +244,8 @@ class PlaybackLifecycleListenerTest {
         });
         manager.addLifecycleListener(second);
 
-        assertDoesNotThrow(() -> thread.fireSourceCreated(SOURCE_A, 5));
-        assertDoesNotThrow(() -> thread.fireSourceDestroying(SOURCE_A, 5));
+        assertDoesNotThrow(() -> dispatcher.fireSourceCreated(SOURCE_A, 5));
+        assertDoesNotThrow(() -> dispatcher.fireSourceDestroying(SOURCE_A, 5));
 
         assertEquals(
             Arrays.asList("sourceCreated:" + SOURCE_A + ":5", "sourceDestroying:" + SOURCE_A + ":5"),
@@ -242,7 +256,8 @@ class PlaybackLifecycleListenerTest {
     @Test
     void audioTickWithNoSourcesFiresNothing() {
         PlaybackManager manager = new PlaybackManager();
-        PlaybackThread thread = new PlaybackThread(manager, null, Config.HrtfMode.AUTO);
+        LifecycleEventDispatcher dispatcher = newDispatcher(manager);
+        SourceChannelPool pool = newPool(manager, dispatcher);
         AtomicInteger ticks = new AtomicInteger();
         manager.addLifecycleListener(new PlaybackLifecycleListener() {
 
@@ -252,7 +267,8 @@ class PlaybackLifecycleListenerTest {
             }
         });
 
-        thread.fireAudioTick();
+        // The guard lives at the call site now - this is the exact condition PlaybackThread.run() evaluates.
+        if (!pool.isEmpty()) dispatcher.fireAudioTick();
 
         assertEquals(0, ticks.get(), "audioTick must stay silent while no AL source exists");
     }
@@ -260,7 +276,8 @@ class PlaybackLifecycleListenerTest {
     @Test
     void audioTickWithLiveSourceInvokesListener() {
         PlaybackManager manager = new PlaybackManager();
-        PlaybackThread thread = new PlaybackThread(manager, null, Config.HrtfMode.AUTO);
+        LifecycleEventDispatcher dispatcher = newDispatcher(manager);
+        SourceChannelPool pool = newPool(manager, dispatcher);
         AtomicInteger ticks = new AtomicInteger();
         manager.addLifecycleListener(new PlaybackLifecycleListener() {
 
@@ -273,10 +290,11 @@ class PlaybackLifecycleListenerTest {
         CountingListener contextOnly = new CountingListener();
         manager.addLifecycleListener(contextOnly);
 
-        // Safe off-thread only because the thread was never started - see the class javadoc.
-        thread.sourceChannels.put(SOURCE_A, channelWithHandle(11));
+        // Safe off-thread only because no playback thread exists - see the class javadoc.
+        pool.sourceChannels.put(SOURCE_A, channelWithHandle(11));
 
-        thread.fireAudioTick();
+        // The guard lives at the call site now - this is the exact condition PlaybackThread.run() evaluates.
+        if (!pool.isEmpty()) dispatcher.fireAudioTick();
 
         assertEquals(1, ticks.get());
         assertEquals(0, contextOnly.created.get());
@@ -286,7 +304,8 @@ class PlaybackLifecycleListenerTest {
     @Test
     void throwingListenerDoesNotStarveLaterListenersOnAudioTick() {
         PlaybackManager manager = new PlaybackManager();
-        PlaybackThread thread = new PlaybackThread(manager, null, Config.HrtfMode.AUTO);
+        LifecycleEventDispatcher dispatcher = newDispatcher(manager);
+        SourceChannelPool pool = newPool(manager, dispatcher);
         AtomicBoolean secondTicked = new AtomicBoolean();
 
         manager.addLifecycleListener(new PlaybackLifecycleListener() {
@@ -304,9 +323,9 @@ class PlaybackLifecycleListenerTest {
             }
         });
 
-        thread.sourceChannels.put(SOURCE_A, channelWithHandle(11));
+        pool.sourceChannels.put(SOURCE_A, channelWithHandle(11));
 
-        assertDoesNotThrow(thread::fireAudioTick);
+        assertDoesNotThrow(() -> { if (!pool.isEmpty()) dispatcher.fireAudioTick(); });
         assertTrue(secondTicked.get(), "a well-behaved listener must still tick after an earlier one threw");
     }
 
