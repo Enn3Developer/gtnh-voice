@@ -399,15 +399,24 @@ public class PlaybackThread extends Thread {
             checkAlError("alSourceRewind");
         }
 
-        double[] position = manager.positionsView()
+        Boolean positionalMode = manager.positionalModesView()
             .get(sourceId);
-        if (position != null) {
-            AL10.alSource3f(
-                channel.alSource,
-                AL10.AL_POSITION,
-                (float) position[0],
-                (float) position[1],
-                (float) position[2]);
+        boolean positional = positionalMode == null || positionalMode;
+        if (positional != channel.positional) {
+            applySourceMode(channel, sourceId, positional);
+        }
+
+        if (channel.positional) {
+            double[] position = manager.positionsView()
+                .get(sourceId);
+            if (position != null) {
+                AL10.alSource3f(
+                    channel.alSource,
+                    AL10.AL_POSITION,
+                    (float) position[0],
+                    (float) position[1],
+                    (float) position[2]);
+            }
         }
 
         while (!channel.freeBuffers.isEmpty()) {
@@ -439,6 +448,26 @@ public class PlaybackThread extends Thread {
         }
         AL10.alSourcePlay(channel.alSource);
         checkAlError("alSourcePlay");
+    }
+
+    /**
+     * Runs on this thread only, from {@link #pumpSourceChannel}'s per-iteration mode check: flips one AL source
+     * between positional (world-positioned, distance-attenuated - exactly how {@link #createSourceChannel} builds
+     * it) and flat (listener-relative at the origin with zero rolloff, so it plays at full gain regardless of
+     * where anyone stands). The desired mode arrives with every audio packet, so a speaker switching groups
+     * mid-stream flips their existing source in place - no teardown, and this only executes on an actual change.
+     * On a flip back to positional the pump re-applies the source's world position in the same iteration.
+     */
+    private void applySourceMode(SourceChannel channel, UUID sourceId, boolean positional) {
+        AL10.alSourcei(channel.alSource, AL10.AL_SOURCE_RELATIVE, positional ? AL10.AL_FALSE : AL10.AL_TRUE);
+        AL10.alSourcef(channel.alSource, AL10.AL_ROLLOFF_FACTOR, positional ? ROLLOFF_FACTOR : 0f);
+        if (!positional) {
+            AL10.alSource3f(channel.alSource, AL10.AL_POSITION, 0f, 0f, 0f);
+        }
+        checkAlError("applySourceMode");
+
+        channel.positional = positional;
+        GtnhVoice.LOG.info("[Playback] Source mode switched for sourceId={} positional={}", sourceId, positional);
     }
 
     private void applyListenerSnapshot() {
@@ -605,6 +634,10 @@ public class PlaybackThread extends Thread {
         long framesQueued;
         long underruns;
         long lastFrameQueuedAtMillis;
+        // Freshly created channels are positional - that's exactly how createSourceChannel configures the AL
+        // source (also after a rebuild recreates it; the pump's per-iteration mode check re-flattens it if the
+        // manager's map says so). Flipped only by applySourceMode on this thread.
+        boolean positional = true;
 
         SourceChannel(int alSource, int[] bufferIds, Deque<Integer> freeBuffers, BlockingQueue<short[]> frameQueue) {
             this.alSource = alSource;

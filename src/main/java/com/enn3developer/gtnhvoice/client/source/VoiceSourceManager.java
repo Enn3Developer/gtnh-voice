@@ -81,7 +81,13 @@ public final class VoiceSourceManager {
         VoiceSource source = sources.computeIfAbsent(packet.getSourceId(), uuid -> createSource(uuid, distance));
         if (source == null) return; // creation failed, already logged
 
-        source.handleAudio(packet.getSequenceNumber(), packet.getData(), packet.getX(), packet.getY(), packet.getZ());
+        source.handleAudio(
+            packet.getSequenceNumber(),
+            packet.getData(),
+            packet.getX(),
+            packet.getY(),
+            packet.getZ(),
+            packet.isPositional());
     }
 
     public void onSourceEnd(@NotNull SourceEndPacket packet) {

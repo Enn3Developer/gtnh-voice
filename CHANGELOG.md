@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Group voice chat foundations: per-group audio routing (proximity is the default group) and a per-packet positional/flat playback flag
+- The HUD self row's group label is now synced from the server instead of hardcoded (still shows `[local]` for the default group); voice protocol bumped to v3
+
 ### Changed
 
 - The HUD moved to the bottom-left: your own row is now always pinned in the corner with a mic-state dot (green speaking, red muted, gray idle), other rows stack upward with slide/fade animations

@@ -38,6 +38,7 @@ import com.enn3developer.gtnhvoice.network.ClientHelloPacket;
 import com.enn3developer.gtnhvoice.network.NetworkHandler;
 import com.enn3developer.gtnhvoice.network.ServerHelloPacket;
 import com.enn3developer.gtnhvoice.network.ServerRejectPacket;
+import com.enn3developer.gtnhvoice.network.VoiceGroupUpdatePacket;
 import com.enn3developer.gtnhvoice.network.VoiceProtocol;
 import com.enn3developer.gtnhvoice.network.VoiceRosterSnapshotPacket;
 import com.enn3developer.gtnhvoice.network.VoiceRosterUpdatePacket;
@@ -90,6 +91,17 @@ public final class VoiceClientManager {
      * HUD and future per-player mute/volume UI.
      */
     private final Map<UUID, String> roster = new ConcurrentHashMap<>();
+
+    /** What every player is in until the server says otherwise - the default local proximity group's label. */
+    private static final String DEFAULT_GROUP_DISPLAY_NAME = "local";
+
+    /**
+     * This player's own current voice group display name, shown inside the [] of the HUD self row.
+     * Server-synced via {@link VoiceGroupUpdatePacket} (on session establish and on every
+     * reassignment); reverts to the default in {@link #onDisconnected}. Volatile: written from the
+     * FML channel handler, read every frame by the HUD.
+     */
+    private volatile String groupDisplayName = DEFAULT_GROUP_DISPLAY_NAME;
 
     public static VoiceClientManager getInstance() {
         return INSTANCE;
@@ -162,6 +174,7 @@ public final class VoiceClientManager {
         session = VoiceClientSession.DISCONNECTED;
         pendingHost = null;
         roster.clear();
+        groupDisplayName = DEFAULT_GROUP_DISPLAY_NAME;
         HeadIconCache.getInstance()
             .clearAll();
     }
@@ -202,6 +215,16 @@ public final class VoiceClientManager {
             packet.getMode() == VoiceRosterUpdatePacket.MODE_ADD ? "ADD" : "REMOVE",
             packet.getPlayerName(),
             roster);
+    }
+
+    /** This player's own current voice group display name for the HUD self row - see {@link #groupDisplayName}. */
+    public String getGroupDisplayName() {
+        return groupDisplayName;
+    }
+
+    public synchronized void handleGroupUpdate(@NotNull VoiceGroupUpdatePacket packet) {
+        groupDisplayName = packet.getGroupDisplayName();
+        GtnhVoice.LOG.info("Client voice group display name set to '{}'", groupDisplayName);
     }
 
     public synchronized void handleServerHello(@NotNull ServerHelloPacket packet) {

@@ -28,6 +28,7 @@ public class PlaybackManager {
     private final Map<UUID, BlockingQueue<short[]>> frameQueues = new ConcurrentHashMap<>();
     private final Map<UUID, double[]> positions = new ConcurrentHashMap<>();
     private final Map<UUID, Float> gains = new ConcurrentHashMap<>();
+    private final Map<UUID, Boolean> positionalModes = new ConcurrentHashMap<>();
 
     private volatile ListenerSnapshot listenerSnapshot = ListenerSnapshot.ORIGIN;
     private PlaybackThread playbackThread;
@@ -42,6 +43,7 @@ public class PlaybackManager {
         frameQueues.clear();
         positions.clear();
         gains.clear();
+        positionalModes.clear();
         listenerSnapshot = ListenerSnapshot.ORIGIN;
         playbackThread = new PlaybackThread(this, deviceName, hrtfMode);
         playbackThread.start();
@@ -63,6 +65,7 @@ public class PlaybackManager {
         frameQueues.clear();
         positions.clear();
         gains.clear();
+        positionalModes.clear();
         GtnhVoice.LOG.info("[Playback] Stopped");
     }
 
@@ -80,6 +83,7 @@ public class PlaybackManager {
             .computeIfAbsent(sourceId, id -> new ArrayBlockingQueue<>(QUEUE_CAPACITY));
         positions.putIfAbsent(sourceId, new double[] { 0, 0, 0 });
         gains.putIfAbsent(sourceId, gain);
+        positionalModes.putIfAbsent(sourceId, Boolean.TRUE);
 
         playbackThread
             .enqueueCommand(() -> playbackThread.createSourceChannel(sourceId, queue, distance, gains.get(sourceId)));
@@ -93,6 +97,7 @@ public class PlaybackManager {
         frameQueues.remove(sourceId);
         positions.remove(sourceId);
         gains.remove(sourceId);
+        positionalModes.remove(sourceId);
 
         if (!isPlaying()) return;
         playbackThread.enqueueCommand(() -> playbackThread.destroySourceChannel(sourceId));
@@ -149,6 +154,17 @@ public class PlaybackManager {
     }
 
     /**
+     * Records whether {@code sourceId} should play positionally (proximity/3D) or flat (full gain, no
+     * spatialization). Arrives with every audio packet - the server-side group decides per frame - and is picked
+     * up by the playback thread on its next loop iteration, which flips the existing AL source in place only when
+     * the mode actually changed. No-op if the source hasn't been registered via {@link #createSource}.
+     */
+    public void setPositional(UUID sourceId, boolean positional) {
+        if (!frameQueues.containsKey(sourceId)) return;
+        positionalModes.put(sourceId, positional);
+    }
+
+    /**
      * Publishes the local player's absolute position/look direction, driving the shared AL listener. Called from
      * the client tick; read by the playback thread every loop iteration.
      */
@@ -177,6 +193,10 @@ public class PlaybackManager {
 
     Map<UUID, double[]> positionsView() {
         return positions;
+    }
+
+    Map<UUID, Boolean> positionalModesView() {
+        return positionalModes;
     }
 
     ListenerSnapshot currentListenerSnapshot() {

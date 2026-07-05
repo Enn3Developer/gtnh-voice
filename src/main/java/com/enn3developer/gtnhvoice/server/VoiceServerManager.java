@@ -28,7 +28,6 @@ import com.enn3developer.gtnhvoice.core.encryption.aes.AesEncryption;
 import com.enn3developer.gtnhvoice.core.proto.packets.Packet;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.PacketUdp;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.bothbound.PingPacket;
-import com.enn3developer.gtnhvoice.core.proto.packets.udp.clientbound.SourceAudioPacket;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.clientbound.SourceEndPacket;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.serverbound.PlayerAudioPacket;
 import com.enn3developer.gtnhvoice.core.transport.UdpPacketListener;
@@ -37,9 +36,13 @@ import com.enn3developer.gtnhvoice.network.ClientHelloPacket;
 import com.enn3developer.gtnhvoice.network.NetworkHandler;
 import com.enn3developer.gtnhvoice.network.ServerHelloPacket;
 import com.enn3developer.gtnhvoice.network.ServerRejectPacket;
+import com.enn3developer.gtnhvoice.network.VoiceGroupUpdatePacket;
 import com.enn3developer.gtnhvoice.network.VoiceProtocol;
 import com.enn3developer.gtnhvoice.network.VoiceRosterSnapshotPacket;
 import com.enn3developer.gtnhvoice.network.VoiceRosterUpdatePacket;
+import com.enn3developer.gtnhvoice.server.group.GroupManager;
+import com.enn3developer.gtnhvoice.server.group.IGroup;
+import com.enn3developer.gtnhvoice.server.group.RoutingContext;
 
 import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
@@ -68,14 +71,13 @@ public final class VoiceServerManager implements UdpPacketListener {
     private static final long SESSION_TIMEOUT_MILLIS = TimeUnit.MINUTES.toMillis(3);
     private static final long REAP_INTERVAL_SECONDS = 30;
     private static final long UNKNOWN_SECRET_LOG_THROTTLE_MILLIS = 5000;
-    private static final long ROUTING_LOG_THROTTLE_MILLIS = 500;
-    private static final long NO_SNAPSHOT_LOG_THROTTLE_MILLIS = 5000;
 
     private final Map<UUID, VoiceServerSession> sessionsBySecret = new ConcurrentHashMap<>();
     private final Map<UUID, VoiceServerSession> sessionsByPlayerUuid = new ConcurrentHashMap<>();
+    private final Map<UUID, VoiceServerSession> sessionsByPlayerUuidView = Collections
+        .unmodifiableMap(sessionsByPlayerUuid);
     private final ConcurrentLinkedQueue<Runnable> pendingSends = new ConcurrentLinkedQueue<>();
-    private final Map<UUID, AtomicLong> lastRoutingLogMillis = new ConcurrentHashMap<>();
-    private final Map<UUID, AtomicLong> lastNoSnapshotLogMillis = new ConcurrentHashMap<>();
+    private final GroupManager groupManager = new GroupManager(this::onGroupAssigned);
 
     /**
      * Position/dimension snapshot of every online player, rebuilt wholesale each server tick (see
@@ -151,8 +153,7 @@ public final class VoiceServerManager implements UdpPacketListener {
         sessionsBySecret.clear();
         sessionsByPlayerUuid.clear();
         pendingSends.clear();
-        lastRoutingLogMillis.clear();
-        lastNoSnapshotLogMillis.clear();
+        groupManager.clear();
         positionSnapshot = Collections.emptyMap();
     }
 
@@ -191,6 +192,11 @@ public final class VoiceServerManager implements UdpPacketListener {
             pendingSends.add(() -> sendRosterSnapshot(player, playerUuid));
             pendingSends.add(
                 () -> broadcastRosterUpdate(VoiceRosterUpdatePacket.MODE_ADD, playerUuid, session.getPlayerName()));
+            pendingSends.add(
+                () -> sendGroupUpdate(
+                    playerUuid,
+                    groupManager.groupOf(playerUuid)
+                        .getDisplayName()));
         }
 
         ServerHelloPacket hello = new ServerHelloPacket(
@@ -263,105 +269,19 @@ public final class VoiceServerManager implements UdpPacketListener {
     }
 
     /**
-     * Proximity-routes one inbound frame of speaker audio to every eligible listener. Runs on the
-     * UDP/Netty thread - reads only {@link #positionSnapshot} and the concurrent session maps,
-     * never touches live world/entity state.
+     * Routes one inbound frame of speaker audio via the speaker's group (the default
+     * {@link com.enn3developer.gtnhvoice.server.group.LocalGroup} unless {@link GroupManager}
+     * assigned them elsewhere). Runs on the UDP/Netty thread - the {@link RoutingContext} hands
+     * the group only {@link #positionSnapshot} and a read-only session view, so groups can never
+     * touch live world/entity state.
      */
     private void routeAudio(@NotNull VoiceServerSession speakerSession, @NotNull PlayerAudioPacket audio) {
         UdpTransportServer server = udpServer;
         if (server == null) return;
 
-        UUID speakerUuid = speakerSession.getPlayerUuid();
-        Map<UUID, PlayerSnapshot> snapshot = positionSnapshot;
-        PlayerSnapshot speakerPos = snapshot.get(speakerUuid);
-        if (speakerPos == null) {
-            logNoSnapshotThrottled(speakerSession);
-            return;
-        }
-
-        int cutoff = Math.min(Config.distance, Config.maxDistance);
-        boolean maxDistanceIsBinding = Config.maxDistance < Config.distance;
-
-        List<String> recipients = new ArrayList<>();
-        List<String> excluded = new ArrayList<>();
-
-        for (VoiceServerSession recipientSession : sessionsByPlayerUuid.values()) {
-            String name = recipientSession.getPlayerName();
-
-            if (recipientSession.getPlayerUuid()
-                .equals(speakerUuid)) {
-                excluded.add(name + "(self)");
-                continue;
-            }
-
-            InetSocketAddress recipientAddress = recipientSession.getLastAddress();
-            if (recipientAddress == null) {
-                excluded.add(name + "(no-udp)");
-                continue;
-            }
-
-            PlayerSnapshot recipientPos = snapshot.get(recipientSession.getPlayerUuid());
-            if (recipientPos == null) {
-                excluded.add(name + "(no-snapshot)");
-                continue;
-            }
-
-            if (recipientPos.getDimensionId() != speakerPos.getDimensionId()) {
-                excluded.add(name + "(other-dim=" + recipientPos.getDimensionId() + ")");
-                continue;
-            }
-
-            double distance = speakerPos.distanceTo(recipientPos);
-            if (distance > cutoff) {
-                excluded.add(
-                    String.format(
-                        "%s(out-of-range:%.1fm>%s cutoff %dm)",
-                        name,
-                        distance,
-                        maxDistanceIsBinding ? "maxDistance" : "distance",
-                        cutoff));
-                continue;
-            }
-
-            SourceAudioPacket forward = new SourceAudioPacket(
-                audio.getSequenceNumber(),
-                (byte) 0,
-                audio.getData(),
-                speakerUuid,
-                speakerPos.getX(),
-                speakerPos.getY(),
-                speakerPos.getZ());
-            server.send(forward, recipientSession.getSecret(), recipientSession.getEncryption(), recipientAddress);
-            recipients.add(String.format("%s@%.1fm", name, distance));
-        }
-
-        logRoutingThrottled(speakerSession, speakerPos, recipients, excluded);
-    }
-
-    private void logRoutingThrottled(@NotNull VoiceServerSession speakerSession, @NotNull PlayerSnapshot speakerPos,
-        @NotNull List<String> recipients, @NotNull List<String> excluded) {
-        AtomicLong last = lastRoutingLogMillis.computeIfAbsent(speakerSession.getPlayerUuid(), id -> new AtomicLong());
-        if (!LogThrottle.shouldLog(last, ROUTING_LOG_THROTTLE_MILLIS)) return;
-
-        GtnhVoice.LOG.info(
-            "routing from {} pos({}, {}, {}) dim={} -> recipients [{}] excluded [{}]",
-            speakerSession.getPlayerName(),
-            String.format("%.1f", speakerPos.getX()),
-            String.format("%.1f", speakerPos.getY()),
-            String.format("%.1f", speakerPos.getZ()),
-            speakerPos.getDimensionId(),
-            String.join(", ", recipients),
-            String.join(", ", excluded));
-    }
-
-    private void logNoSnapshotThrottled(@NotNull VoiceServerSession speakerSession) {
-        AtomicLong last = lastNoSnapshotLogMillis
-            .computeIfAbsent(speakerSession.getPlayerUuid(), id -> new AtomicLong());
-        if (!LogThrottle.shouldLog(last, NO_SNAPSHOT_LOG_THROTTLE_MILLIS)) return;
-
-        GtnhVoice.LOG.warn(
-            "Dropped audio frame from {}: no position snapshot yet (just joined?)",
-            speakerSession.getPlayerName());
+        RoutingContext context = new RoutingContext(server::send, positionSnapshot, sessionsByPlayerUuidView);
+        groupManager.groupOf(speakerSession.getPlayerUuid())
+            .route(speakerSession, audio, context);
     }
 
     @SubscribeEvent
@@ -413,8 +333,7 @@ public final class VoiceServerManager implements UdpPacketListener {
         if (session == null) return;
 
         sessionsBySecret.remove(session.getSecret());
-        lastRoutingLogMillis.remove(playerUuid);
-        lastNoSnapshotLogMillis.remove(playerUuid);
+        groupManager.onPlayerRemoved(playerUuid);
         GtnhVoice.LOG.info("Voice session ended for {} (logout)", session.getPlayerName());
         broadcastSourceEnd(session);
         pendingSends
@@ -482,6 +401,44 @@ public final class VoiceServerManager implements UdpPacketListener {
     }
 
     /**
+     * {@link GroupManager} assignment listener: syncs the (re)assigned player's new group display
+     * name to them. Fires synchronously inside {@code assign()} on the server thread; the actual
+     * send still goes through {@link #pendingSends} so it shares the roster packets' safe path (and
+     * the display name is captured here, so the packet reflects the group as assigned even if a
+     * later reassignment lands in the same tick's queue behind it).
+     */
+    private void onGroupAssigned(@NotNull UUID playerUuid, @NotNull IGroup group) {
+        String displayName = group.getDisplayName();
+        pendingSends.add(() -> sendGroupUpdate(playerUuid, displayName));
+    }
+
+    /**
+     * Sends {@code playerUuid} their own current group display name for the HUD self row - only
+     * ever the subject player, group membership is not broadcast to others. Runs from {@link
+     * #pendingSends} on the server thread since it resolves an {@code EntityPlayerMP}, like {@link
+     * #broadcastRosterUpdate}; skips silently if the player logged out or lost their voice session
+     * by flush time.
+     */
+    private void sendGroupUpdate(@NotNull UUID playerUuid, @NotNull String groupDisplayName) {
+        if (!sessionsByPlayerUuid.containsKey(playerUuid)) return;
+
+        MinecraftServer server = FMLCommonHandler.instance()
+            .getMinecraftServerInstance();
+        if (server == null) return;
+
+        for (EntityPlayerMP player : server.getConfigurationManager().playerEntityList) {
+            if (!player.getGameProfile()
+                .getId()
+                .equals(playerUuid)) continue;
+
+            NetworkHandler.WRAPPER
+                .sendTo(new VoiceGroupUpdatePacket(VoiceProtocol.PROTOCOL_VERSION, groupDisplayName), player);
+            GtnhVoice.LOG.info("Sent voice group update to {}: '{}'", player.getCommandSenderName(), groupDisplayName);
+            return;
+        }
+    }
+
+    /**
      * Tells every remaining voice session that {@code endedSession}'s speaker is gone, so clients
      * can tear down its {@code VoiceSource} (client-side handling is a later tranche - this only
      * emits the signal).
@@ -520,8 +477,7 @@ public final class VoiceServerManager implements UdpPacketListener {
 
             it.remove();
             sessionsByPlayerUuid.remove(session.getPlayerUuid());
-            lastRoutingLogMillis.remove(session.getPlayerUuid());
-            lastNoSnapshotLogMillis.remove(session.getPlayerUuid());
+            groupManager.onPlayerRemoved(session.getPlayerUuid());
             GtnhVoice.LOG.info(
                 "Reaped stale voice session for {} (secret {}, no traffic for {}ms)",
                 session.getPlayerName(),

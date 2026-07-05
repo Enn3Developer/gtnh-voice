@@ -18,7 +18,10 @@ public final class VoiceProtocol {
     // v2: SourceAudioPacket now carries the speaker's absolute position (x,y,z) instead of a
     // scalar distance, so a mismatched client/server pair must fail the handshake cleanly rather
     // than misreading UDP audio packet bytes.
-    public static final byte PROTOCOL_VERSION = 2;
+    // v3: adds VoiceGroupUpdatePacket, always sent on the FML control channel; an old client would
+    // fail in the codec on the unknown discriminator, so the handshake must turn the skew into a
+    // clean reject + chat message instead.
+    public static final byte PROTOCOL_VERSION = 3;
 
     public static final byte REASON_VERSION_MISMATCH = 0;
 

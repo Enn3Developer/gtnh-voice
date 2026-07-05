@@ -114,7 +114,7 @@ public class VoiceHudRenderer {
                 mc,
                 self.getGameProfile()
                     .getId(),
-                self.getCommandSenderName() + " [local]",
+                self.getCommandSenderName() + " [" + clientManager.getGroupDisplayName() + "]",
                 MARGIN,
                 selfY,
                 selfDotColor,

@@ -18,6 +18,18 @@ import com.google.common.io.ByteArrayDataOutput;
 
 public final class SourceAudioPacket extends BaseAudioPacket<ClientPacketUdpHandler> {
 
+    /**
+     * sourceState bit 0: set for flat playback (full gain, no spatialization), clear for positional/proximity
+     * (the speaker's world position applies, gain attenuates with distance). Positional is deliberately the
+     * zero/legacy wire value: peers that predate this flag always sent 0, so a version-skewed pairing degrades
+     * to the proximity behavior it always had instead of silently flattening all audio. Decided per packet by
+     * the server-side group routing the frame, so a speaker switching groups mid-stream flips modes seamlessly.
+     */
+    public static final byte FLAG_FLAT = 0b0000_0001;
+
+    /** sourceState for plain positional playback: no flags set - the legacy wire value. */
+    public static final byte STATE_POSITIONAL = 0;
+
     private UUID sourceId;
     private byte sourceState;
     private double x;
@@ -46,6 +58,11 @@ public final class SourceAudioPacket extends BaseAudioPacket<ClientPacketUdpHand
 
     public void setSourceState(byte sourceState) {
         this.sourceState = sourceState;
+    }
+
+    /** Whether this frame plays positionally - true unless {@link #FLAG_FLAT} is set. */
+    public boolean isPositional() {
+        return (sourceState & FLAG_FLAT) == 0;
     }
 
     public double getX() {

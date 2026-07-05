@@ -3,6 +3,7 @@ package com.enn3developer.gtnhvoice.network;
 import com.enn3developer.gtnhvoice.GtnhVoice;
 import com.enn3developer.gtnhvoice.client.ServerHelloClientHandler;
 import com.enn3developer.gtnhvoice.client.ServerRejectClientHandler;
+import com.enn3developer.gtnhvoice.client.VoiceGroupUpdateClientHandler;
 import com.enn3developer.gtnhvoice.client.VoiceRosterSnapshotClientHandler;
 import com.enn3developer.gtnhvoice.client.VoiceRosterUpdateClientHandler;
 import com.enn3developer.gtnhvoice.server.ClientHelloServerHandler;
@@ -37,6 +38,7 @@ public final class NetworkHandler {
             id++,
             Side.CLIENT);
         WRAPPER.registerMessage(VoiceRosterUpdateClientHandler.class, VoiceRosterUpdatePacket.class, id++, Side.CLIENT);
+        WRAPPER.registerMessage(VoiceGroupUpdateClientHandler.class, VoiceGroupUpdatePacket.class, id++, Side.CLIENT);
 
         GtnhVoice.LOG.info(
             "Registered {} control-channel messages on '{}' (hasChannel CLIENT={} SERVER={})",

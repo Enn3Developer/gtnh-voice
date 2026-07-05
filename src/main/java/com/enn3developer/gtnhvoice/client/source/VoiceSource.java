@@ -95,7 +95,7 @@ final class VoiceSource {
         GtnhVoice.LOG.info("[VoiceSource] Created for sourceId={}", sourceId);
     }
 
-    void handleAudio(long sequenceNumber, byte[] opusData, double x, double y, double z) {
+    void handleAudio(long sequenceNumber, byte[] opusData, double x, double y, double z, boolean positional) {
         lastPacketMillis = System.currentTimeMillis();
         if (!segmentActive) {
             segmentActive = true;
@@ -113,6 +113,10 @@ final class VoiceSource {
             distance,
             PlayerVoiceSettings.getInstance()
                 .getVolume(sourceId));
+        // Per packet, not per source: the server-side group decides positional-vs-flat frame by frame, so a
+        // speaker switching groups mid-stream flips the existing AL source's mode without teardown. The position
+        // is recorded even for flat frames so a flip back to positional resumes from a fresh location.
+        playbackManager.setPositional(sourceId, positional);
         playbackManager.updateSourcePosition(sourceId, x, y, z);
         jitterBuffer.offer(sequenceNumber, opusData);
     }
