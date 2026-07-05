@@ -71,4 +71,21 @@ interface PlaybackLifecycleListener {
      * @param sourceHandle the AL source name announced by the matching {@link #sourceCreated}
      */
     default void sourceDestroying(UUID sourceId, int sourceHandle) {}
+
+    /**
+     * Periodic heartbeat for continuous per-source AL state updates (EFX send gains, filter params) - fired once
+     * per pump iteration while at least one AL source exists, and completely silent while none do (idle cost stays
+     * zero; sources appearing/vanishing are already announced via {@link #sourceCreated}/{@link #sourceDestroying},
+     * so no information is lost by the silence). The bracketing follows from that condition: this only ever fires
+     * between a {@link #contextCreated} and its {@link #contextDestroying}, and only while at least one
+     * {@link #sourceCreated} is unmatched by its {@link #sourceDestroying}.
+     * <p>
+     * The nominal interval is the pump loop's poll interval (~5ms), but NOTHING is guaranteed - under load it
+     * stretches arbitrarily. Implementations must self-throttle expensive work (e.g. world raycasts) to their own
+     * budget and treat this as an upper bound on update frequency, not a schedule.
+     * <p>
+     * Time budget: this runs INSIDE the audio pump loop - a slow listener delays voice playback for everyone.
+     * Keep per-tick work well under the poll interval.
+     */
+    default void audioTick() {}
 }

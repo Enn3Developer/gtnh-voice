@@ -21,8 +21,9 @@ import com.enn3developer.gtnhvoice.Config;
 /**
  * Exercises the {@link PlaybackLifecycleListener} registry and dispatch contracts that don't need an AL device:
  * registration/removal on {@link PlaybackManager}, the {@link PlaybackThread} fire helpers invoking listeners
- * (context and per-source), per-listener Throwable isolation, and {@code fireContextTeardown}'s
- * sources-before-context ordering via a seeded {@code sourceChannels} map. As in {@link PlaybackThreadCommandTest},
+ * (context and per-source), per-listener Throwable isolation, {@code fireContextTeardown}'s
+ * sources-before-context ordering via a seeded {@code sourceChannels} map, and {@code fireAudioTick}'s
+ * fires-only-with-sources condition via the same seeding. As in {@link PlaybackThreadCommandTest},
  * the thread is deliberately never started, so no OpenAL device is opened - the actual fire sites in
  * run()/performRebuild/createSourceChannel/destroySourceChannel can only be exercised in-game.
  */
@@ -236,6 +237,77 @@ class PlaybackLifecycleListenerTest {
             Arrays.asList("sourceCreated:" + SOURCE_A + ":5", "sourceDestroying:" + SOURCE_A + ":5"),
             second.events,
             "a well-behaved listener must still see source events after an earlier one threw");
+    }
+
+    @Test
+    void audioTickWithNoSourcesFiresNothing() {
+        PlaybackManager manager = new PlaybackManager();
+        PlaybackThread thread = new PlaybackThread(manager, null, Config.HrtfMode.AUTO);
+        AtomicInteger ticks = new AtomicInteger();
+        manager.addLifecycleListener(new PlaybackLifecycleListener() {
+
+            @Override
+            public void audioTick() {
+                ticks.incrementAndGet();
+            }
+        });
+
+        thread.fireAudioTick();
+
+        assertEquals(0, ticks.get(), "audioTick must stay silent while no AL source exists");
+    }
+
+    @Test
+    void audioTickWithLiveSourceInvokesListener() {
+        PlaybackManager manager = new PlaybackManager();
+        PlaybackThread thread = new PlaybackThread(manager, null, Config.HrtfMode.AUTO);
+        AtomicInteger ticks = new AtomicInteger();
+        manager.addLifecycleListener(new PlaybackLifecycleListener() {
+
+            @Override
+            public void audioTick() {
+                ticks.incrementAndGet();
+            }
+        });
+        // Default-method compatibility: the context-only listener must coexist with tick dispatch untouched.
+        CountingListener contextOnly = new CountingListener();
+        manager.addLifecycleListener(contextOnly);
+
+        // Safe off-thread only because the thread was never started - see the class javadoc.
+        thread.sourceChannels.put(SOURCE_A, channelWithHandle(11));
+
+        thread.fireAudioTick();
+
+        assertEquals(1, ticks.get());
+        assertEquals(0, contextOnly.created.get());
+        assertEquals(0, contextOnly.destroying.get());
+    }
+
+    @Test
+    void throwingListenerDoesNotStarveLaterListenersOnAudioTick() {
+        PlaybackManager manager = new PlaybackManager();
+        PlaybackThread thread = new PlaybackThread(manager, null, Config.HrtfMode.AUTO);
+        AtomicBoolean secondTicked = new AtomicBoolean();
+
+        manager.addLifecycleListener(new PlaybackLifecycleListener() {
+
+            @Override
+            public void audioTick() {
+                throw new NoClassDefFoundError("org.lwjgl.openal.AL10");
+            }
+        });
+        manager.addLifecycleListener(new PlaybackLifecycleListener() {
+
+            @Override
+            public void audioTick() {
+                secondTicked.set(true);
+            }
+        });
+
+        thread.sourceChannels.put(SOURCE_A, channelWithHandle(11));
+
+        assertDoesNotThrow(thread::fireAudioTick);
+        assertTrue(secondTicked.get(), "a well-behaved listener must still tick after an earlier one threw");
     }
 
     @Test

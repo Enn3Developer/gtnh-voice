@@ -52,7 +52,8 @@ import me.eigenraven.lwjgl3ify.api.Lwjgl3Aware;
  * Every context create/destroy and AL source create/destroy is announced to the
  * {@link PlaybackLifecycleListener}s registered on the manager, always through the {@code fire*} helpers
  * ({@link #fireContextCreated}, {@link #fireSourceCreated}, {@link #fireSourceDestroying},
- * {@link #fireContextTeardown}/{@link #fireContextDestroying}) and always on this thread - see those helpers and
+ * {@link #fireContextTeardown}/{@link #fireContextDestroying}, {@link #fireAudioTick}) and always on this thread -
+ * see those helpers and
  * the listener interface for the exact pairing and ordering contracts. Any future lifecycle site must go through
  * the same funnel.
  */
@@ -196,6 +197,8 @@ public class PlaybackThread extends Thread {
                 if (!running) break; // a rebuild command above may have disabled output entirely
 
                 applyListenerSnapshot();
+
+                fireAudioTick();
 
                 long now = System.currentTimeMillis();
                 for (Map.Entry<UUID, SourceChannel> entry : sourceChannels.entrySet()) {
@@ -356,6 +359,22 @@ public class PlaybackThread extends Thread {
             fireSourceDestroying(entry.getKey(), entry.getValue().alSource);
         }
         fireContextDestroying();
+    }
+
+    /**
+     * The single funnel for the periodic {@link PlaybackLifecycleListener#audioTick} heartbeat - called once per
+     * pump iteration from run(), after {@link #applyListenerSnapshot} (so listeners computing spatial state see
+     * the freshest AL listener position) and before the {@link #pumpSourceChannel} loop. The emptiness guard lives
+     * here rather than at the call site so the fires-only-with-sources condition is unit-testable with a seeded
+     * {@link #sourceChannels} map: no AL sources means no per-source state to update, so idle iterations cost
+     * nothing beyond this one check. Isolation and visibility rationale as {@link #fireContextCreated}.
+     */
+    void fireAudioTick() {
+        if (sourceChannels.isEmpty()) return;
+
+        for (PlaybackLifecycleListener listener : manager.lifecycleListenersView()) {
+            runIsolated(listener::audioTick, "Lifecycle listener audioTick");
+        }
     }
 
     /**
