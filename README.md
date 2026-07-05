@@ -1,4 +1,7 @@
 # GTNH Voice
+
+[![](https://jitpack.io/v/Enn3Developer/gtnh-voice.svg)](https://jitpack.io/#Enn3Developer/gtnh-voice)
+
 A voice chat mod for GTNH (based on [Plasmo](https://github.com/plasmoapp/plasmo-voice))
 
 ## AI Usage Disclaimer
