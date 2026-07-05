@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The HUD moved to the bottom-left: your own row is now always pinned in the corner with a mic-state dot (green speaking, red muted, gray idle), other rows stack upward with slide/fade animations
+
 ## [0.5.1] - 2026-07-04
 
 ### Fixed

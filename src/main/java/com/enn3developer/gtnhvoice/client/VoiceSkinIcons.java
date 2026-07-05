@@ -10,12 +10,15 @@ import net.minecraft.util.ResourceLocation;
 
 import org.lwjgl.opengl.GL11;
 
+import me.eigenraven.lwjgl3ify.api.Lwjgl3Aware;
+
 /**
  * Shared face+hat head-icon resolution/drawing for the who's-talking HUD and the Players GUI: prefers a loaded
  * {@link AbstractClientPlayer}'s own (already-resolved) skin, falling back to {@link HeadIconCache} (which lazily
  * triggers a load and returns {@code null} - drawn as the Steve fallback - until it resolves, or forever if it
  * never does).
  */
+@Lwjgl3Aware
 public final class VoiceSkinIcons {
 
     // Vanilla 1.7.10's ImageBufferDownload flattens every skin onto 64x32, but GTNH patches the pipeline to
@@ -64,6 +67,14 @@ public final class VoiceSkinIcons {
      * Draws a {@code size}x{@code size} face+hat head icon at {@code (x, y)} for {@code uuid}.
      */
     public static void draw(Minecraft mc, UUID uuid, String label, int x, int y, int size) {
+        draw(mc, uuid, label, x, y, size, 1.0F);
+    }
+
+    /**
+     * Like {@link #draw(Minecraft, UUID, String, int, int, int)} but modulated by {@code alpha} (0..1), for
+     * fading HUD rows. Leaves GL_BLEND enabled and the GL color reset to opaque white on return.
+     */
+    public static void draw(Minecraft mc, UUID uuid, String label, int x, int y, int size, float alpha) {
         ResourceLocation skin = resolveSkin(mc, uuid, label);
 
         mc.getTextureManager()
@@ -71,7 +82,7 @@ public final class VoiceSkinIcons {
         int texWidth = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_WIDTH);
         int texHeight = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_HEIGHT);
         float tileHeight = texWidth > 0 ? SKIN_TEX_WIDTH * texHeight / texWidth : SKIN_TEX_WIDTH / 2.0F;
-        GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
+        GL11.glColor4f(1.0F, 1.0F, 1.0F, alpha);
         GL11.glEnable(GL11.GL_BLEND);
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
 
@@ -98,6 +109,6 @@ public final class VoiceSkinIcons {
             SKIN_TEX_WIDTH,
             tileHeight);
 
-        GL11.glDisable(GL11.GL_BLEND);
+        // GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
     }
 }
