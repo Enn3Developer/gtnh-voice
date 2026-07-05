@@ -5,14 +5,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
 
 import org.jetbrains.annotations.NotNull;
 
 import com.enn3developer.gtnhvoice.Config;
 import com.enn3developer.gtnhvoice.GtnhVoice;
-import com.enn3developer.gtnhvoice.core.api.util.LogThrottle;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.clientbound.SourceAudioPacket;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.serverbound.PlayerAudioPacket;
 import com.enn3developer.gtnhvoice.server.PlayerSnapshot;
@@ -30,8 +27,8 @@ public final class LocalGroup implements IGroup {
     private static final long ROUTING_LOG_THROTTLE_MILLIS = 500;
     private static final long NO_SNAPSHOT_LOG_THROTTLE_MILLIS = 5000;
 
-    private final Map<UUID, AtomicLong> lastRoutingLogMillis = new ConcurrentHashMap<>();
-    private final Map<UUID, AtomicLong> lastNoSnapshotLogMillis = new ConcurrentHashMap<>();
+    private final SpeakerLogThrottle routingLog = new SpeakerLogThrottle(ROUTING_LOG_THROTTLE_MILLIS);
+    private final SpeakerLogThrottle noSnapshotLog = new SpeakerLogThrottle(NO_SNAPSHOT_LOG_THROTTLE_MILLIS);
 
     @Override
     public @NotNull String getName() {
@@ -117,20 +114,19 @@ public final class LocalGroup implements IGroup {
 
     @Override
     public void onPlayerRemoved(@NotNull UUID playerUuid) {
-        lastRoutingLogMillis.remove(playerUuid);
-        lastNoSnapshotLogMillis.remove(playerUuid);
+        routingLog.onPlayerRemoved(playerUuid);
+        noSnapshotLog.onPlayerRemoved(playerUuid);
     }
 
     @Override
     public void clear() {
-        lastRoutingLogMillis.clear();
-        lastNoSnapshotLogMillis.clear();
+        routingLog.clear();
+        noSnapshotLog.clear();
     }
 
     private void logRoutingThrottled(@NotNull VoiceServerSession speakerSession, @NotNull PlayerSnapshot speakerPos,
         @NotNull List<String> recipients, @NotNull List<String> excluded) {
-        AtomicLong last = lastRoutingLogMillis.computeIfAbsent(speakerSession.getPlayerUuid(), id -> new AtomicLong());
-        if (!LogThrottle.shouldLog(last, ROUTING_LOG_THROTTLE_MILLIS)) return;
+        if (!routingLog.shouldLog(speakerSession.getPlayerUuid())) return;
 
         GtnhVoice.LOG.info(
             "routing from {} pos({}, {}, {}) dim={} -> recipients [{}] excluded [{}]",
@@ -144,9 +140,7 @@ public final class LocalGroup implements IGroup {
     }
 
     private void logNoSnapshotThrottled(@NotNull VoiceServerSession speakerSession) {
-        AtomicLong last = lastNoSnapshotLogMillis
-            .computeIfAbsent(speakerSession.getPlayerUuid(), id -> new AtomicLong());
-        if (!LogThrottle.shouldLog(last, NO_SNAPSHOT_LOG_THROTTLE_MILLIS)) return;
+        if (!noSnapshotLog.shouldLog(speakerSession.getPlayerUuid())) return;
 
         GtnhVoice.LOG.warn(
             "Dropped audio frame from {}: no position snapshot yet (just joined?)",

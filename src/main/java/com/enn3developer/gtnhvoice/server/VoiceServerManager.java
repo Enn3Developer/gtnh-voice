@@ -95,6 +95,14 @@ public final class VoiceServerManager implements UdpPacketListener {
         return INSTANCE;
     }
 
+    /**
+     * The server's group manager - the single external access point for group assignment (used by
+     * {@link VoiceGroupCommand}; deliberately the only manager internals exposed).
+     */
+    public GroupManager getGroupManager() {
+        return groupManager;
+    }
+
     private VoiceServerManager() {}
 
     public synchronized void start() {

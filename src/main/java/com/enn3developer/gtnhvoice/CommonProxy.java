@@ -1,6 +1,7 @@
 package com.enn3developer.gtnhvoice;
 
 import com.enn3developer.gtnhvoice.network.NetworkHandler;
+import com.enn3developer.gtnhvoice.server.VoiceGroupCommand;
 import com.enn3developer.gtnhvoice.server.VoiceServerManager;
 
 import cpw.mods.fml.common.event.FMLInitializationEvent;
@@ -28,7 +29,8 @@ public class CommonProxy {
     public void postInit(FMLPostInitializationEvent ignoredEvent) {}
 
     // register server commands in this event handler (Remove if not needed)
-    public void serverStarting(FMLServerStartingEvent ignoredEvent) {
+    public void serverStarting(FMLServerStartingEvent event) {
+        event.registerServerCommand(new VoiceGroupCommand());
         VoiceServerManager.getInstance()
             .start();
     }

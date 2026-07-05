@@ -20,6 +20,7 @@ import org.jetbrains.annotations.Nullable;
 public final class GroupManager {
 
     private final IGroup localGroup = new LocalGroup();
+    private final IGroup globalGroup = new GlobalGroup();
     private final Map<UUID, IGroup> groupsByPlayer = new ConcurrentHashMap<>();
     private final BiConsumer<UUID, IGroup> assignmentListener;
 
@@ -38,6 +39,18 @@ public final class GroupManager {
     /** The group that routes {@code playerUuid}'s audio - the default {@link LocalGroup} unless assigned. */
     public IGroup groupOf(@NotNull UUID playerUuid) {
         return groupsByPlayer.getOrDefault(playerUuid, localGroup);
+    }
+
+    /**
+     * Resolves a built-in group by its {@link IGroup#getName} identity - {@code "local"} or {@code "global"} -
+     * or {@code null} for anything else. Handing the returned instance to {@link #assign} is the intended use:
+     * the local built-in resolves to the same instance assign() treats as the default, so assigning it clears
+     * the map entry rather than storing a redundant one.
+     */
+    public @Nullable IGroup byName(@NotNull String name) {
+        if (name.equals(localGroup.getName())) return localGroup;
+        if (name.equals(globalGroup.getName())) return globalGroup;
+        return null;
     }
 
     /**
@@ -67,12 +80,17 @@ public final class GroupManager {
         localGroup.onPlayerRemoved(playerUuid);
     }
 
-    /** Full reset on voice server shutdown. */
+    /**
+     * Full reset on voice server shutdown. Both built-ins are cleared unconditionally - even with nobody
+     * currently assigned they may still hold per-speaker throttle state (e.g. the global group right after the
+     * last admin logged out mid-announcement).
+     */
     public void clear() {
         for (IGroup group : groupsByPlayer.values()) {
             group.clear();
         }
         groupsByPlayer.clear();
         localGroup.clear();
+        globalGroup.clear();
     }
 }
