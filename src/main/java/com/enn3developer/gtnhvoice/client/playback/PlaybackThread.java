@@ -49,9 +49,11 @@ import me.eigenraven.lwjgl3ify.api.Lwjgl3Aware;
  * its duration. The device/context are instance fields (not {@code run()} locals) specifically so that command can
  * mutate them in place; the OS thread itself never stops for a rebuild, only for real shutdown.
  * <p>
- * Every context create/destroy is announced to the {@link PlaybackLifecycleListener}s registered on the manager,
- * always through {@link #fireContextCreated}/{@link #fireContextDestroying} and always on this thread - see those
- * helpers and the listener interface for the exact pairing contract. Any future lifecycle site must go through
+ * Every context create/destroy and AL source create/destroy is announced to the
+ * {@link PlaybackLifecycleListener}s registered on the manager, always through the {@code fire*} helpers
+ * ({@link #fireContextCreated}, {@link #fireSourceCreated}, {@link #fireSourceDestroying},
+ * {@link #fireContextTeardown}/{@link #fireContextDestroying}) and always on this thread - see those helpers and
+ * the listener interface for the exact pairing and ordering contracts. Any future lifecycle site must go through
  * the same funnel.
  */
 @Lwjgl3Aware
@@ -75,7 +77,9 @@ public class PlaybackThread extends Thread {
 
     private final PlaybackManager manager;
     private final ConcurrentLinkedQueue<Runnable> commands = new ConcurrentLinkedQueue<>();
-    private final Map<UUID, SourceChannel> sourceChannels = new HashMap<>();
+    // Package-private only so fireContextTeardown's sources-then-context ordering is unit-testable with a seeded
+    // map and no AL device; every real access happens on this thread (see the thread-confinement note below).
+    final Map<UUID, SourceChannel> sourceChannels = new HashMap<>();
     private final AtomicLong lastCommandErrorLogMillis = new AtomicLong();
 
     private volatile boolean running = true;
@@ -211,9 +215,9 @@ public class PlaybackThread extends Thread {
             }
         } finally {
             // Guarded so destroying never double-fires: after a total rebuild failure the context field is
-            // already NULL (performRebuild nulled it, having fired destroying for the old context at its top),
+            // already NULL (performRebuild nulled it, having announced the old context's teardown at its top),
             // so this only announces a context whose destroying hasn't fired yet.
-            if (context != MemoryUtil.NULL) fireContextDestroying();
+            if (context != MemoryUtil.NULL) fireContextTeardown();
             teardownAlSources();
             teardownContext();
             closeDevice(device);
@@ -312,6 +316,49 @@ public class PlaybackThread extends Thread {
     }
 
     /**
+     * The single funnel announcing that an AL source now exists - called from {@link #createSourceChannel}'s one
+     * success point, after the source is fully configured and registered in {@link #sourceChannels}; the
+     * alGenSources/alGenBuffers failure returns never announce, since no channel came into existence. Isolation
+     * and visibility rationale as {@link #fireContextCreated}.
+     */
+    void fireSourceCreated(UUID sourceId, int sourceHandle) {
+        for (PlaybackLifecycleListener listener : manager.lifecycleListenersView()) {
+            runIsolated(() -> listener.sourceCreated(sourceId, sourceHandle), "Lifecycle listener sourceCreated");
+        }
+    }
+
+    /**
+     * The single funnel announcing that an AL source is about to be deleted - called from
+     * {@link #destroySourceChannel} for an individual death and from {@link #fireContextTeardown} for every live
+     * source ahead of a whole-context teardown, always before any of that source's AL state is touched. The two
+     * paths can't double-fire for one source: the individual path removes the channel from {@link #sourceChannels}
+     * before firing, so a mass teardown's iteration never sees it. Isolation and visibility rationale as
+     * {@link #fireContextCreated}.
+     */
+    void fireSourceDestroying(UUID sourceId, int sourceHandle) {
+        for (PlaybackLifecycleListener listener : manager.lifecycleListenersView()) {
+            runIsolated(
+                () -> listener.sourceDestroying(sourceId, sourceHandle),
+                "Lifecycle listener sourceDestroying");
+        }
+    }
+
+    /**
+     * Announces a whole-context teardown in destruction order, one step ahead of it: {@link #fireSourceDestroying}
+     * for every channel still in {@link #sourceChannels}, then {@link #fireContextDestroying} - all before ANY
+     * actual AL teardown begins. The single helper both teardown paths ({@link #performRebuild}'s top and run()'s
+     * finally) call, so their announcement order can't drift apart; callers keep the live-context guard and must
+     * still run {@link #teardownAlSources}/{@link #teardownContext} afterwards - this only announces, it destroys
+     * nothing.
+     */
+    void fireContextTeardown() {
+        for (Map.Entry<UUID, SourceChannel> entry : sourceChannels.entrySet()) {
+            fireSourceDestroying(entry.getKey(), entry.getValue().alSource);
+        }
+        fireContextDestroying();
+    }
+
+    /**
      * Best-effort {@code alGetError} drain after a failed command. The {@link #context} field says a context
      * should be bound, but a hostile/broken command may have unbound this thread's AL binding before throwing -
      * then {@code alGetError} itself throws (LWJGL's no-capabilities {@code IllegalStateException}), and that
@@ -346,10 +393,11 @@ public class PlaybackThread extends Thread {
             targetDeviceName == null ? "<default>" : targetDeviceName,
             targetHrtfMode);
 
-        // Announce before ANY AL teardown, while the old context is still bound and its sources still exist -
-        // that's the listener contract. Guarded: a rebuild queued behind one that already failed totally runs
-        // with no live context, and a context that was never announced must never get a destroying.
-        if (context != MemoryUtil.NULL) fireContextDestroying();
+        // Announce (all sources, then the context) before ANY AL teardown, while the old context is still bound
+        // and its sources still exist - that's the listener contract. Guarded: a rebuild queued behind one that
+        // already failed totally runs with no live context, and a context that was never announced must never get
+        // a destroying.
+        if (context != MemoryUtil.NULL) fireContextTeardown();
         teardownAlSources();
         teardownContext();
 
@@ -634,7 +682,8 @@ public class PlaybackThread extends Thread {
     /**
      * Runs on this thread only (queued via {@link #enqueueCommand}): allocates a positioned AL source + buffer pool
      * for a newly seen {@code sourceId}. No-op if one already exists - including right after a rebuild wiped
-     * {@link #sourceChannels}, in which case this is exactly what lazily recreates it.
+     * {@link #sourceChannels}, in which case this is exactly what lazily recreates it (and what naturally gives
+     * lifecycle listeners a fresh {@link #fireSourceCreated} with the new handle on the new context).
      */
     void createSourceChannel(UUID sourceId, BlockingQueue<short[]> frameQueue, int distance, float gain) {
         if (sourceChannels.containsKey(sourceId)) return;
@@ -658,6 +707,7 @@ public class PlaybackThread extends Thread {
         for (int bufferId : bufferIds) freeBuffers.add(bufferId);
 
         sourceChannels.put(sourceId, new SourceChannel(source, bufferIds, freeBuffers, frameQueue));
+        fireSourceCreated(sourceId, source);
         GtnhVoice.LOG.info("[Playback] AL source created for sourceId={} gain={}", sourceId, gain);
     }
 
@@ -678,12 +728,15 @@ public class PlaybackThread extends Thread {
 
     /**
      * Runs on this thread only: fully stops, unqueues, and deletes {@code sourceId}'s AL source and buffers, freeing
-     * the handles. Used when the speaker disconnects.
+     * the handles. Used when the speaker disconnects. Announces {@link #fireSourceDestroying} first, while the
+     * handle is still fully valid; the remove-before-fire discipline keeps a later mass teardown from re-announcing
+     * this source.
      */
     void destroySourceChannel(UUID sourceId) {
         SourceChannel channel = sourceChannels.remove(sourceId);
         if (channel == null) return;
 
+        fireSourceDestroying(sourceId, channel.alSource);
         stopAndFlush(channel);
         AL10.alDeleteSources(channel.alSource);
         AL10.alDeleteBuffers(channel.bufferIds);
@@ -693,7 +746,9 @@ public class PlaybackThread extends Thread {
 
     /**
      * Runs on this thread only: stops {@code sourceId}'s AL source and returns its queued buffers to the free pool,
-     * but keeps the AL source handle alive. Used on speech-segment inactivity reset.
+     * but keeps the AL source handle alive. Used on speech-segment inactivity reset. Deliberately fires no
+     * lifecycle event: the AL source survives a reset, so listener state attached to the handle stays valid - see
+     * {@link PlaybackLifecycleListener}.
      */
     void resetSourceChannel(UUID sourceId) {
         SourceChannel channel = sourceChannels.get(sourceId);
@@ -775,9 +830,10 @@ public class PlaybackThread extends Thread {
 
     /**
      * Per-source AL state: one positioned source, its buffer pool, and the frame queue it pulls from. Only ever
-     * touched from {@link PlaybackThread}'s own thread.
+     * touched from {@link PlaybackThread}'s own thread. Package-private (rather than private) only so tests can
+     * seed {@link #sourceChannels} - see that field's note.
      */
-    private static final class SourceChannel {
+    static final class SourceChannel {
 
         final int alSource;
         final int[] bufferIds;
