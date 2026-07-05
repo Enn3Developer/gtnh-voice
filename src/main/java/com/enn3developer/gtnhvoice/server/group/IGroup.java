@@ -43,7 +43,9 @@ public interface IGroup {
 
     /**
      * Drops any per-player state held for {@code playerUuid}. Called on logout and from the stale-session
-     * reaper, mirroring how the server manager cleans its own per-player maps.
+     * reaper, mirroring how the server manager cleans its own per-player maps. {@link GroupManager} notifies
+     * every group regardless of the player's current assignment (state may predate a reassignment), so
+     * implementations must be cheap, non-blocking map removals that tolerate players they never saw.
      */
     default void onPlayerRemoved(@NotNull UUID playerUuid) {}
 

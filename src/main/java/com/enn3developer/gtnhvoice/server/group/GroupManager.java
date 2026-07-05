@@ -13,15 +13,20 @@ import org.jetbrains.annotations.Nullable;
  * packets for it and clients never request membership. Unassigned players fall through to the shared
  * {@link LocalGroup} default.
  * <p>
+ * This is also the integration point for other mods: implement {@link IGroup} (respecting its threading
+ * contract), {@link #registerGroup} it if {@link #byName} lookup is wanted, and drive membership through
+ * {@link #assign}/{@link #groupOf}; the assignment's display name syncs to the member's HUD automatically.
+ * <p>
  * {@link #groupOf} is read on the UDP/Netty thread (one lookup per routed audio frame); mutations and cleanup run
- * on the server thread and the stale-session reaper thread. The assignment map is concurrent, so no further
- * synchronization is needed.
+ * on the server thread and the stale-session reaper thread. The assignment and registry maps are concurrent, so
+ * no further synchronization is needed.
  */
 public final class GroupManager {
 
     private final IGroup localGroup = new LocalGroup();
     private final IGroup globalGroup = new GlobalGroup();
     private final Map<UUID, IGroup> groupsByPlayer = new ConcurrentHashMap<>();
+    private final Map<String, IGroup> registeredGroups = new ConcurrentHashMap<>();
     private final BiConsumer<UUID, IGroup> assignmentListener;
 
     /**
@@ -42,15 +47,37 @@ public final class GroupManager {
     }
 
     /**
-     * Resolves a built-in group by its {@link IGroup#getName} identity - {@code "local"} or {@code "global"} -
-     * or {@code null} for anything else. Handing the returned instance to {@link #assign} is the intended use:
-     * the local built-in resolves to the same instance assign() treats as the default, so assigning it clears
-     * the map entry rather than storing a redundant one.
+     * Resolves a group by its {@link IGroup#getName} identity - the built-ins {@code "local"} and
+     * {@code "global"} first, then anything {@link #registerGroup}ed - or {@code null} for anything else.
+     * Handing the returned instance to {@link #assign} is the intended use: the local built-in resolves to the
+     * same instance assign() treats as the default, so assigning it clears the map entry rather than storing a
+     * redundant one.
      */
     public @Nullable IGroup byName(@NotNull String name) {
         if (name.equals(localGroup.getName())) return localGroup;
         if (name.equals(globalGroup.getName())) return globalGroup;
-        return null;
+        return registeredGroups.get(name);
+    }
+
+    /**
+     * Registers a third-party {@code group} under its {@link IGroup#getName} identity so {@link #byName}
+     * resolves it. The built-in names and already-registered names are rejected with
+     * {@link IllegalArgumentException} - a name collision fails fast at addon startup instead of silently
+     * shadowing a group.
+     * <p>
+     * Lifecycle contract: registrations do NOT survive a voice server stop - {@link #clear} empties the
+     * registry, because this manager is a singleton that persists across singleplayer world restarts and stale
+     * registrations would collide. Addons must register in {@code FMLServerStartingEvent} (or later, before
+     * use) on every server start.
+     */
+    public void registerGroup(@NotNull IGroup group) {
+        String name = group.getName();
+        if (name.equals(localGroup.getName()) || name.equals(globalGroup.getName())) {
+            throw new IllegalArgumentException("Group name '" + name + "' is reserved for a built-in group");
+        }
+        if (registeredGroups.putIfAbsent(name, group) != null) {
+            throw new IllegalArgumentException("A group named '" + name + "' is already registered");
+        }
     }
 
     /**
@@ -71,25 +98,37 @@ public final class GroupManager {
 
     /**
      * Drops {@code playerUuid}'s assignment and any per-player state their groups held. Called on logout and
-     * from the stale-session reaper, alongside the server manager's own per-player cleanup. The default group is
-     * always notified too - it may hold state for players that were never explicitly assigned anywhere.
+     * from the stale-session reaper, alongside the server manager's own per-player cleanup. EVERY group is
+     * notified - built-ins, registered, and the (possibly unregistered) currently-assigned one - not just the
+     * assignment: a group may hold per-player state from before a reassignment moved the player elsewhere, and
+     * the hooks are cheap map removals by contract.
      */
     public void onPlayerRemoved(@NotNull UUID playerUuid) {
         IGroup assigned = groupsByPlayer.remove(playerUuid);
         if (assigned != null) assigned.onPlayerRemoved(playerUuid);
         localGroup.onPlayerRemoved(playerUuid);
+        globalGroup.onPlayerRemoved(playerUuid);
+        for (IGroup group : registeredGroups.values()) {
+            if (group == assigned) continue;
+            group.onPlayerRemoved(playerUuid);
+        }
     }
 
     /**
-     * Full reset on voice server shutdown. Both built-ins are cleared unconditionally - even with nobody
-     * currently assigned they may still hold per-speaker throttle state (e.g. the global group right after the
-     * last admin logged out mid-announcement).
+     * Full reset on voice server shutdown: every group - assigned, registered, or built-in - gets its
+     * {@link IGroup#clear} (idempotent per contract, so overlap between those sets is fine), then the
+     * assignment map and the registry are emptied. See {@link #registerGroup} for why registrations must not
+     * outlive the server.
      */
     public void clear() {
         for (IGroup group : groupsByPlayer.values()) {
             group.clear();
         }
         groupsByPlayer.clear();
+        for (IGroup group : registeredGroups.values()) {
+            group.clear();
+        }
+        registeredGroups.clear();
         localGroup.clear();
         globalGroup.clear();
     }

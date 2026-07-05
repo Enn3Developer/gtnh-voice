@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Group voice chat foundations: per-group audio routing (proximity is the default group) and a per-packet positional/flat playback flag
 - The HUD self row's group label is now synced from the server instead of hardcoded (still shows `[local]` for the default group); voice protocol bumped to v3
 - Global announcement group: broadcasts the speaker to every voice client at full gain, regardless of group, dimension, or distance; switch with the op-only `/voicegroup <local|global>` command
+- Group registry for third-party mods: implement `IGroup` and `registerGroup()` it on the `GroupManager` (re-register every server start); built-in names are reserved and `/voicegroup` stays limited to the built-ins
+
+### Removed
+
+- Debug-era per-frame voice routing logs
 
 ### Changed
 

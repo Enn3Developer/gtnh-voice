@@ -8,8 +8,10 @@ import net.minecraft.command.WrongUsageException;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.util.ChatComponentText;
 
+import com.enn3developer.gtnhvoice.server.group.GlobalGroup;
 import com.enn3developer.gtnhvoice.server.group.GroupManager;
 import com.enn3developer.gtnhvoice.server.group.IGroup;
+import com.enn3developer.gtnhvoice.server.group.LocalGroup;
 
 /**
  * {@code /voicegroup <local|global>}: op-only switch of the sender's own voice group. Server-authoritative like
@@ -26,7 +28,7 @@ public class VoiceGroupCommand extends CommandBase {
 
     @Override
     public String getCommandUsage(ICommandSender sender) {
-        return "/voicegroup <local|global>";
+        return "/voicegroup <" + LocalGroup.NAME + "|" + GlobalGroup.NAME + ">";
     }
 
     @Override
@@ -36,12 +38,16 @@ public class VoiceGroupCommand extends CommandBase {
 
     @Override
     public List<String> addTabCompletionOptions(ICommandSender sender, String[] args) {
-        return getListOfStringsMatchingLastWord(args, "local", "global");
+        return getListOfStringsMatchingLastWord(args, LocalGroup.NAME, GlobalGroup.NAME);
     }
 
     @Override
     public void processCommand(ICommandSender sender, String[] args) {
         if (args.length != 1) throw new WrongUsageException(getCommandUsage(sender));
+        // Explicit whitelist: this command only ever moves players between the two built-ins. Groups other
+        // mods registerGroup()ed are reachable through byName(), but their membership is theirs to manage.
+        if (!args[0].equals(LocalGroup.NAME) && !args[0].equals(GlobalGroup.NAME))
+            throw new WrongUsageException(getCommandUsage(sender));
 
         GroupManager groupManager = VoiceServerManager.getInstance()
             .getGroupManager();
