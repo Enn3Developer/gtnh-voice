@@ -9,14 +9,16 @@ import org.jetbrains.annotations.Nullable;
 import com.enn3developer.gtnhvoice.GtnhVoice;
 import com.enn3developer.gtnhvoice.core.encryption.aes.AesEncryption;
 import com.enn3developer.gtnhvoice.network.VoiceProtocol;
+import com.enn3developer.gtnhvoice.server.group.IVoiceSession;
 
 /**
  * Server-side view of one player's voice session, established over the reliable control channel.
  * The player's UUID/name and the secret are identity; the {@link InetSocketAddress} is volatile
  * transport data that gets re-learned from every inbound datagram, not re-established via a new
- * handshake.
+ * handshake. Addons see it only as {@link IVoiceSession} - the secret, encryption, and address
+ * never leave the server internals.
  */
-public final class VoiceServerSession {
+public final class VoiceServerSession implements IVoiceSession {
 
     private final UUID playerUuid;
     private final String playerName;
@@ -35,12 +37,19 @@ public final class VoiceServerSession {
         this.lastSeenMillis = System.currentTimeMillis();
     }
 
-    public UUID getPlayerUuid() {
+    @Override
+    public @NotNull UUID getPlayerUuid() {
         return playerUuid;
     }
 
-    public String getPlayerName() {
+    @Override
+    public @NotNull String getPlayerName() {
         return playerName;
+    }
+
+    @Override
+    public boolean hasUdpAddress() {
+        return lastAddress != null;
     }
 
     public UUID getSecret() {

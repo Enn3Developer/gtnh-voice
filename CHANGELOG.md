@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Group registry for third-party mods: implement `IGroup` and `registerGroup()` it on the `GroupManager` (re-register every server start); built-in names are reserved and `/voicegroup` stays limited to the built-ins
 - Fluent recipient-selection API for group routing: `RoutingContext` now carries the whole routing event and groups chain filters like `getAllSessions().excludeSelf().excludeNoAddress().send(...)`; both built-ins rewritten on it, routing behavior unchanged
 - Reusable filter vocabulary for group routing: `Filters.memberOf`/`Filters.player` for roster and whisper targeting, plus `RoutingContext.inDimension`/`withinDistanceOf` for fixed-point positional rules (radio towers, zones); all plug into `RecipientSelection.filter()`
+- `IVoiceSession` read-only session view: the routing API (filters, session map, `sendTo`) now exposes only player identity and UDP reachability; credentials and transport state stay internal
+- `RoutingContext.builder()` replaces the public constructor, chiefly for addon unit tests with a capturing `PacketSender`
 
 ### Removed
 

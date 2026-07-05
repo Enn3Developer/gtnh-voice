@@ -6,8 +6,6 @@ import java.util.function.Predicate;
 
 import org.jetbrains.annotations.NotNull;
 
-import com.enn3developer.gtnhvoice.server.VoiceServerSession;
-
 /**
  * Context-free recipient predicates for {@link RecipientSelection#filter} - identity-based rules that need no
  * position snapshot (for those, see the factories on {@link RoutingContext}). Combine with the standard
@@ -23,12 +21,12 @@ public final class Filters {
      * reads the live collection at test time - no defensive copy is taken, so the caller owns thread safety of
      * their collection with respect to the UDP/Netty thread.
      */
-    public static Predicate<VoiceServerSession> memberOf(@NotNull Collection<UUID> members) {
+    public static Predicate<IVoiceSession> memberOf(@NotNull Collection<UUID> members) {
         return session -> members.contains(session.getPlayerUuid());
     }
 
     /** Keeps exactly the session of {@code playerUuid} (whisper/target routing). */
-    public static Predicate<VoiceServerSession> player(@NotNull UUID playerUuid) {
+    public static Predicate<IVoiceSession> player(@NotNull UUID playerUuid) {
         return session -> session.getPlayerUuid()
             .equals(playerUuid);
     }

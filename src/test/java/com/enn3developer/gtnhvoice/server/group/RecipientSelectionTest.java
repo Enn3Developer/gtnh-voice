@@ -218,14 +218,15 @@ class RecipientSelectionTest {
         memberships.put(elsewhere.getPlayerUuid(), new NamedGroup("elsewhere"));
 
         PlayerAudioPacket audio = audio(1L, new byte[] { 9 });
-        RoutingContext context = new RoutingContext(
-            capturingSender(),
-            snapshot,
-            Collections.unmodifiableMap(sessions),
-            speaker,
-            audio,
-            localGroup,
-            playerUuid -> memberships.getOrDefault(playerUuid, localGroup));
+        RoutingContext context = RoutingContext.builder()
+            .packetSender(capturingSender())
+            .positionSnapshot(snapshot)
+            .sessions(sessions)
+            .speakerSession(speaker)
+            .audio(audio)
+            .group(localGroup)
+            .membershipResolver(playerUuid -> memberships.getOrDefault(playerUuid, localGroup))
+            .build();
         context.getSessionsForGroup()
             .excludeSelf()
             .send(SourceAudioPacket.STATE_POSITIONAL);
@@ -301,14 +302,15 @@ class RecipientSelectionTest {
     }
 
     private RoutingContext context(VoiceServerSession speaker) {
-        return new RoutingContext(
-            capturingSender(),
-            snapshot,
-            Collections.unmodifiableMap(sessions),
-            speaker,
-            audio(7L, new byte[] { 1, 2, 3 }),
-            routedGroup,
-            playerUuid -> memberships.getOrDefault(playerUuid, routedGroup));
+        return RoutingContext.builder()
+            .packetSender(capturingSender())
+            .positionSnapshot(snapshot)
+            .sessions(sessions)
+            .speakerSession(speaker)
+            .audio(audio(7L, new byte[] { 1, 2, 3 }))
+            .group(routedGroup)
+            .membershipResolver(playerUuid -> memberships.getOrDefault(playerUuid, routedGroup))
+            .build();
     }
 
     private PacketSender capturingSender() {

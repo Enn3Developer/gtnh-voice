@@ -9,7 +9,6 @@ import org.jetbrains.annotations.Nullable;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.clientbound.SourceAudioPacket;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.serverbound.PlayerAudioPacket;
 import com.enn3developer.gtnhvoice.server.PlayerSnapshot;
-import com.enn3developer.gtnhvoice.server.VoiceServerSession;
 
 /**
  * Fluent recipient selection for one routed audio frame, created only by
@@ -25,7 +24,7 @@ import com.enn3developer.gtnhvoice.server.VoiceServerSession;
 public final class RecipientSelection {
 
     private final RoutingContext context;
-    private Predicate<VoiceServerSession> predicate = session -> true;
+    private Predicate<IVoiceSession> predicate = session -> true;
     private boolean consumed;
 
     RecipientSelection(@NotNull RoutingContext context) {
@@ -43,7 +42,7 @@ public final class RecipientSelection {
 
     /** Drops sessions with no UDP address yet. Works whether or not the speaker has a position snapshot. */
     public RecipientSelection excludeNoAddress() {
-        return filter(session -> session.getLastAddress() != null);
+        return filter(IVoiceSession::hasUdpAddress);
     }
 
     /**
@@ -81,7 +80,7 @@ public final class RecipientSelection {
      * the UDP/Netty thread and must obey the {@link IGroup#route} contract - read-only, non-blocking, no world
      * state. Works whether or not the speaker has a position snapshot.
      */
-    public RecipientSelection filter(@NotNull Predicate<VoiceServerSession> recipientFilter) {
+    public RecipientSelection filter(@NotNull Predicate<IVoiceSession> recipientFilter) {
         requireNotConsumed();
         predicate = predicate.and(recipientFilter);
         return this;
@@ -106,7 +105,7 @@ public final class RecipientSelection {
         double y = speakerPos == null ? 0 : speakerPos.getY();
         double z = speakerPos == null ? 0 : speakerPos.getZ();
 
-        for (VoiceServerSession session : context.getSessionsByPlayerUuid()
+        for (IVoiceSession session : context.getSessionsByPlayerUuid()
             .values()) {
             if (!predicate.test(session)) continue;
 

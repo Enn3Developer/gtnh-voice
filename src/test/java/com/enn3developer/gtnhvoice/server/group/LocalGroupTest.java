@@ -8,7 +8,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -86,14 +85,15 @@ class LocalGroupTest {
     private RoutingContext context(VoiceServerSession speaker, PlayerAudioPacket audio) {
         PacketSender capturingSender = (packet, secret, encryption, recipient) -> sent
             .add(new CapturedSend(packet, secret, encryption, recipient));
-        return new RoutingContext(
-            capturingSender,
-            snapshot,
-            Collections.unmodifiableMap(sessions),
-            speaker,
-            audio,
-            group,
-            playerUuid -> group);
+        return RoutingContext.builder()
+            .packetSender(capturingSender)
+            .positionSnapshot(snapshot)
+            .sessions(sessions)
+            .speakerSession(speaker)
+            .audio(audio)
+            .group(group)
+            .membershipResolver(playerUuid -> group)
+            .build();
     }
 
     private VoiceServerSession addSession(String name, boolean withUdpAddress) {

@@ -108,14 +108,15 @@ class RoutingContextFiltersTest {
     }
 
     private RoutingContext context(VoiceServerSession speaker) {
-        return new RoutingContext(
-            (packet, secret, encryption, recipient) -> sent.add(recipient),
-            snapshot,
-            Collections.unmodifiableMap(sessions),
-            speaker,
-            new PlayerAudioPacket(7L, new byte[] { 1, 2, 3 }, UUID.randomUUID(), (short) 48, false),
-            routedGroup,
-            playerUuid -> routedGroup);
+        return RoutingContext.builder()
+            .packetSender((packet, secret, encryption, recipient) -> sent.add(recipient))
+            .positionSnapshot(snapshot)
+            .sessions(sessions)
+            .speakerSession(speaker)
+            .audio(new PlayerAudioPacket(7L, new byte[] { 1, 2, 3 }, UUID.randomUUID(), (short) 48, false))
+            .group(routedGroup)
+            .membershipResolver(playerUuid -> routedGroup)
+            .build();
     }
 
     private Set<InetSocketAddress> sentAddresses() {

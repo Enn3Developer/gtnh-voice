@@ -1,6 +1,7 @@
 package com.enn3developer.gtnhvoice.server.group;
 
 import java.net.InetSocketAddress;
+import java.util.Collections;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
@@ -15,11 +16,11 @@ import com.enn3developer.gtnhvoice.server.VoiceServerSession;
 
 /**
  * Everything a group may touch while routing one audio frame, and nothing more: the routed event itself (speaker
- * session, inbound audio, the group being routed), the immutable per-tick position snapshot, a read-only view of
- * the live sessions, and {@link #sendTo} as the only way to emit packets - groups never see the UDP transport or
- * the server manager directly, only the {@link PacketSender} seam. Built by the server manager per routed frame,
- * capturing the snapshot reference current at that moment, and handed to {@link IGroup#route} on the UDP/Netty
- * thread.
+ * session, inbound audio, the group being routed), the immutable per-tick position snapshot, a read-only
+ * {@link IVoiceSession} view of the live sessions, and {@link #sendTo} as the only way to emit packets - groups
+ * never see the UDP transport, the server manager, or the concrete sessions' credentials, only the
+ * {@link PacketSender} seam behind {@link #sendTo}. Built by the server manager per routed frame, capturing the
+ * snapshot reference current at that moment, and handed to {@link IGroup#route} on the UDP/Netty thread.
  * <p>
  * Most groups should route through the fluent {@link RecipientSelection} entry points
  * ({@link #getAllSessions()}/{@link #getSessionsForGroup()}); the raw session map and {@link #sendTo} stay
@@ -30,30 +31,30 @@ public final class RoutingContext {
     private final PacketSender transport;
     private final Map<UUID, PlayerSnapshot> positionSnapshot;
     private final Map<UUID, VoiceServerSession> sessionsByPlayerUuid;
+    private final Map<UUID, IVoiceSession> sessionViewByPlayerUuid;
     private final VoiceServerSession speakerSession;
     private final PlayerAudioPacket audio;
     private final IGroup group;
     private final Function<UUID, IGroup> membershipResolver;
 
-    /**
-     * @param group              the group being routed - the one whose {@link IGroup#route} receives this context
-     * @param membershipResolver resolves any player's current group (wired to {@code GroupManager::groupOf} by the
-     *                           server manager); must be safe to call from the UDP/Netty thread
-     */
-    public RoutingContext(@NotNull PacketSender transport, @NotNull Map<UUID, PlayerSnapshot> positionSnapshot,
-        @NotNull Map<UUID, VoiceServerSession> sessionsByPlayerUuid, @NotNull VoiceServerSession speakerSession,
-        @NotNull PlayerAudioPacket audio, @NotNull IGroup group, @NotNull Function<UUID, IGroup> membershipResolver) {
-        this.transport = transport;
-        this.positionSnapshot = positionSnapshot;
-        this.sessionsByPlayerUuid = sessionsByPlayerUuid;
-        this.speakerSession = speakerSession;
-        this.audio = audio;
-        this.group = group;
-        this.membershipResolver = membershipResolver;
+    private RoutingContext(Builder builder) {
+        this.transport = builder.require(builder.packetSender, "packetSender");
+        this.positionSnapshot = builder.require(builder.positionSnapshot, "positionSnapshot");
+        this.sessionsByPlayerUuid = builder.require(builder.sessions, "sessions");
+        this.sessionViewByPlayerUuid = Collections.unmodifiableMap(this.sessionsByPlayerUuid);
+        this.speakerSession = builder.require(builder.speakerSession, "speakerSession");
+        this.audio = builder.require(builder.audio, "audio");
+        this.group = builder.require(builder.group, "group");
+        this.membershipResolver = builder.require(builder.membershipResolver, "membershipResolver");
+    }
+
+    /** A fresh {@link Builder}; see its javadoc for who builds contexts and when. */
+    public static Builder builder() {
+        return new Builder();
     }
 
     /** The session whose audio frame is being routed. */
-    public VoiceServerSession getSpeakerSession() {
+    public IVoiceSession getSpeakerSession() {
         return speakerSession;
     }
 
@@ -68,8 +69,8 @@ public final class RoutingContext {
     }
 
     /** Read-only view of every live voice session, keyed by player UUID. */
-    public Map<UUID, VoiceServerSession> getSessionsByPlayerUuid() {
-        return sessionsByPlayerUuid;
+    public Map<UUID, IVoiceSession> getSessionsByPlayerUuid() {
+        return sessionViewByPlayerUuid;
     }
 
     /**
@@ -97,7 +98,7 @@ public final class RoutingContext {
      * snapshot are dropped. Evaluates against this context's immutable per-tick snapshot, so it is safe on the
      * UDP/Netty thread.
      */
-    public Predicate<VoiceServerSession> inDimension(int dimensionId) {
+    public Predicate<IVoiceSession> inDimension(int dimensionId) {
         return recipientSnapshotFilter(recipientPos -> recipientPos.getDimensionId() == dimensionId);
     }
 
@@ -109,8 +110,7 @@ public final class RoutingContext {
      * are dropped. Evaluates against this context's immutable per-tick snapshot, so it is safe on the UDP/Netty
      * thread.
      */
-    public Predicate<VoiceServerSession> withinDistanceOf(double x, double y, double z, int dimensionId,
-        double radius) {
+    public Predicate<IVoiceSession> withinDistanceOf(double x, double y, double z, int dimensionId, double radius) {
         return recipientSnapshotFilter(recipientPos -> {
             if (recipientPos.getDimensionId() != dimensionId) return false;
 
@@ -126,7 +126,7 @@ public final class RoutingContext {
      * recipients without one. Shared plumbing for the factories above and {@link RecipientSelection}'s
      * positional filters - says nothing about the speaker.
      */
-    Predicate<VoiceServerSession> recipientSnapshotFilter(@NotNull Predicate<PlayerSnapshot> snapshotFilter) {
+    Predicate<IVoiceSession> recipientSnapshotFilter(@NotNull Predicate<PlayerSnapshot> snapshotFilter) {
         return session -> {
             PlayerSnapshot recipientPos = positionSnapshot.get(session.getPlayerUuid());
             if (recipientPos == null) return false;
@@ -137,12 +137,92 @@ public final class RoutingContext {
 
     /**
      * Sends {@code packet} to {@code recipient} over the UDP transport, wrapped with the recipient's own
-     * secret/encryption/address. No-op if the recipient has no UDP address yet.
+     * secret/encryption/address. The concrete session is resolved from this context's live sessions by the
+     * recipient's player UUID; no-op if the recipient is unknown (a foreign {@link IVoiceSession} implementation,
+     * or a session removed since the context was built) or has no UDP address yet - never throws on the
+     * UDP/Netty thread over a stale recipient.
      */
-    public void sendTo(@NotNull VoiceServerSession recipient, @NotNull SourceAudioPacket packet) {
-        InetSocketAddress address = recipient.getLastAddress();
+    public void sendTo(@NotNull IVoiceSession recipient, @NotNull SourceAudioPacket packet) {
+        VoiceServerSession session = sessionsByPlayerUuid.get(recipient.getPlayerUuid());
+        if (session == null) return;
+
+        InetSocketAddress address = session.getLastAddress();
         if (address == null) return;
 
-        transport.send(packet, recipient.getSecret(), recipient.getEncryption(), address);
+        transport.send(packet, session.getSecret(), session.getEncryption(), address);
+    }
+
+    /**
+     * Builds a {@link RoutingContext}. Contexts are normally built by the mod per routed frame - the builder
+     * exists chiefly for addon unit tests, paired with a capturing {@link PacketSender}. Every field is
+     * mandatory; {@link #build()} throws {@link IllegalStateException} naming the first missing one.
+     */
+    public static final class Builder {
+
+        private PacketSender packetSender;
+        private Map<UUID, PlayerSnapshot> positionSnapshot;
+        private Map<UUID, VoiceServerSession> sessions;
+        private VoiceServerSession speakerSession;
+        private PlayerAudioPacket audio;
+        private IGroup group;
+        private Function<UUID, IGroup> membershipResolver;
+
+        private Builder() {}
+
+        /** The transport seam every {@link RoutingContext#sendTo} goes through - capture it in tests. */
+        public Builder packetSender(@NotNull PacketSender packetSender) {
+            this.packetSender = packetSender;
+            return this;
+        }
+
+        /** The immutable per-tick position/dimension snapshot, keyed by player UUID. */
+        public Builder positionSnapshot(@NotNull Map<UUID, PlayerSnapshot> positionSnapshot) {
+            this.positionSnapshot = positionSnapshot;
+            return this;
+        }
+
+        /** The live concrete sessions, keyed by player UUID - groups only ever see them as {@link IVoiceSession}. */
+        public Builder sessions(@NotNull Map<UUID, VoiceServerSession> sessions) {
+            this.sessions = sessions;
+            return this;
+        }
+
+        /** The concrete session whose audio frame is being routed. */
+        public Builder speakerSession(@NotNull VoiceServerSession speakerSession) {
+            this.speakerSession = speakerSession;
+            return this;
+        }
+
+        /** The inbound audio frame being routed. */
+        public Builder audio(@NotNull PlayerAudioPacket audio) {
+            this.audio = audio;
+            return this;
+        }
+
+        /** The group being routed - the one whose {@link IGroup#route} receives this context. */
+        public Builder group(@NotNull IGroup group) {
+            this.group = group;
+            return this;
+        }
+
+        /**
+         * Resolves any player's current group (wired to {@code GroupManager::groupOf} by the server manager);
+         * must be safe to call from the UDP/Netty thread.
+         */
+        public Builder membershipResolver(@NotNull Function<UUID, IGroup> membershipResolver) {
+            this.membershipResolver = membershipResolver;
+            return this;
+        }
+
+        /** @throws IllegalStateException naming the first field left unset */
+        public RoutingContext build() {
+            return new RoutingContext(this);
+        }
+
+        private <T> T require(T value, String fieldName) {
+            if (value == null) throw new IllegalStateException("RoutingContext.Builder: " + fieldName + " was not set");
+
+            return value;
+        }
     }
 }

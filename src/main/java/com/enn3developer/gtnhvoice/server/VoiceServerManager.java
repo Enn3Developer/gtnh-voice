@@ -289,14 +289,15 @@ public final class VoiceServerManager implements UdpPacketListener {
         if (server == null) return;
 
         IGroup group = groupManager.groupOf(speakerSession.getPlayerUuid());
-        RoutingContext context = new RoutingContext(
-            server::send,
-            positionSnapshot,
-            sessionsByPlayerUuidView,
-            speakerSession,
-            audio,
-            group,
-            groupManager::groupOf);
+        RoutingContext context = RoutingContext.builder()
+            .packetSender(server::send)
+            .positionSnapshot(positionSnapshot)
+            .sessions(sessionsByPlayerUuidView)
+            .speakerSession(speakerSession)
+            .audio(audio)
+            .group(group)
+            .membershipResolver(groupManager::groupOf)
+            .build();
         group.route(context);
     }
 

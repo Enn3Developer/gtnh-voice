@@ -27,7 +27,7 @@ class FiltersTest {
         Set<UUID> roster = new HashSet<>();
         roster.add(member.getPlayerUuid());
 
-        Predicate<VoiceServerSession> filter = Filters.memberOf(roster);
+        Predicate<IVoiceSession> filter = Filters.memberOf(roster);
 
         assertTrue(filter.test(member));
         assertFalse(filter.test(outsider));
@@ -40,7 +40,7 @@ class FiltersTest {
         Set<UUID> roster = new HashSet<>();
         roster.add(leaver.getPlayerUuid());
 
-        Predicate<VoiceServerSession> filter = Filters.memberOf(roster);
+        Predicate<IVoiceSession> filter = Filters.memberOf(roster);
         assertTrue(filter.test(leaver));
         assertFalse(filter.test(joiner));
 
@@ -56,7 +56,7 @@ class FiltersTest {
         VoiceServerSession target = session("target");
         VoiceServerSession bystander = session("bystander");
 
-        Predicate<VoiceServerSession> filter = Filters.player(target.getPlayerUuid());
+        Predicate<IVoiceSession> filter = Filters.player(target.getPlayerUuid());
 
         assertTrue(filter.test(target));
         assertFalse(filter.test(bystander));
