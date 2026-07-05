@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-05
+
 ### Added
 
 - Dedicated addon API packages `com.enn3developer.gtnhvoice.api.server` (side-level types) and `com.enn3developer.gtnhvoice.api.server.group` (group routing surface), both FML `@API`, with `GtnhVoiceApi.groupManager()` as the entry point to the new `IGroupManager` interface
