@@ -91,6 +91,14 @@ public final class VoiceClientManager {
     private final CapturePcmFilterChain capturePcmFilterChain = new CapturePcmFilterChain();
 
     /**
+     * The session lifecycle listener registry, alive for the singleton's whole lifetime like {@link
+     * #capturePcmFilterChain} - the future addon-API dispatch layer hangs off it to re-bridge durable
+     * registrations onto each fresh per-session {@link VoiceSourceManager}. See {@link VoiceSessionListener}
+     * for the threading/pairing contract; started/stopping pairing is enforced inside the registry itself.
+     */
+    private final VoiceSessionListeners sessionListeners = new VoiceSessionListeners();
+
+    /**
      * Client-side view of the voice roster (UUID -&gt; player name) for every other player
      * currently in voice, kept current from {@link VoiceRosterSnapshotPacket}/{@link
      * VoiceRosterUpdatePacket}. The receiving player is never present in their own roster - the
@@ -174,6 +182,15 @@ public final class VoiceClientManager {
      */
     CapturePcmFilterChain capturePcmFilterChainView() {
         return capturePcmFilterChain;
+    }
+
+    /**
+     * The live session lifecycle listener registry (the {@code *View()} idiom, package-private) - the seam
+     * the future addon-API dispatch layer registers through to learn when the per-session managers come up
+     * and are about to die.
+     */
+    VoiceSessionListeners sessionListenersView() {
+        return sessionListeners;
     }
 
     public synchronized void onConnectedToServer(@NotNull String host) {
@@ -293,6 +310,8 @@ public final class VoiceClientManager {
                 manager.start();
             }
             startCaptureSending(secret, encryption, packet.getOpusMode(), packet.getSampleRate());
+
+            sessionListeners.fireSessionStarted();
 
             GtnhVoice.LOG.info(
                 "Voice connected: secret={} keyFingerprint={} udp={}:{} distance={} opusMode={} frameSize={} sampleRate={}",
@@ -505,6 +524,11 @@ public final class VoiceClientManager {
     }
 
     private void closeUdp() {
+        // Before ANY teardown, so listeners can still query the live per-session managers. No-ops (inside
+        // the registry) when no session was ever up - closeUdp runs unconditionally on fresh connects and
+        // repeated disconnects.
+        sessionListeners.fireSessionStopping();
+
         stopHandshakeRetry();
 
         if (pingExecutor != null) {
