@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Playback context create/destroy now fires internal lifecycle events on the playback thread, groundwork for a future EFX addon API; no behavior change
+
 ## [0.6.0] - 2026-07-05
 
 ### Added

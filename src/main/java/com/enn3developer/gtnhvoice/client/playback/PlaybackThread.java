@@ -48,6 +48,11 @@ import me.eigenraven.lwjgl3ify.api.Lwjgl3Aware;
  * automatically serialized with every other AL call this thread makes and the pump loop is naturally quiesced for
  * its duration. The device/context are instance fields (not {@code run()} locals) specifically so that command can
  * mutate them in place; the OS thread itself never stops for a rebuild, only for real shutdown.
+ * <p>
+ * Every context create/destroy is announced to the {@link PlaybackLifecycleListener}s registered on the manager,
+ * always through {@link #fireContextCreated}/{@link #fireContextDestroying} and always on this thread - see those
+ * helpers and the listener interface for the exact pairing contract. Any future lifecycle site must go through
+ * the same funnel.
  */
 @Lwjgl3Aware
 public class PlaybackThread extends Thread {
@@ -170,6 +175,7 @@ public class PlaybackThread extends Thread {
         }
 
         openedSuccessfully = true;
+        fireContextCreated();
         GtnhVoice.LOG.info(
             "[Playback] Playback started: {}Hz mono16, {} buffer pool per source, device={}, hrtf={}",
             SAMPLE_RATE,
@@ -204,6 +210,10 @@ public class PlaybackThread extends Thread {
                 }
             }
         } finally {
+            // Guarded so destroying never double-fires: after a total rebuild failure the context field is
+            // already NULL (performRebuild nulled it, having fired destroying for the old context at its top),
+            // so this only announces a context whose destroying hasn't fired yet.
+            if (context != MemoryUtil.NULL) fireContextDestroying();
             teardownAlSources();
             teardownContext();
             closeDevice(device);
@@ -251,13 +261,53 @@ public class PlaybackThread extends Thread {
      * happens on this thread from {@link #drainCommands}.
      */
     void runCommandIsolated(Runnable command) {
+        runIsolated(command, "Queued command");
+    }
+
+    /**
+     * Shared isolation wrapper behind both {@link #runCommandIsolated} and listener dispatch
+     * ({@link #fireContextCreated}/{@link #fireContextDestroying}): runs {@code task}, catching any
+     * {@link Throwable} with a throttled error log naming {@code what}, then drains the AL error state so a
+     * half-executed task's dangling error isn't misattributed to this thread's next internal
+     * {@link #checkAlError}.
+     */
+    private void runIsolated(Runnable task, String what) {
         try {
-            command.run();
+            task.run();
         } catch (Throwable t) {
             if (LogThrottle.shouldLog(lastCommandErrorLogMillis, COMMAND_ERROR_LOG_INTERVAL_MILLIS)) {
-                GtnhVoice.LOG.error("[Playback] Queued command threw on the playback thread", t);
+                GtnhVoice.LOG.error("[Playback] {} threw on the playback thread", what, t);
             }
             drainAlErrorAfterFailedCommand();
+        }
+    }
+
+    /**
+     * The single funnel announcing that a context has become the live output - called from run()'s startup path
+     * and {@link #performRebuild}'s success path (which covers the default-device fallback too), always with the
+     * new context bound and current and before any AL sources exist on it. Passes {@link #device} so listeners
+     * can run ALC extension checks. Each listener is dispatched isolated via {@link #runIsolated} - a broken one
+     * can't kill the pump loop or starve the others.
+     * <p>
+     * Package-private only so listener dispatch is unit-testable without an AL device; every real call happens
+     * on this thread.
+     */
+    void fireContextCreated() {
+        for (PlaybackLifecycleListener listener : manager.lifecycleListenersView()) {
+            runIsolated(() -> listener.contextCreated(device), "Lifecycle listener contextCreated");
+        }
+    }
+
+    /**
+     * The single funnel announcing that the live context is about to die - called before ANY AL teardown at the
+     * top of {@link #performRebuild} and in run()'s finally, both guarded on a live {@link #context} so a
+     * never-announced (or already-announced) context can never fire destroying. The context is still bound and
+     * every AL source still exists when listeners run. Isolation and visibility rationale as
+     * {@link #fireContextCreated}.
+     */
+    void fireContextDestroying() {
+        for (PlaybackLifecycleListener listener : manager.lifecycleListenersView()) {
+            runIsolated(listener::contextDestroying, "Lifecycle listener contextDestroying");
         }
     }
 
@@ -296,6 +346,10 @@ public class PlaybackThread extends Thread {
             targetDeviceName == null ? "<default>" : targetDeviceName,
             targetHrtfMode);
 
+        // Announce before ANY AL teardown, while the old context is still bound and its sources still exist -
+        // that's the listener contract. Guarded: a rebuild queued behind one that already failed totally runs
+        // with no live context, and a context that was never announced must never get a destroying.
+        if (context != MemoryUtil.NULL) fireContextDestroying();
         teardownAlSources();
         teardownContext();
 
@@ -341,6 +395,10 @@ public class PlaybackThread extends Thread {
         context = newContext;
         currentDeviceName = targetDeviceName;
         // appliedHrtfMode already set by createContext(), which may have degraded targetHrtfMode to AUTO.
+
+        // Single created-fire point for both the target and the fallback outcome - either way the new context
+        // is bound and live by now, and no AL sources exist on it yet (they reappear lazily via commands).
+        fireContextCreated();
 
         GtnhVoice.LOG.info(
             "[Playback] Rebuild complete: device={} hrtfRequested={} hrtfApplied={}",

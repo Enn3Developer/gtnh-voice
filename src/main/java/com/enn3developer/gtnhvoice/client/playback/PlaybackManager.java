@@ -1,11 +1,13 @@
 package com.enn3developer.gtnhvoice.client.playback;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import com.enn3developer.gtnhvoice.Config;
 import com.enn3developer.gtnhvoice.GtnhVoice;
@@ -30,6 +32,11 @@ public class PlaybackManager {
     private final Map<UUID, double[]> positions = new ConcurrentHashMap<>();
     private final Map<UUID, Float> gains = new ConcurrentHashMap<>();
     private final Map<UUID, Boolean> positionalModes = new ConcurrentHashMap<>();
+
+    // Lives on the manager (not the thread) so registrations survive start()/stop() cycles and rebuilds; the
+    // current PlaybackThread reads it through its manager reference at every fire site. CopyOnWrite so the
+    // playback thread iterates a stable snapshot while other threads register/unregister concurrently.
+    private final List<PlaybackLifecycleListener> lifecycleListeners = new CopyOnWriteArrayList<>();
 
     private volatile ListenerSnapshot listenerSnapshot = ListenerSnapshot.ORIGIN;
     // Volatile because the AudioThreadExecutor seam reads it from arbitrary (future addon) threads while the
@@ -207,6 +214,26 @@ public class PlaybackManager {
             PlaybackThread thread = playbackThread;
             return thread != null && thread.enqueueCommand(command);
         };
+    }
+
+    /**
+     * Registers a context lifecycle listener - see {@link PlaybackLifecycleListener} for the threading and
+     * pairing contract. Callable from any thread; the registration outlives {@link #start}/{@link #stop} cycles.
+     * Registering while a context is already live does NOT retroactively fire {@code contextCreated} - the
+     * listener only sees transitions from the next lifecycle event onward.
+     */
+    void addLifecycleListener(PlaybackLifecycleListener listener) {
+        Objects.requireNonNull(listener, "listener");
+        lifecycleListeners.add(listener);
+    }
+
+    /** Unregisters a previously added lifecycle listener; no-op if it was never registered. */
+    void removeLifecycleListener(PlaybackLifecycleListener listener) {
+        lifecycleListeners.remove(listener);
+    }
+
+    List<PlaybackLifecycleListener> lifecycleListenersView() {
+        return lifecycleListeners;
     }
 
     Map<UUID, double[]> positionsView() {
