@@ -13,6 +13,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import com.enn3developer.gtnhvoice.Config;
 import com.enn3developer.gtnhvoice.GtnhVoice;
+import com.enn3developer.gtnhvoice.api.client.ISourceMetadata;
 import com.enn3developer.gtnhvoice.core.api.util.LogThrottle;
 
 /**
@@ -292,6 +293,25 @@ public class PlaybackManager {
             PlaybackThread thread = playbackThread;
             return thread != null && thread.enqueueCommand(command);
         };
+    }
+
+    /**
+     * API-backing seam for the public client API's {@code runOnAudioThread}: submits {@code command} (non-null,
+     * or {@link NullPointerException}) through {@link #audioThreadExecutor()} - see there and
+     * {@link AudioThreadExecutor#execute} for the acceptance-not-guarantee and isolation contract. Public only
+     * so the API backend outside this package can reach the seam without widening
+     * {@link AudioThreadExecutor} itself; internal callers keep using {@link #audioThreadExecutor()}.
+     */
+    public boolean runOnAudioThread(Runnable command) {
+        return audioThreadExecutor().execute(command);
+    }
+
+    /**
+     * API-backing seam for the public client API's source-metadata query: {@link #sourceMetadata} widened to
+     * the public {@link ISourceMetadata} view - same consistency and freshness contract as documented there.
+     */
+    public Optional<ISourceMetadata> sourceMetadataFor(UUID sourceId) {
+        return sourceMetadata(sourceId).map(ISourceMetadata.class::cast);
     }
 
     /**
