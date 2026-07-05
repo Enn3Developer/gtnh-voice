@@ -54,7 +54,7 @@ class GlobalGroupTest {
         addSnapshot(noUdp, 5, 64, 0, 0);
 
         byte[] opusData = { 4, 5, 6 };
-        group.route(speaker, audio(11L, opusData), context());
+        group.route(context(speaker, audio(11L, opusData)));
 
         assertEquals(4, sent.size());
         Set<InetSocketAddress> recipients = new HashSet<>();
@@ -84,7 +84,7 @@ class GlobalGroupTest {
         addSnapshot(speaker, 0, 64, 0, 0);
         addSession("noUdp", false);
 
-        group.route(speaker, audio(1L, new byte[] { 9 }), context());
+        group.route(context(speaker, audio(1L, new byte[] { 9 })));
 
         assertTrue(sent.isEmpty());
     }
@@ -96,7 +96,7 @@ class GlobalGroupTest {
         addSnapshot(listener, 1, 64, 0, 0);
 
         byte[] opusData = { 7 };
-        group.route(speaker, audio(3L, opusData), context());
+        group.route(context(speaker, audio(3L, opusData)));
 
         assertEquals(1, sent.size());
         CapturedSend only = sent.get(0);
@@ -112,10 +112,17 @@ class GlobalGroupTest {
         assertEquals(0, forwarded.getZ());
     }
 
-    private RoutingContext context() {
+    private RoutingContext context(VoiceServerSession speaker, PlayerAudioPacket audio) {
         PacketSender capturingSender = (packet, secret, encryption, recipient) -> sent
             .add(new CapturedSend(packet, secret, encryption, recipient));
-        return new RoutingContext(capturingSender, snapshot, Collections.unmodifiableMap(sessions));
+        return new RoutingContext(
+            capturingSender,
+            snapshot,
+            Collections.unmodifiableMap(sessions),
+            speaker,
+            audio,
+            group,
+            playerUuid -> group);
     }
 
     private VoiceServerSession addSession(String name, boolean withUdpAddress) {

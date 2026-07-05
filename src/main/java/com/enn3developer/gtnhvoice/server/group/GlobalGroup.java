@@ -1,14 +1,8 @@
 package com.enn3developer.gtnhvoice.server.group;
 
-import java.net.InetSocketAddress;
-import java.util.UUID;
-
 import org.jetbrains.annotations.NotNull;
 
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.clientbound.SourceAudioPacket;
-import com.enn3developer.gtnhvoice.core.proto.packets.udp.serverbound.PlayerAudioPacket;
-import com.enn3developer.gtnhvoice.server.PlayerSnapshot;
-import com.enn3developer.gtnhvoice.server.VoiceServerSession;
 
 /**
  * Server-admin announcement group: broadcasts a speaker to EVERY connected voice client - no dimension check, no
@@ -35,32 +29,10 @@ public final class GlobalGroup implements IGroup {
     }
 
     @Override
-    public void route(@NotNull VoiceServerSession speakerSession, @NotNull PlayerAudioPacket audio,
-        @NotNull RoutingContext context) {
-        UUID speakerUuid = speakerSession.getPlayerUuid();
-        PlayerSnapshot speakerPos = context.getPositionSnapshot()
-            .get(speakerUuid);
-        double x = speakerPos == null ? 0 : speakerPos.getX();
-        double y = speakerPos == null ? 0 : speakerPos.getY();
-        double z = speakerPos == null ? 0 : speakerPos.getZ();
-
-        for (VoiceServerSession recipientSession : context.getSessionsByPlayerUuid()
-            .values()) {
-            if (recipientSession.getPlayerUuid()
-                .equals(speakerUuid)) continue;
-
-            InetSocketAddress recipientAddress = recipientSession.getLastAddress();
-            if (recipientAddress == null) continue;
-
-            SourceAudioPacket forward = new SourceAudioPacket(
-                audio.getSequenceNumber(),
-                SourceAudioPacket.FLAG_FLAT,
-                audio.getData(),
-                speakerUuid,
-                x,
-                y,
-                z);
-            context.sendTo(recipientSession, forward);
-        }
+    public void route(@NotNull RoutingContext context) {
+        context.getAllSessions()
+            .excludeSelf()
+            .excludeNoAddress()
+            .send(SourceAudioPacket.FLAG_FLAT);
     }
 }

@@ -5,8 +5,6 @@ import java.util.UUID;
 import org.jetbrains.annotations.NotNull;
 
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.clientbound.SourceAudioPacket;
-import com.enn3developer.gtnhvoice.core.proto.packets.udp.serverbound.PlayerAudioPacket;
-import com.enn3developer.gtnhvoice.server.VoiceServerSession;
 
 /**
  * One voice routing group: owns recipient selection AND builds the outgoing {@link SourceAudioPacket} per
@@ -31,15 +29,16 @@ public interface IGroup {
     String getDisplayName();
 
     /**
-     * Routes one inbound frame of speaker audio to this group's recipients.
+     * Routes one inbound frame of speaker audio to this group's recipients. The whole routing event travels in
+     * {@code context}: the speaker session, the inbound audio, the snapshot/session views, and the
+     * {@link RecipientSelection} entry points most implementations should route through.
      * <p>
      * Threading contract: called on the UDP/Netty thread. Implementations may only read what {@code context}
      * hands them - the immutable per-tick position snapshot and the read-only session view - and send through
-     * {@link RoutingContext#sendTo}. They must never touch {@code EntityPlayerMP}/world state and must never
-     * block.
+     * {@link RecipientSelection#send} or {@link RoutingContext#sendTo}. They must never touch
+     * {@code EntityPlayerMP}/world state and must never block.
      */
-    void route(@NotNull VoiceServerSession speakerSession, @NotNull PlayerAudioPacket audio,
-        @NotNull RoutingContext context);
+    void route(@NotNull RoutingContext context);
 
     /**
      * Drops any per-player state held for {@code playerUuid}. Called on logout and from the stale-session

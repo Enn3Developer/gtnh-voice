@@ -279,17 +279,25 @@ public final class VoiceServerManager implements UdpPacketListener {
     /**
      * Routes one inbound frame of speaker audio via the speaker's group (the default
      * {@link com.enn3developer.gtnhvoice.server.group.LocalGroup} unless {@link GroupManager}
-     * assigned them elsewhere). Runs on the UDP/Netty thread - the {@link RoutingContext} hands
-     * the group only {@link #positionSnapshot} and a read-only session view, so groups can never
-     * touch live world/entity state.
+     * assigned them elsewhere). Runs on the UDP/Netty thread - the {@link RoutingContext} carries
+     * the whole routing event (speaker, audio, routed group, membership resolver) but hands the
+     * group only {@link #positionSnapshot} and a read-only session view of live state, so groups
+     * can never touch live world/entity state.
      */
     private void routeAudio(@NotNull VoiceServerSession speakerSession, @NotNull PlayerAudioPacket audio) {
         UdpTransportServer server = udpServer;
         if (server == null) return;
 
-        RoutingContext context = new RoutingContext(server::send, positionSnapshot, sessionsByPlayerUuidView);
-        groupManager.groupOf(speakerSession.getPlayerUuid())
-            .route(speakerSession, audio, context);
+        IGroup group = groupManager.groupOf(speakerSession.getPlayerUuid());
+        RoutingContext context = new RoutingContext(
+            server::send,
+            positionSnapshot,
+            sessionsByPlayerUuidView,
+            speakerSession,
+            audio,
+            group,
+            groupManager::groupOf);
+        group.route(context);
     }
 
     @SubscribeEvent

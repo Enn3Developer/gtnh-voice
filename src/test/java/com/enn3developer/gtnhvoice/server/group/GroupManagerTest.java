@@ -14,9 +14,6 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
-import com.enn3developer.gtnhvoice.core.proto.packets.udp.serverbound.PlayerAudioPacket;
-import com.enn3developer.gtnhvoice.server.VoiceServerSession;
-
 /**
  * Covers {@link GroupManager#byName} resolution of the two built-ins and the assign-global -> assign-local round
  * trip restoring the default (assigning the local built-in must take the same map-entry-clearing path as
@@ -48,7 +45,7 @@ class GroupManagerTest {
         }
 
         @Override
-        public void route(VoiceServerSession speakerSession, PlayerAudioPacket audio, RoutingContext context) {}
+        public void route(RoutingContext context) {}
 
         @Override
         public void onPlayerRemoved(UUID playerUuid) {

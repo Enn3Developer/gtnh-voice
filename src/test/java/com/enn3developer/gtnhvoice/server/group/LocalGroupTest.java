@@ -54,7 +54,7 @@ class LocalGroupTest {
         addSession("noSnapshot", true);
 
         byte[] opusData = { 1, 2, 3 };
-        group.route(speaker, audio(7L, opusData), context());
+        group.route(context(speaker, audio(7L, opusData)));
 
         assertEquals(1, sent.size());
         CapturedSend only = sent.get(0);
@@ -78,15 +78,22 @@ class LocalGroupTest {
         VoiceServerSession listener = addSession("listener", true);
         addSnapshot(listener, 1, 64, 0, 0);
 
-        group.route(speaker, audio(1L, new byte[] { 9 }), context());
+        group.route(context(speaker, audio(1L, new byte[] { 9 })));
 
         assertTrue(sent.isEmpty());
     }
 
-    private RoutingContext context() {
+    private RoutingContext context(VoiceServerSession speaker, PlayerAudioPacket audio) {
         PacketSender capturingSender = (packet, secret, encryption, recipient) -> sent
             .add(new CapturedSend(packet, secret, encryption, recipient));
-        return new RoutingContext(capturingSender, snapshot, Collections.unmodifiableMap(sessions));
+        return new RoutingContext(
+            capturingSender,
+            snapshot,
+            Collections.unmodifiableMap(sessions),
+            speaker,
+            audio,
+            group,
+            playerUuid -> group);
     }
 
     private VoiceServerSession addSession(String name, boolean withUdpAddress) {
