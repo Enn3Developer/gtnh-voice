@@ -84,6 +84,13 @@ public final class VoiceClientManager {
     private volatile VoiceSourceManager voiceSourceManager;
 
     /**
+     * The outgoing-mic PCM filter registry, alive for the singleton's whole lifetime and handed to every
+     * per-session {@link CaptureSendWorker} - registrations survive disconnect/reconnect cycles without any
+     * re-registration machinery. See {@link CapturePcmFilter} for the chain-position and threading contract.
+     */
+    private final CapturePcmFilterChain capturePcmFilterChain = new CapturePcmFilterChain();
+
+    /**
      * Client-side view of the voice roster (UUID -&gt; player name) for every other player
      * currently in voice, kept current from {@link VoiceRosterSnapshotPacket}/{@link
      * VoiceRosterUpdatePacket}. The receiving player is never present in their own roster - the
@@ -159,6 +166,14 @@ public final class VoiceClientManager {
      */
     public @Nullable VoiceSourceManager getVoiceSourceManager() {
         return voiceSourceManager;
+    }
+
+    /**
+     * The live capture-side PCM filter registry (the {@code *View()} idiom, package-private) - the seam the
+     * future public addon API will wrap to register {@link CapturePcmFilter}s on outgoing mic audio.
+     */
+    CapturePcmFilterChain capturePcmFilterChainView() {
+        return capturePcmFilterChain;
     }
 
     public synchronized void onConnectedToServer(@NotNull String host) {
@@ -477,6 +492,7 @@ public final class VoiceClientManager {
                 manager.getFrameQueue(),
                 captureEncoder,
                 noiseSuppressionFilter,
+                capturePcmFilterChain,
                 udpClient,
                 secret,
                 encryption,

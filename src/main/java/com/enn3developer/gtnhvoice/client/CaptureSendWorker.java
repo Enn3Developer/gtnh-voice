@@ -19,10 +19,15 @@ import com.enn3developer.gtnhvoice.core.transport.UdpTransportClient;
  * continuously regardless of the activation gate below.
  * <p>
  * Every polled frame is first denoised via {@link NoiseSuppressionFilter} if one is bound (a
- * cleaner signal makes the activation gate's RMS threshold more accurate), then passed through the
+ * cleaner signal makes the activation gate's RMS threshold more accurate), then run through the
+ * session-independent {@link CapturePcmFilterChain} (addon DSP; owned by {@link VoiceClientManager},
+ * so registrations survive this worker's per-session lifetime), then passed through the
  * {@link ActivationGate}: frames are only encoded+sent while the gate is open (VA above threshold,
  * or PTT key held). Frames while the gate is closed are dropped here - the capture device itself
- * keeps running regardless.
+ * keeps running regardless. The denoise -&gt; chain -&gt; gate ordering is deliberate: filters receive
+ * clean speech rather than raw mic noise, and the gate measures what will actually be transmitted -
+ * a filter that quiets or mutes the signal correctly closes the gate instead of transmitting shaped
+ * noise.
  */
 final class CaptureSendWorker extends Thread {
 
@@ -32,6 +37,7 @@ final class CaptureSendWorker extends Thread {
     private final BlockingQueue<short[]> captureFrameQueue;
     private final AudioEncoder encoder;
     private final NoiseSuppressionFilter noiseSuppressionFilter;
+    private final CapturePcmFilterChain pcmFilterChain;
     private final UdpTransportClient client;
     private final UUID secret;
     private final Encryption encryption;
@@ -46,12 +52,13 @@ final class CaptureSendWorker extends Thread {
     private boolean wasTransmitting;
 
     CaptureSendWorker(BlockingQueue<short[]> captureFrameQueue, AudioEncoder encoder,
-        NoiseSuppressionFilter noiseSuppressionFilter, UdpTransportClient client, UUID secret, Encryption encryption,
-        UUID activationId, ActivationGate activationGate) {
+        NoiseSuppressionFilter noiseSuppressionFilter, CapturePcmFilterChain pcmFilterChain, UdpTransportClient client,
+        UUID secret, Encryption encryption, UUID activationId, ActivationGate activationGate) {
         super("gtnhvoice-capture-send");
         this.captureFrameQueue = captureFrameQueue;
         this.encoder = encoder;
         this.noiseSuppressionFilter = noiseSuppressionFilter;
+        this.pcmFilterChain = pcmFilterChain;
         this.client = client;
         this.secret = secret;
         this.encryption = encryption;
@@ -79,6 +86,7 @@ final class CaptureSendWorker extends Thread {
             }
 
             frame = denoise(frame);
+            frame = pcmFilterChain.apply(frame);
 
             boolean transmitting = activationGate.shouldTransmit(frame);
             if (transmitting) {
