@@ -3,6 +3,7 @@ package com.enn3developer.gtnhvoice.client.playback;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
@@ -172,6 +173,36 @@ public class PlaybackManager {
     public void setPositional(UUID sourceId, boolean positional) {
         if (!frameQueues.containsKey(sourceId)) return;
         positionalModes.put(sourceId, positional);
+    }
+
+    /**
+     * Point-in-time spatial snapshot of {@code sourceId}: the speaker's last known absolute world position and
+     * whether the source currently plays positionally. Empty for an id that was never registered via
+     * {@link #createSource} or has since been torn down ({@link #destroySource} removes the map entries;
+     * {@link #stop} clears them).
+     * <p>
+     * Callable from any thread (typically inside {@link PlaybackLifecycleListener#audioTick()}). The position
+     * triple is always internally consistent - {@link #updateSourcePosition} replaces the array wholesale, never
+     * mutates it - but position and positional flag are read without a common lock, so the two may come from
+     * instants up to one packet (~20ms) apart. That relaxed consistency is deliberate: it's plenty for
+     * spatial-audio consumers, and locking the hot receive path to do better isn't worth it. The returned
+     * snapshot is a detached copy - later updates never mutate an already-returned instance.
+     * <p>
+     * A voice {@code sourceId} IS the speaking player's UUID (see {@code VoiceClientManager#resolveName}), so
+     * consumers needing the player entity or name resolve it directly; this query deliberately duplicates no
+     * roster data. Fresh-source edge: {@link #createSource} seeds the position with {@code (0,0,0)} until the
+     * first audio packet lands (~20ms), so a source reporting exactly the origin may simply be brand new -
+     * consumers doing raycasts should treat it with suspicion or wait a tick.
+     */
+    Optional<SourceMetadata> sourceMetadata(UUID sourceId) {
+        double[] position = positions.get(sourceId);
+        if (position == null) return Optional.empty();
+
+        Boolean positional = positionalModes.get(sourceId);
+        // A concurrent destroySource can have removed the mode between the two reads - the source is gone.
+        if (positional == null) return Optional.empty();
+
+        return Optional.of(new SourceMetadata(position[0], position[1], position[2], positional));
     }
 
     /**
