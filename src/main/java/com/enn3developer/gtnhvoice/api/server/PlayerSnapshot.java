@@ -1,4 +1,4 @@
-package com.enn3developer.gtnhvoice.server;
+package com.enn3developer.gtnhvoice.api.server;
 
 import java.util.UUID;
 
@@ -6,7 +6,7 @@ import org.jetbrains.annotations.NotNull;
 
 /**
  * Immutable, off-thread-safe copy of one player's position/dimension as of the last server tick.
- * Built on the server thread by {@link VoiceServerManager}, read from the UDP/Netty thread during
+ * Built on the server thread by the server manager, read from the UDP/Netty thread during
  * proximity routing - the UDP path must never touch live {@code EntityPlayerMP}/world state
  * directly, only this snapshot.
  */

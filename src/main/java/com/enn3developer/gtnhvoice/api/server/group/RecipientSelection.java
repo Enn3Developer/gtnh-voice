@@ -1,4 +1,4 @@
-package com.enn3developer.gtnhvoice.server.group;
+package com.enn3developer.gtnhvoice.api.server.group;
 
 import java.util.UUID;
 import java.util.function.Predicate;
@@ -6,9 +6,9 @@ import java.util.function.Predicate;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import com.enn3developer.gtnhvoice.core.proto.packets.udp.clientbound.SourceAudioPacket;
-import com.enn3developer.gtnhvoice.core.proto.packets.udp.serverbound.PlayerAudioPacket;
-import com.enn3developer.gtnhvoice.server.PlayerSnapshot;
+import com.enn3developer.gtnhvoice.api.server.IVoiceSession;
+import com.enn3developer.gtnhvoice.api.server.PlayerSnapshot;
+import com.enn3developer.gtnhvoice.api.server.SourceState;
 
 /**
  * Fluent recipient selection for one routed audio frame, created only by
@@ -87,19 +87,16 @@ public final class RecipientSelection {
     }
 
     /**
-     * Terminal: builds a {@link SourceAudioPacket} (frame sequence, {@code sourceState}, frame data, speaker
-     * UUID, speaker coordinates) for each remaining session and sends it via {@link RoutingContext#sendTo}.
-     * Speaker coordinates come from the speaker's position snapshot, or (0, 0, 0) when absent - send() itself
-     * never drops recipients over a missing speaker snapshot. Consumes the selection: a second send() (or any
-     * further filter) throws {@link IllegalStateException}.
+     * Terminal: sends the context's audio frame to each remaining session via {@link RoutingContext#sendTo},
+     * stamped with {@code sourceState} (see {@link SourceState}) and the speaker's coordinates. Speaker
+     * coordinates come from the speaker's position snapshot, or (0, 0, 0) when absent - send() itself never
+     * drops recipients over a missing speaker snapshot. Consumes the selection: a second send() (or any further
+     * filter) throws {@link IllegalStateException}.
      */
     public void send(byte sourceState) {
         requireNotConsumed();
         consumed = true;
 
-        PlayerAudioPacket audio = context.getAudio();
-        UUID speakerUuid = context.getSpeakerSession()
-            .getPlayerUuid();
         PlayerSnapshot speakerPos = speakerSnapshot();
         double x = speakerPos == null ? 0 : speakerPos.getX();
         double y = speakerPos == null ? 0 : speakerPos.getY();
@@ -109,15 +106,7 @@ public final class RecipientSelection {
             .values()) {
             if (!predicate.test(session)) continue;
 
-            SourceAudioPacket forward = new SourceAudioPacket(
-                audio.getSequenceNumber(),
-                sourceState,
-                audio.getData(),
-                speakerUuid,
-                x,
-                y,
-                z);
-            context.sendTo(session, forward);
+            context.sendTo(session, sourceState, x, y, z);
         }
     }
 

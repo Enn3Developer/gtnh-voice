@@ -3,7 +3,10 @@ package com.enn3developer.gtnhvoice.server.group;
 import org.jetbrains.annotations.NotNull;
 
 import com.enn3developer.gtnhvoice.Config;
-import com.enn3developer.gtnhvoice.core.proto.packets.udp.clientbound.SourceAudioPacket;
+import com.enn3developer.gtnhvoice.api.server.SourceState;
+import com.enn3developer.gtnhvoice.api.server.group.IGroup;
+import com.enn3developer.gtnhvoice.api.server.group.RecipientSelection;
+import com.enn3developer.gtnhvoice.api.server.group.RoutingContext;
 
 /**
  * The default proximity group: same-dimension, distance-cutoff routing, always positional - the exact behavior
@@ -39,6 +42,6 @@ public final class LocalGroup implements IGroup {
             .excludeSelf()
             .excludeNoAddress()
             .cutoffDistance(Math.min(Config.distance, Config.maxDistance))
-            .send(SourceAudioPacket.STATE_POSITIONAL);
+            .send(SourceState.POSITIONAL);
     }
 }

@@ -11,6 +11,7 @@ import java.util.UUID;
 
 import org.jetbrains.annotations.NotNull;
 
+import com.enn3developer.gtnhvoice.api.server.SourceState;
 import com.enn3developer.gtnhvoice.core.proto.packets.PacketUtil;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.bothbound.BaseAudioPacket;
 import com.google.common.io.ByteArrayDataInput;
@@ -19,16 +20,14 @@ import com.google.common.io.ByteArrayDataOutput;
 public final class SourceAudioPacket extends BaseAudioPacket<ClientPacketUdpHandler> {
 
     /**
-     * sourceState bit 0: set for flat playback (full gain, no spatialization), clear for positional/proximity
-     * (the speaker's world position applies, gain attenuates with distance). Positional is deliberately the
-     * zero/legacy wire value: peers that predate this flag always sent 0, so a version-skewed pairing degrades
-     * to the proximity behavior it always had instead of silently flattening all audio. Decided per packet by
-     * the server-side group routing the frame, so a speaker switching groups mid-stream flips modes seamlessly.
+     * Wire-level alias of {@link SourceState#FLAT}, the single source of truth for the sourceState semantics -
+     * group/routing code should use {@link SourceState} directly; this constant exists for wire-level code in
+     * this layer.
      */
-    public static final byte FLAG_FLAT = 0b0000_0001;
+    public static final byte FLAG_FLAT = SourceState.FLAT;
 
-    /** sourceState for plain positional playback: no flags set - the legacy wire value. */
-    public static final byte STATE_POSITIONAL = 0;
+    /** Wire-level alias of {@link SourceState#POSITIONAL}: no flags set - the legacy wire value. */
+    public static final byte STATE_POSITIONAL = SourceState.POSITIONAL;
 
     private UUID sourceId;
     private byte sourceState;

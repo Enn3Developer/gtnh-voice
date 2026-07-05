@@ -23,6 +23,9 @@ import org.jetbrains.annotations.NotNull;
 
 import com.enn3developer.gtnhvoice.Config;
 import com.enn3developer.gtnhvoice.GtnhVoice;
+import com.enn3developer.gtnhvoice.api.server.PlayerSnapshot;
+import com.enn3developer.gtnhvoice.api.server.group.IGroup;
+import com.enn3developer.gtnhvoice.api.server.group.RoutingContext;
 import com.enn3developer.gtnhvoice.core.api.util.LogThrottle;
 import com.enn3developer.gtnhvoice.core.encryption.aes.AesEncryption;
 import com.enn3developer.gtnhvoice.core.proto.packets.Packet;
@@ -41,8 +44,6 @@ import com.enn3developer.gtnhvoice.network.VoiceProtocol;
 import com.enn3developer.gtnhvoice.network.VoiceRosterSnapshotPacket;
 import com.enn3developer.gtnhvoice.network.VoiceRosterUpdatePacket;
 import com.enn3developer.gtnhvoice.server.group.GroupManager;
-import com.enn3developer.gtnhvoice.server.group.IGroup;
-import com.enn3developer.gtnhvoice.server.group.RoutingContext;
 
 import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
@@ -97,7 +98,9 @@ public final class VoiceServerManager implements UdpPacketListener {
 
     /**
      * The server's group manager - the single external access point for group assignment (used by
-     * {@link VoiceGroupCommand}; deliberately the only manager internals exposed).
+     * {@link VoiceGroupCommand}; deliberately the only manager internals exposed). Addons reach it as
+     * {@link com.enn3developer.gtnhvoice.api.server.group.IGroupManager} via
+     * {@link com.enn3developer.gtnhvoice.api.server.GtnhVoiceApi#groupManager()} and never import this class.
      */
     public GroupManager getGroupManager() {
         return groupManager;

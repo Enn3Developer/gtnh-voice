@@ -8,20 +8,23 @@ import java.util.function.BiConsumer;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import com.enn3developer.gtnhvoice.api.server.GtnhVoiceApi;
+import com.enn3developer.gtnhvoice.api.server.group.IGroup;
+import com.enn3developer.gtnhvoice.api.server.group.IGroupManager;
+
 /**
- * Server-authoritative player-to-group assignment. Membership only ever changes through this API - there are no
+ * The {@link IGroupManager} implementation - see the interface for the addon-facing contract (threading,
+ * registry lifecycle, reserved names, HUD sync). Membership only ever changes through this API - there are no
  * packets for it and clients never request membership. Unassigned players fall through to the shared
- * {@link LocalGroup} default.
- * <p>
- * This is also the integration point for other mods: implement {@link IGroup} (respecting its threading
- * contract), {@link #registerGroup} it if {@link #byName} lookup is wanted, and drive membership through
- * {@link #assign}/{@link #groupOf}; the assignment's display name syncs to the member's HUD automatically.
+ * {@link LocalGroup} default. Addons reach this only as {@link IGroupManager} via
+ * {@link GtnhVoiceApi#groupManager()}; the internal lifecycle hooks ({@link #onPlayerRemoved}, {@link #clear})
+ * stay off the interface.
  * <p>
  * {@link #groupOf} is read on the UDP/Netty thread (one lookup per routed audio frame); mutations and cleanup run
  * on the server thread and the stale-session reaper thread. The assignment and registry maps are concurrent, so
  * no further synchronization is needed.
  */
-public final class GroupManager {
+public final class GroupManager implements IGroupManager {
 
     private final IGroup localGroup = new LocalGroup();
     private final IGroup globalGroup = new GlobalGroup();
@@ -42,34 +45,19 @@ public final class GroupManager {
     }
 
     /** The group that routes {@code playerUuid}'s audio - the default {@link LocalGroup} unless assigned. */
+    @Override
     public IGroup groupOf(@NotNull UUID playerUuid) {
         return groupsByPlayer.getOrDefault(playerUuid, localGroup);
     }
 
-    /**
-     * Resolves a group by its {@link IGroup#getName} identity - the built-ins {@code "local"} and
-     * {@code "global"} first, then anything {@link #registerGroup}ed - or {@code null} for anything else.
-     * Handing the returned instance to {@link #assign} is the intended use: the local built-in resolves to the
-     * same instance assign() treats as the default, so assigning it clears the map entry rather than storing a
-     * redundant one.
-     */
+    @Override
     public @Nullable IGroup byName(@NotNull String name) {
         if (name.equals(localGroup.getName())) return localGroup;
         if (name.equals(globalGroup.getName())) return globalGroup;
         return registeredGroups.get(name);
     }
 
-    /**
-     * Registers a third-party {@code group} under its {@link IGroup#getName} identity so {@link #byName}
-     * resolves it. The built-in names and already-registered names are rejected with
-     * {@link IllegalArgumentException} - a name collision fails fast at addon startup instead of silently
-     * shadowing a group.
-     * <p>
-     * Lifecycle contract: registrations do NOT survive a voice server stop - {@link #clear} empties the
-     * registry, because this manager is a singleton that persists across singleplayer world restarts and stale
-     * registrations would collide. Addons must register in {@code FMLServerStartingEvent} (or later, before
-     * use) on every server start.
-     */
+    @Override
     public void registerGroup(@NotNull IGroup group) {
         String name = group.getName();
         if (name.equals(localGroup.getName()) || name.equals(globalGroup.getName())) {
@@ -80,10 +68,7 @@ public final class GroupManager {
         }
     }
 
-    /**
-     * Assigns {@code playerUuid} to {@code group}; {@code null} returns them to the default local group.
-     * Server-side callers only - membership is never client-driven.
-     */
+    @Override
     public void assign(@NotNull UUID playerUuid, @Nullable IGroup group) {
         IGroup effective;
         if (group == null || group == localGroup) {
@@ -117,8 +102,8 @@ public final class GroupManager {
     /**
      * Full reset on voice server shutdown: every group - assigned, registered, or built-in - gets its
      * {@link IGroup#clear} (idempotent per contract, so overlap between those sets is fine), then the
-     * assignment map and the registry are emptied. See {@link #registerGroup} for why registrations must not
-     * outlive the server.
+     * assignment map and the registry are emptied. See {@link IGroupManager#registerGroup} for why registrations
+     * must not outlive the server.
      */
     public void clear() {
         for (IGroup group : groupsByPlayer.values()) {

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Dedicated addon API packages `com.enn3developer.gtnhvoice.api.server` (side-level types) and `com.enn3developer.gtnhvoice.api.server.group` (group routing surface), both FML `@API`, with `GtnhVoiceApi.groupManager()` as the entry point to the new `IGroupManager` interface
+- Group routing API no longer leaks wire packet types: `RoutingContext.getAudio()` returns the new `IAudioFrame`, the positional/flat constants live on the new `SourceState`, and `sendTo` now takes a source state plus coordinates instead of a packet (also covers emitting from a fixed point, e.g. loudspeaker blocks); routing behavior unchanged
 - Group voice chat foundations: per-group audio routing (proximity is the default group) and a per-packet positional/flat playback flag
 - The HUD self row's group label is now synced from the server instead of hardcoded (still shows `[local]` for the default group); voice protocol bumped to v3
 - Global announcement group: broadcasts the speaker to every voice client at full gain, regardless of group, dimension, or distance; switch with the op-only `/voicegroup <local|global>` command

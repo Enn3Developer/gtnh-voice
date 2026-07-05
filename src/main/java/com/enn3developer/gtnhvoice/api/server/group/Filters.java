@@ -1,10 +1,12 @@
-package com.enn3developer.gtnhvoice.server.group;
+package com.enn3developer.gtnhvoice.api.server.group;
 
 import java.util.Collection;
 import java.util.UUID;
 import java.util.function.Predicate;
 
 import org.jetbrains.annotations.NotNull;
+
+import com.enn3developer.gtnhvoice.api.server.IVoiceSession;
 
 /**
  * Context-free recipient predicates for {@link RecipientSelection#filter} - identity-based rules that need no

@@ -1,4 +1,4 @@
-package com.enn3developer.gtnhvoice.server.group;
+package com.enn3developer.gtnhvoice.api.server.group;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -10,6 +10,7 @@ import java.util.function.Predicate;
 
 import org.junit.jupiter.api.Test;
 
+import com.enn3developer.gtnhvoice.api.server.IVoiceSession;
 import com.enn3developer.gtnhvoice.core.encryption.aes.AesEncryption;
 import com.enn3developer.gtnhvoice.network.VoiceProtocol;
 import com.enn3developer.gtnhvoice.server.VoiceServerSession;

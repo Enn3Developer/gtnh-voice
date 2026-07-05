@@ -1,4 +1,4 @@
-package com.enn3developer.gtnhvoice.server.group;
+package com.enn3developer.gtnhvoice.api.server.group;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -18,14 +18,17 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
+import com.enn3developer.gtnhvoice.api.server.PacketSender;
+import com.enn3developer.gtnhvoice.api.server.PlayerSnapshot;
+import com.enn3developer.gtnhvoice.api.server.SourceState;
 import com.enn3developer.gtnhvoice.core.api.encryption.Encryption;
 import com.enn3developer.gtnhvoice.core.encryption.aes.AesEncryption;
 import com.enn3developer.gtnhvoice.core.proto.packets.Packet;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.clientbound.SourceAudioPacket;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.serverbound.PlayerAudioPacket;
 import com.enn3developer.gtnhvoice.network.VoiceProtocol;
-import com.enn3developer.gtnhvoice.server.PlayerSnapshot;
 import com.enn3developer.gtnhvoice.server.VoiceServerSession;
+import com.enn3developer.gtnhvoice.server.group.LocalGroup;
 
 /**
  * Exercises {@link RecipientSelection}'s filters one at a time against a capturing {@link PacketSender} - each
@@ -71,7 +74,7 @@ class RecipientSelectionTest {
 
         context(speaker).getAllSessions()
             .excludeSelf()
-            .send(SourceAudioPacket.STATE_POSITIONAL);
+            .send(SourceState.POSITIONAL);
 
         assertEquals(Collections.singleton(other.getLastAddress()), sentAddresses());
     }
@@ -87,7 +90,7 @@ class RecipientSelectionTest {
             .excludeSelf()
             .excludeNoAddress()
             .filter(session -> passed.add(session.getPlayerUuid()))
-            .send(SourceAudioPacket.STATE_POSITIONAL);
+            .send(SourceState.POSITIONAL);
 
         assertEquals(Collections.singleton(withUdp.getPlayerUuid()), passed);
         assertFalse(passed.contains(noUdp.getPlayerUuid()));
@@ -107,7 +110,7 @@ class RecipientSelectionTest {
         context(speaker).getAllSessions()
             .excludeSelf()
             .sameDimension()
-            .send(SourceAudioPacket.STATE_POSITIONAL);
+            .send(SourceState.POSITIONAL);
 
         assertEquals(Collections.singleton(sameDim.getLastAddress()), sentAddresses());
     }
@@ -121,7 +124,7 @@ class RecipientSelectionTest {
         context(speaker).getAllSessions()
             .excludeSelf()
             .sameDimension()
-            .send(SourceAudioPacket.STATE_POSITIONAL);
+            .send(SourceState.POSITIONAL);
 
         assertTrue(sent.isEmpty());
     }
@@ -139,7 +142,7 @@ class RecipientSelectionTest {
         context(speaker).getAllSessions()
             .excludeSelf()
             .cutoffDistance(48)
-            .send(SourceAudioPacket.STATE_POSITIONAL);
+            .send(SourceState.POSITIONAL);
 
         assertEquals(Collections.singleton(atCutoff.getLastAddress()), sentAddresses());
     }
@@ -156,7 +159,7 @@ class RecipientSelectionTest {
         context(speaker).getAllSessions()
             .excludeSelf()
             .cutoffDistance(48)
-            .send(SourceAudioPacket.STATE_POSITIONAL);
+            .send(SourceState.POSITIONAL);
 
         assertEquals(Collections.singleton(sameDim.getLastAddress()), sentAddresses());
     }
@@ -170,7 +173,7 @@ class RecipientSelectionTest {
         context(speaker).getAllSessions()
             .excludeSelf()
             .cutoffDistance(48)
-            .send(SourceAudioPacket.STATE_POSITIONAL);
+            .send(SourceState.POSITIONAL);
 
         assertTrue(sent.isEmpty());
     }
@@ -186,7 +189,7 @@ class RecipientSelectionTest {
             .filter(
                 session -> session.getPlayerName()
                     .equals("kept"))
-            .send(SourceAudioPacket.STATE_POSITIONAL);
+            .send(SourceState.POSITIONAL);
 
         assertEquals(Collections.singleton(kept.getLastAddress()), sentAddresses());
     }
@@ -202,7 +205,7 @@ class RecipientSelectionTest {
 
         context(speaker).getSessionsForGroup()
             .excludeSelf()
-            .send(SourceAudioPacket.STATE_POSITIONAL);
+            .send(SourceState.POSITIONAL);
 
         assertEquals(Collections.singleton(member.getLastAddress()), sentAddresses());
     }
@@ -229,7 +232,7 @@ class RecipientSelectionTest {
             .build();
         context.getSessionsForGroup()
             .excludeSelf()
-            .send(SourceAudioPacket.STATE_POSITIONAL);
+            .send(SourceState.POSITIONAL);
 
         assertEquals(Collections.singleton(unassigned.getLastAddress()), sentAddresses());
     }
@@ -241,7 +244,7 @@ class RecipientSelectionTest {
 
         context(speaker).getAllSessions()
             .excludeSelf()
-            .send(SourceAudioPacket.FLAG_FLAT);
+            .send(SourceState.FLAT);
 
         assertEquals(1, sent.size());
         SourceAudioPacket forwarded = assertInstanceOf(SourceAudioPacket.class, sent.get(0).packet);
@@ -258,11 +261,11 @@ class RecipientSelectionTest {
 
         context(speaker).getAllSessions()
             .excludeSelf()
-            .send(SourceAudioPacket.FLAG_FLAT);
+            .send(SourceState.FLAT);
 
         assertEquals(1, sent.size());
         SourceAudioPacket forwarded = assertInstanceOf(SourceAudioPacket.class, sent.get(0).packet);
-        assertEquals(SourceAudioPacket.FLAG_FLAT, forwarded.getSourceState());
+        assertEquals(SourceState.FLAT, forwarded.getSourceState());
         assertEquals(speaker.getPlayerUuid(), forwarded.getSourceId());
         assertEquals(7L, forwarded.getSequenceNumber());
         assertEquals(3, forwarded.getX());
@@ -277,9 +280,9 @@ class RecipientSelectionTest {
 
         RecipientSelection selection = context(speaker).getAllSessions()
             .excludeSelf();
-        selection.send(SourceAudioPacket.STATE_POSITIONAL);
+        selection.send(SourceState.POSITIONAL);
 
-        assertThrows(IllegalStateException.class, () -> selection.send(SourceAudioPacket.STATE_POSITIONAL));
+        assertThrows(IllegalStateException.class, () -> selection.send(SourceState.POSITIONAL));
         // The first send still went through exactly once - no duplicate packets reached the wire.
         assertEquals(Collections.singleton(listener.getLastAddress()), sentAddresses());
         assertEquals(1, sent.size());
@@ -292,7 +295,7 @@ class RecipientSelectionTest {
 
         RecipientSelection selection = context(speaker).getAllSessions()
             .excludeSelf();
-        selection.send(SourceAudioPacket.STATE_POSITIONAL);
+        selection.send(SourceState.POSITIONAL);
 
         assertThrows(IllegalStateException.class, selection::excludeSelf);
         assertThrows(IllegalStateException.class, selection::excludeNoAddress);

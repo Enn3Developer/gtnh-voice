@@ -7,9 +7,9 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import com.enn3developer.gtnhvoice.GtnhVoice;
+import com.enn3developer.gtnhvoice.api.server.IVoiceSession;
 import com.enn3developer.gtnhvoice.core.encryption.aes.AesEncryption;
 import com.enn3developer.gtnhvoice.network.VoiceProtocol;
-import com.enn3developer.gtnhvoice.server.group.IVoiceSession;
 
 /**
  * Server-side view of one player's voice session, established over the reliable control channel.

@@ -1,8 +1,11 @@
-package com.enn3developer.gtnhvoice.server.group;
+package com.enn3developer.gtnhvoice.api.server;
 
 import java.util.UUID;
 
 import org.jetbrains.annotations.NotNull;
+
+import com.enn3developer.gtnhvoice.api.server.group.IGroup;
+import com.enn3developer.gtnhvoice.api.server.group.RoutingContext;
 
 /**
  * The read-only session view the routing API exposes: player identity plus whether the session is reachable over

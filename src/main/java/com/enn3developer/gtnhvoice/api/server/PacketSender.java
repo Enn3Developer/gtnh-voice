@@ -1,4 +1,4 @@
-package com.enn3developer.gtnhvoice.server.group;
+package com.enn3developer.gtnhvoice.api.server;
 
 import java.net.InetSocketAddress;
 import java.util.UUID;

@@ -1,4 +1,4 @@
-package com.enn3developer.gtnhvoice.server.group;
+package com.enn3developer.gtnhvoice.api.server.group;
 
 import java.net.InetSocketAddress;
 import java.util.Collections;
@@ -9,9 +9,12 @@ import java.util.function.Predicate;
 
 import org.jetbrains.annotations.NotNull;
 
+import com.enn3developer.gtnhvoice.api.server.IAudioFrame;
+import com.enn3developer.gtnhvoice.api.server.IVoiceSession;
+import com.enn3developer.gtnhvoice.api.server.PacketSender;
+import com.enn3developer.gtnhvoice.api.server.PlayerSnapshot;
+import com.enn3developer.gtnhvoice.api.server.SourceState;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.clientbound.SourceAudioPacket;
-import com.enn3developer.gtnhvoice.core.proto.packets.udp.serverbound.PlayerAudioPacket;
-import com.enn3developer.gtnhvoice.server.PlayerSnapshot;
 import com.enn3developer.gtnhvoice.server.VoiceServerSession;
 
 /**
@@ -33,7 +36,7 @@ public final class RoutingContext {
     private final Map<UUID, VoiceServerSession> sessionsByPlayerUuid;
     private final Map<UUID, IVoiceSession> sessionViewByPlayerUuid;
     private final VoiceServerSession speakerSession;
-    private final PlayerAudioPacket audio;
+    private final IAudioFrame audio;
     private final IGroup group;
     private final Function<UUID, IGroup> membershipResolver;
 
@@ -59,7 +62,7 @@ public final class RoutingContext {
     }
 
     /** The inbound audio frame being routed. */
-    public PlayerAudioPacket getAudio() {
+    public IAudioFrame getAudio() {
         return audio;
     }
 
@@ -136,19 +139,30 @@ public final class RoutingContext {
     }
 
     /**
-     * Sends {@code packet} to {@code recipient} over the UDP transport, wrapped with the recipient's own
-     * secret/encryption/address. The concrete session is resolved from this context's live sessions by the
-     * recipient's player UUID; no-op if the recipient is unknown (a foreign {@link IVoiceSession} implementation,
-     * or a session removed since the context was built) or has no UDP address yet - never throws on the
-     * UDP/Netty thread over a stale recipient.
+     * Builds one outgoing audio packet from this context's frame (sequence, data) and speaker UUID, stamped with
+     * {@code sourceState} (see {@link SourceState}) and the given source coordinates, and sends it to
+     * {@code recipient} over the UDP transport, wrapped with the recipient's own secret/encryption/address. The
+     * coordinates are free: pass the speaker's snapshot position for normal routing, or a fixed point to emit
+     * from somewhere else (loudspeaker blocks, radio towers). The concrete session is resolved from this
+     * context's live sessions by the recipient's player UUID; no-op if the recipient is unknown (a foreign
+     * {@link IVoiceSession} implementation, or a session removed since the context was built) or has no UDP
+     * address yet - never throws on the UDP/Netty thread over a stale recipient.
      */
-    public void sendTo(@NotNull IVoiceSession recipient, @NotNull SourceAudioPacket packet) {
+    public void sendTo(@NotNull IVoiceSession recipient, byte sourceState, double x, double y, double z) {
         VoiceServerSession session = sessionsByPlayerUuid.get(recipient.getPlayerUuid());
         if (session == null) return;
 
         InetSocketAddress address = session.getLastAddress();
         if (address == null) return;
 
+        SourceAudioPacket packet = new SourceAudioPacket(
+            audio.getSequenceNumber(),
+            sourceState,
+            audio.getData(),
+            speakerSession.getPlayerUuid(),
+            x,
+            y,
+            z);
         transport.send(packet, session.getSecret(), session.getEncryption(), address);
     }
 
@@ -163,7 +177,7 @@ public final class RoutingContext {
         private Map<UUID, PlayerSnapshot> positionSnapshot;
         private Map<UUID, VoiceServerSession> sessions;
         private VoiceServerSession speakerSession;
-        private PlayerAudioPacket audio;
+        private IAudioFrame audio;
         private IGroup group;
         private Function<UUID, IGroup> membershipResolver;
 
@@ -194,7 +208,7 @@ public final class RoutingContext {
         }
 
         /** The inbound audio frame being routed. */
-        public Builder audio(@NotNull PlayerAudioPacket audio) {
+        public Builder audio(@NotNull IAudioFrame audio) {
             this.audio = audio;
             return this;
         }
@@ -206,7 +220,7 @@ public final class RoutingContext {
         }
 
         /**
-         * Resolves any player's current group (wired to {@code GroupManager::groupOf} by the server manager);
+         * Resolves any player's current group (wired to {@link IGroupManager#groupOf} by the server manager);
          * must be safe to call from the UDP/Netty thread.
          */
         public Builder membershipResolver(@NotNull Function<UUID, IGroup> membershipResolver) {

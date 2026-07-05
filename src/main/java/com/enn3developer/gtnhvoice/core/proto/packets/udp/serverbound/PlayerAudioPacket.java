@@ -11,12 +11,14 @@ import java.util.UUID;
 
 import org.jetbrains.annotations.NotNull;
 
+import com.enn3developer.gtnhvoice.api.server.IAudioFrame;
 import com.enn3developer.gtnhvoice.core.proto.packets.PacketUtil;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.bothbound.BaseAudioPacket;
 import com.google.common.io.ByteArrayDataInput;
 import com.google.common.io.ByteArrayDataOutput;
 
-public final class PlayerAudioPacket extends BaseAudioPacket<ServerPacketUdpHandler> {
+/** The routing API exposes this packet to groups only as {@link IAudioFrame} - the wire shape stays internal. */
+public final class PlayerAudioPacket extends BaseAudioPacket<ServerPacketUdpHandler> implements IAudioFrame {
 
     private UUID activationId;
     private short distance;

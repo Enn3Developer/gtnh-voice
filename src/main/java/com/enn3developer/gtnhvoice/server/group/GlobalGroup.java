@@ -2,11 +2,13 @@ package com.enn3developer.gtnhvoice.server.group;
 
 import org.jetbrains.annotations.NotNull;
 
-import com.enn3developer.gtnhvoice.core.proto.packets.udp.clientbound.SourceAudioPacket;
+import com.enn3developer.gtnhvoice.api.server.SourceState;
+import com.enn3developer.gtnhvoice.api.server.group.IGroup;
+import com.enn3developer.gtnhvoice.api.server.group.RoutingContext;
 
 /**
  * Server-admin announcement group: broadcasts a speaker to EVERY connected voice client - no dimension check, no
- * distance cutoff, no recipient-snapshot requirement - as flat/full-gain audio ({@link SourceAudioPacket#FLAG_FLAT}).
+ * distance cutoff, no recipient-snapshot requirement - as flat/full-gain audio ({@link SourceState#FLAT}).
  * The first sender of that flag; {@link LocalGroup} always stays positional.
  * <p>
  * Unlike {@link LocalGroup}, a speaker with no position snapshot yet is NOT dropped: flat playback ignores
@@ -33,6 +35,6 @@ public final class GlobalGroup implements IGroup {
         context.getAllSessions()
             .excludeSelf()
             .excludeNoAddress()
-            .send(SourceAudioPacket.FLAG_FLAT);
+            .send(SourceState.FLAT);
     }
 }

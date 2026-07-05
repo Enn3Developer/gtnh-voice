@@ -1,4 +1,4 @@
-package com.enn3developer.gtnhvoice.server.group;
+package com.enn3developer.gtnhvoice.api.server.group;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -14,11 +14,12 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
+import com.enn3developer.gtnhvoice.api.server.PacketSender;
+import com.enn3developer.gtnhvoice.api.server.PlayerSnapshot;
+import com.enn3developer.gtnhvoice.api.server.SourceState;
 import com.enn3developer.gtnhvoice.core.encryption.aes.AesEncryption;
-import com.enn3developer.gtnhvoice.core.proto.packets.udp.clientbound.SourceAudioPacket;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.serverbound.PlayerAudioPacket;
 import com.enn3developer.gtnhvoice.network.VoiceProtocol;
-import com.enn3developer.gtnhvoice.server.PlayerSnapshot;
 import com.enn3developer.gtnhvoice.server.VoiceServerSession;
 
 /**
@@ -64,7 +65,7 @@ class RoutingContextFiltersTest {
         RoutingContext context = context(speaker);
         context.getAllSessions()
             .filter(context.inDimension(7))
-            .send(SourceAudioPacket.STATE_POSITIONAL);
+            .send(SourceState.POSITIONAL);
 
         assertEquals(Collections.singleton(inDim.getLastAddress()), sentAddresses());
     }
@@ -80,7 +81,7 @@ class RoutingContextFiltersTest {
         RoutingContext context = context(speaker);
         context.getAllSessions()
             .filter(context.withinDistanceOf(100, 64, 200, 0, 48))
-            .send(SourceAudioPacket.STATE_POSITIONAL);
+            .send(SourceState.POSITIONAL);
 
         Set<InetSocketAddress> expected = new HashSet<>();
         expected.add(inside.getLastAddress());
@@ -102,7 +103,7 @@ class RoutingContextFiltersTest {
         RoutingContext context = context(speaker);
         context.getAllSessions()
             .filter(context.withinDistanceOf(100, 64, 200, 0, 48))
-            .send(SourceAudioPacket.STATE_POSITIONAL);
+            .send(SourceState.POSITIONAL);
 
         assertEquals(Collections.singleton(inside.getLastAddress()), sentAddresses());
     }

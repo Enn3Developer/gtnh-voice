@@ -8,9 +8,9 @@ import net.minecraft.command.WrongUsageException;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.util.ChatComponentText;
 
+import com.enn3developer.gtnhvoice.api.server.group.IGroup;
 import com.enn3developer.gtnhvoice.server.group.GlobalGroup;
 import com.enn3developer.gtnhvoice.server.group.GroupManager;
-import com.enn3developer.gtnhvoice.server.group.IGroup;
 import com.enn3developer.gtnhvoice.server.group.LocalGroup;
 
 /**

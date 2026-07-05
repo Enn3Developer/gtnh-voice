@@ -1,15 +1,15 @@
-package com.enn3developer.gtnhvoice.server.group;
+package com.enn3developer.gtnhvoice.api.server.group;
 
 import java.util.UUID;
 
 import org.jetbrains.annotations.NotNull;
 
-import com.enn3developer.gtnhvoice.core.proto.packets.udp.clientbound.SourceAudioPacket;
+import com.enn3developer.gtnhvoice.api.server.SourceState;
 
 /**
- * One voice routing group: owns recipient selection AND builds the outgoing {@link SourceAudioPacket} per
- * recipient - that packet's sourceState flags are where positional-vs-flat playback is decided, so each group
- * fully controls both who hears a speaker and how.
+ * One voice routing group: owns recipient selection AND the per-packet {@link SourceState} of every forwarded
+ * frame - where positional-vs-flat playback is decided - so each group fully controls both who hears a speaker
+ * and how.
  * <p>
  * Zero LWJGL/OpenAL usage anywhere in this package - groups run on the server and must load on a dedicated one.
  */
@@ -42,7 +42,7 @@ public interface IGroup {
 
     /**
      * Drops any per-player state held for {@code playerUuid}. Called on logout and from the stale-session
-     * reaper, mirroring how the server manager cleans its own per-player maps. {@link GroupManager} notifies
+     * reaper, mirroring how the server manager cleans its own per-player maps. The group manager notifies
      * every group regardless of the player's current assignment (state may predate a reassignment), so
      * implementations must be cheap, non-blocking map removals that tolerate players they never saw.
      */
