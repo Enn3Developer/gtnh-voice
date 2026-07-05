@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-05
+
 ### Added
 
 - Public client addon API (`com.enn3developer.gtnhvoice.api.client`): OpenAL context/source lifecycle events, audio-thread tick, playback/capture PCM filters, source position queries, `runOnAudioThread` — enough for EFX-style addons (e.g. sound physics)
