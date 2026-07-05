@@ -145,6 +145,23 @@ class RecipientSelectionTest {
     }
 
     @Test
+    void cutoffDistanceDropsOtherDimensionsEvenWithinRange() {
+        VoiceServerSession speaker = addSession("speaker", true);
+        addSnapshot(speaker, 0, 64, 0, 0);
+        VoiceServerSession sameDim = addSession("sameDim", true);
+        addSnapshot(sameDim, 10, 64, 0, 0);
+        VoiceServerSession otherDim = addSession("otherDim", true);
+        addSnapshot(otherDim, 10, 64, 0, 1);
+
+        context(speaker).getAllSessions()
+            .excludeSelf()
+            .cutoffDistance(48)
+            .send(SourceAudioPacket.STATE_POSITIONAL);
+
+        assertEquals(Collections.singleton(sameDim.getLastAddress()), sentAddresses());
+    }
+
+    @Test
     void cutoffDistanceWithoutSpeakerSnapshotExcludesEveryone() {
         VoiceServerSession speaker = addSession("speaker", true);
         VoiceServerSession listener = addSession("listener", true);

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Global announcement group: broadcasts the speaker to every voice client at full gain, regardless of group, dimension, or distance; switch with the op-only `/voicegroup <local|global>` command
 - Group registry for third-party mods: implement `IGroup` and `registerGroup()` it on the `GroupManager` (re-register every server start); built-in names are reserved and `/voicegroup` stays limited to the built-ins
 - Fluent recipient-selection API for group routing: `RoutingContext` now carries the whole routing event and groups chain filters like `getAllSessions().excludeSelf().excludeNoAddress().send(...)`; both built-ins rewritten on it, routing behavior unchanged
+- Reusable filter vocabulary for group routing: `Filters.memberOf`/`Filters.player` for roster and whisper targeting, plus `RoutingContext.inDimension`/`withinDistanceOf` for fixed-point positional rules (radio towers, zones); all plug into `RecipientSelection.filter()`
 
 ### Removed
 

@@ -14,7 +14,8 @@ import com.enn3developer.gtnhvoice.core.proto.packets.udp.clientbound.SourceAudi
  * meaningless without one (the positional filters exclude everyone in that case).
  * <p>
  * Deliberately selects over ALL sessions, not just this group's members: recipients assigned to other groups must
- * keep hearing nearby local speakers.
+ * keep hearing nearby local speakers. No explicit {@code sameDimension()} in the chain -
+ * {@link RecipientSelection#cutoffDistance} is dimension-aware and carries the same-dimension check itself.
  */
 public final class LocalGroup implements IGroup {
 
@@ -37,7 +38,6 @@ public final class LocalGroup implements IGroup {
         context.getAllSessions()
             .excludeSelf()
             .excludeNoAddress()
-            .sameDimension()
             .cutoffDistance(Math.min(Config.distance, Config.maxDistance))
             .send(SourceAudioPacket.STATE_POSITIONAL);
     }

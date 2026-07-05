@@ -4,6 +4,7 @@ import java.net.InetSocketAddress;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
+import java.util.function.Predicate;
 
 import org.jetbrains.annotations.NotNull;
 
@@ -88,6 +89,50 @@ public final class RoutingContext {
     public RecipientSelection getSessionsForGroup() {
         return new RecipientSelection(this)
             .filter(session -> membershipResolver.apply(session.getPlayerUuid()) == group);
+    }
+
+    /**
+     * Predicate keeping recipients whose position snapshot exists and is in {@code dimensionId} - the absolute
+     * (speaker-independent) dimension filter, for {@link RecipientSelection#filter}. Recipients without a
+     * snapshot are dropped. Evaluates against this context's immutable per-tick snapshot, so it is safe on the
+     * UDP/Netty thread.
+     */
+    public Predicate<VoiceServerSession> inDimension(int dimensionId) {
+        return recipientSnapshotFilter(recipientPos -> recipientPos.getDimensionId() == dimensionId);
+    }
+
+    /**
+     * Predicate keeping recipients whose position snapshot exists, is in {@code dimensionId}, and is within
+     * {@code radius} blocks of the fixed point (exactly-at-radius kept, consistent with
+     * {@link RecipientSelection#cutoffDistance}) - the fixed-point variant of the speaker-centric
+     * {@code cutoffDistance()}, for radio towers, loudspeaker blocks, or zones. Recipients without a snapshot
+     * are dropped. Evaluates against this context's immutable per-tick snapshot, so it is safe on the UDP/Netty
+     * thread.
+     */
+    public Predicate<VoiceServerSession> withinDistanceOf(double x, double y, double z, int dimensionId,
+        double radius) {
+        return recipientSnapshotFilter(recipientPos -> {
+            if (recipientPos.getDimensionId() != dimensionId) return false;
+
+            double dx = recipientPos.getX() - x;
+            double dy = recipientPos.getY() - y;
+            double dz = recipientPos.getZ() - z;
+            return Math.sqrt(dx * dx + dy * dy + dz * dz) <= radius;
+        });
+    }
+
+    /**
+     * Lifts a snapshot predicate to a session predicate: resolves the recipient's position snapshot and drops
+     * recipients without one. Shared plumbing for the factories above and {@link RecipientSelection}'s
+     * positional filters - says nothing about the speaker.
+     */
+    Predicate<VoiceServerSession> recipientSnapshotFilter(@NotNull Predicate<PlayerSnapshot> snapshotFilter) {
+        return session -> {
+            PlayerSnapshot recipientPos = positionSnapshot.get(session.getPlayerUuid());
+            if (recipientPos == null) return false;
+
+            return snapshotFilter.test(recipientPos);
+        };
     }
 
     /**

@@ -1,6 +1,5 @@
 package com.enn3developer.gtnhvoice.server.group;
 
-import java.util.Map;
 import java.util.UUID;
 import java.util.function.Predicate;
 
@@ -55,31 +54,26 @@ public final class RecipientSelection {
         PlayerSnapshot speakerPos = speakerSnapshot();
         if (speakerPos == null) return filter(session -> false);
 
-        Map<UUID, PlayerSnapshot> snapshot = context.getPositionSnapshot();
-        return filter(session -> {
-            PlayerSnapshot recipientPos = snapshot.get(session.getPlayerUuid());
-            if (recipientPos == null) return false;
-
-            return recipientPos.getDimensionId() == speakerPos.getDimensionId();
-        });
+        return filter(context.inDimension(speakerPos.getDimensionId()));
     }
 
     /**
-     * Drops recipients without a position snapshot or farther than {@code cutoff} blocks from the speaker
-     * (exactly-at-cutoff is kept). When the speaker has no snapshot, EVERYONE is dropped - positional routing is
-     * meaningless without one.
+     * Drops recipients without a position snapshot, in a different dimension than the speaker, or farther than
+     * {@code cutoff} blocks from the speaker (exactly-at-cutoff is kept). Dimension-aware by definition, like
+     * every distance filter: cross-dimension Euclidean distance selects nothing legitimate. When the speaker has
+     * no snapshot, EVERYONE is dropped - positional routing is meaningless without one.
      */
     public RecipientSelection cutoffDistance(double cutoff) {
         PlayerSnapshot speakerPos = speakerSnapshot();
         if (speakerPos == null) return filter(session -> false);
 
-        Map<UUID, PlayerSnapshot> snapshot = context.getPositionSnapshot();
-        return filter(session -> {
-            PlayerSnapshot recipientPos = snapshot.get(session.getPlayerUuid());
-            if (recipientPos == null) return false;
-
-            return speakerPos.distanceTo(recipientPos) <= cutoff;
-        });
+        return filter(
+            context.withinDistanceOf(
+                speakerPos.getX(),
+                speakerPos.getY(),
+                speakerPos.getZ(),
+                speakerPos.getDimensionId(),
+                cutoff));
     }
 
     /**
