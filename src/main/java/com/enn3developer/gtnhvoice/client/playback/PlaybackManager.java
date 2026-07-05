@@ -1,6 +1,7 @@
 package com.enn3developer.gtnhvoice.client.playback;
 
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
@@ -31,7 +32,9 @@ public class PlaybackManager {
     private final Map<UUID, Boolean> positionalModes = new ConcurrentHashMap<>();
 
     private volatile ListenerSnapshot listenerSnapshot = ListenerSnapshot.ORIGIN;
-    private PlaybackThread playbackThread;
+    // Volatile because the AudioThreadExecutor seam reads it from arbitrary (future addon) threads while the
+    // client thread swaps it in start()/stop() - a stale read would silently reject or misroute commands.
+    private volatile PlaybackThread playbackThread;
 
     public boolean isPlaying() {
         return playbackThread != null && playbackThread.isAlive();
@@ -189,6 +192,21 @@ public class PlaybackManager {
         }
 
         playbackThread.requestRebuild(deviceName, hrtfMode);
+    }
+
+    /**
+     * The {@link AudioThreadExecutor} seam a future public {@code runOnAudioThread} addon API will wrap. Every
+     * returned executor targets whatever {@link PlaybackThread} is current at submission time (surviving
+     * {@link #start}/{@link #stop} cycles) and rejects (returns {@code false}) whenever playback isn't running.
+     */
+    AudioThreadExecutor audioThreadExecutor() {
+        return command -> {
+            // Null is a caller bug and must fail the same way whether or not playback is running - don't let
+            // the thread-null short-circuit below hide it while the game is in the menu.
+            Objects.requireNonNull(command, "command");
+            PlaybackThread thread = playbackThread;
+            return thread != null && thread.enqueueCommand(command);
+        };
     }
 
     Map<UUID, double[]> positionsView() {

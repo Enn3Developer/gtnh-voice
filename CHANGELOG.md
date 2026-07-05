@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The HUD moved to the bottom-left: your own row is now always pinned in the corner with a mic-state dot (green speaking, red muted, gray idle), other rows stack upward with slide/fade animations
+- Playback command queue hardened ahead of a future `runOnAudioThread` addon API: a throwing command is isolated and logged instead of killing playback, and commands submitted while playback isn't running are rejected instead of queued forever
 
 ## [0.5.1] - 2026-07-04
 

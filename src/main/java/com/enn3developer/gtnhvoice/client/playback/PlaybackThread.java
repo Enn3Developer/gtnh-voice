@@ -6,9 +6,11 @@ import java.util.Deque;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.lwjgl.openal.AL;
 import org.lwjgl.openal.AL10;
@@ -23,6 +25,7 @@ import org.lwjgl.system.MemoryUtil;
 
 import com.enn3developer.gtnhvoice.Config;
 import com.enn3developer.gtnhvoice.GtnhVoice;
+import com.enn3developer.gtnhvoice.core.api.util.LogThrottle;
 
 import me.eigenraven.lwjgl3ify.api.Lwjgl3Aware;
 
@@ -53,6 +56,7 @@ public class PlaybackThread extends Thread {
     private static final int BUFFER_POOL_SIZE = 6;
     private static final long POLL_INTERVAL_MILLIS = 5L;
     private static final long LOG_INTERVAL_MILLIS = 500L;
+    private static final long COMMAND_ERROR_LOG_INTERVAL_MILLIS = 1_000L;
     private static final float REFERENCE_DISTANCE = 1.0f;
     private static final float ROLLOFF_FACTOR = 1.0f;
 
@@ -67,6 +71,7 @@ public class PlaybackThread extends Thread {
     private final PlaybackManager manager;
     private final ConcurrentLinkedQueue<Runnable> commands = new ConcurrentLinkedQueue<>();
     private final Map<UUID, SourceChannel> sourceChannels = new HashMap<>();
+    private final AtomicLong lastCommandErrorLogMillis = new AtomicLong();
 
     private volatile boolean running = true;
     private volatile boolean openedSuccessfully = false;
@@ -99,17 +104,43 @@ public class PlaybackThread extends Thread {
     /**
      * Queues an AL call to run on this thread's next loop iteration. Must be used for anything touching
      * {@code AL10}/{@code ALC10} from outside this thread.
+     * <p>
+     * Returns {@code false} - without queuing anything - when this thread is not accepting commands: not yet
+     * started, told to stop, or already dead. Commands never pile up in a queue nothing will drain. A {@code
+     * true} return is acceptance, not a guarantee of execution: {@link #running} can flip false between the
+     * check and the add (a concurrent {@link #shutdown} or a rebuild failing over to disabled output), in which
+     * case the command was accepted but is discarded unrun when the thread exits. Each queued command runs
+     * isolated - see {@link #runCommandIsolated}.
+     * <p>
+     * A null command throws {@link NullPointerException} regardless of lifecycle state - it's a caller bug, not
+     * a rejection, and must not fail one way mid-session and another way after shutdown.
      */
-    void enqueueCommand(Runnable command) {
+    boolean enqueueCommand(Runnable command) {
+        Objects.requireNonNull(command, "command");
+        if (!running || !isAlive()) return false;
+
         commands.add(command);
+        return true;
     }
 
     /**
      * Control-API entry point: rebuilds the output device and/or HRTF mode live. Marshalled onto this thread via
      * the same command queue every other AL lifecycle op uses - see the class javadoc.
+     * <p>
+     * {@link #performRebuild} handles every expected failure itself (fallback device, clean disable); a
+     * Throwable escaping it is an internal bug that leaves the device/context fields desynced from reality, so
+     * rather than letting {@link #runCommandIsolated} swallow it and limp on, this wrapper fails loud: log
+     * unthrottled and disable output via {@link #running}.
      */
     void requestRebuild(String targetDeviceName, Config.HrtfMode targetHrtfMode) {
-        enqueueCommand(() -> performRebuild(targetDeviceName, targetHrtfMode));
+        enqueueCommand(() -> {
+            try {
+                performRebuild(targetDeviceName, targetHrtfMode);
+            } catch (Throwable t) {
+                GtnhVoice.LOG.error("[Playback] Rebuild threw unexpectedly; disabling output", t);
+                running = false;
+            }
+        });
     }
 
     @Override
@@ -117,6 +148,7 @@ public class PlaybackThread extends Thread {
         device = openDevice(currentDeviceName);
         if (device == MemoryUtil.NULL) {
             GtnhVoice.LOG.error("[Playback] Failed to open any playback device (requested or default)");
+            abortStartup();
             return;
         }
 
@@ -124,6 +156,7 @@ public class PlaybackThread extends Thread {
         if (context == MemoryUtil.NULL) {
             closeDevice(device);
             device = MemoryUtil.NULL;
+            abortStartup();
             return;
         }
 
@@ -132,6 +165,7 @@ public class PlaybackThread extends Thread {
             context = MemoryUtil.NULL;
             closeDevice(device);
             device = MemoryUtil.NULL;
+            abortStartup();
             return;
         }
 
@@ -147,10 +181,7 @@ public class PlaybackThread extends Thread {
 
         try {
             while (running) {
-                Runnable command;
-                while ((command = commands.poll()) != null) {
-                    command.run();
-                }
+                drainCommands();
 
                 if (!running) break; // a rebuild command above may have disabled output entirely
 
@@ -178,8 +209,72 @@ public class PlaybackThread extends Thread {
             closeDevice(device);
             device = MemoryUtil.NULL;
             openedSuccessfully = false;
+            // Drop anything that won the enqueueCommand acceptance race against shutdown (see its javadoc) -
+            // nothing will ever drain this queue again.
+            commands.clear();
 
             GtnhVoice.LOG.info("[Playback] Playback stopped and device closed");
+        }
+    }
+
+    /**
+     * Startup failed before the pump loop ever ran, so run()'s try/finally (and its queue clear) is never
+     * reached: stop accepting commands and drop any that were accepted during the open-device window, otherwise
+     * they'd sit forever in a queue nothing drains - exactly what {@link #enqueueCommand}'s contract forbids.
+     */
+    private void abortStartup() {
+        running = false;
+        commands.clear();
+    }
+
+    /**
+     * Runs on this thread only, at the top of every loop iteration: drains and executes every queued command in
+     * submission order, each one isolated via {@link #runCommandIsolated} so a single throwing command can't
+     * unwind the pump loop and kill playback for every source.
+     */
+    private void drainCommands() {
+        Runnable command;
+        while ((command = commands.poll()) != null) {
+            runCommandIsolated(command);
+        }
+    }
+
+    /**
+     * Runs {@code command}, catching any {@link Throwable} it throws - deliberately including errors, since an
+     * addon command whose class is missing lwjgl3ify's {@code @Lwjgl3Aware} dies with {@code
+     * NoClassDefFoundError}, and that must not tear down playback. Failures are logged at error level, throttled
+     * to one per {@value #COMMAND_ERROR_LOG_INTERVAL_MILLIS}ms. After a failure with the context bound, the AL
+     * error state is drained so a half-executed command's dangling error isn't misattributed to this thread's
+     * next internal {@link #checkAlError}.
+     * <p>
+     * Package-private only so the isolation contract is unit-testable without an AL device; every real call
+     * happens on this thread from {@link #drainCommands}.
+     */
+    void runCommandIsolated(Runnable command) {
+        try {
+            command.run();
+        } catch (Throwable t) {
+            if (LogThrottle.shouldLog(lastCommandErrorLogMillis, COMMAND_ERROR_LOG_INTERVAL_MILLIS)) {
+                GtnhVoice.LOG.error("[Playback] Queued command threw on the playback thread", t);
+            }
+            drainAlErrorAfterFailedCommand();
+        }
+    }
+
+    /**
+     * Best-effort {@code alGetError} drain after a failed command. The {@link #context} field says a context
+     * should be bound, but a hostile/broken command may have unbound this thread's AL binding before throwing -
+     * then {@code alGetError} itself throws (LWJGL's no-capabilities {@code IllegalStateException}), and that
+     * must not escape {@link #runCommandIsolated}'s catch block and kill the pump loop this isolation exists to
+     * protect.
+     */
+    private void drainAlErrorAfterFailedCommand() {
+        if (context == MemoryUtil.NULL) return;
+
+        try {
+            AL10.alGetError();
+        } catch (Throwable ignored) {
+            // Nothing to drain if the binding itself is gone; the next internal checkAlError will complain.
         }
     }
 
