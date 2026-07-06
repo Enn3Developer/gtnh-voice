@@ -22,6 +22,7 @@ import java.util.function.LongSupplier;
 public final class AdaptiveJitterBuffer {
 
     private static final long FRAME_DURATION_MILLIS = 20L;
+    private static final int MAX_QUEUE_SIZE = 512;
 
     private final LongSupplier timeSupplier;
     private final long packetDelayMillis;
@@ -49,6 +50,8 @@ public final class AdaptiveJitterBuffer {
     }
 
     public synchronized void offer(long sequenceNumber, byte[] data) {
+        if (queue.size() >= MAX_QUEUE_SIZE) return;
+
         long arrivalTime = timeSupplier.getAsLong();
         long scheduledPlaybackTime = scheduledPlaybackTime(sequenceNumber, arrivalTime);
         queue.offer(new Entry(new Frame(sequenceNumber, data), scheduledPlaybackTime));

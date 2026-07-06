@@ -72,6 +72,7 @@ public final class VoiceServerManager implements UdpPacketListener {
     private static final long SESSION_TIMEOUT_MILLIS = TimeUnit.MINUTES.toMillis(3);
     private static final long REAP_INTERVAL_SECONDS = 30;
     private static final long UNKNOWN_SECRET_LOG_THROTTLE_MILLIS = 5000;
+    private static final long READ_FAILURE_LOG_THROTTLE_MILLIS = 5000;
 
     private final Map<UUID, VoiceServerSession> sessionsBySecret = new ConcurrentHashMap<>();
     private final Map<UUID, VoiceServerSession> sessionsByPlayerUuid = new ConcurrentHashMap<>();
@@ -91,6 +92,7 @@ public final class VoiceServerManager implements UdpPacketListener {
     private ScheduledExecutorService reaper;
     private volatile boolean started;
     private final AtomicLong lastUnknownSecretLogMillis = new AtomicLong();
+    private final AtomicLong lastReadFailureLogMillis = new AtomicLong();
 
     public static VoiceServerManager getInstance() {
         return INSTANCE;
@@ -271,11 +273,13 @@ public final class VoiceServerManager implements UdpPacketListener {
                 routeAudio(session, (PlayerAudioPacket) packet);
             }
         } catch (Exception e) {
-            GtnhVoice.LOG.error(
-                "Failed to read UDP packet from {} (secret {})",
-                sender,
-                VoiceProtocol.abbreviateSecret(session.getSecret()),
-                e);
+            if (LogThrottle.shouldLog(lastReadFailureLogMillis, READ_FAILURE_LOG_THROTTLE_MILLIS)) {
+                GtnhVoice.LOG.error(
+                    "Failed to read UDP packet from {} (secret {})",
+                    sender,
+                    VoiceProtocol.abbreviateSecret(session.getSecret()),
+                    e);
+            }
         }
     }
 

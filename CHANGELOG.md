@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Bound resources against malicious peers (roster snapshot, jitter buffer, error logging)
+
+### Changed
+
+- Lower CPU cost per voice frame (cached AES cipher)
+
 ### Removed
 
 - Internal dead-code purge

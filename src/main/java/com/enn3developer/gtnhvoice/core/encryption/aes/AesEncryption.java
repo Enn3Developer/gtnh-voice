@@ -4,6 +4,7 @@
  */
 package com.enn3developer.gtnhvoice.core.encryption.aes;
 
+import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
 
 import javax.crypto.Cipher;
@@ -19,6 +20,14 @@ public final class AesEncryption implements Encryption {
 
     public static final String CIPHER = "AES/CBC/PKCS5Padding";
 
+    private static final ThreadLocal<Cipher> CIPHER_POOL = ThreadLocal.withInitial(() -> {
+        try {
+            return Cipher.getInstance(CIPHER);
+        } catch (GeneralSecurityException e) {
+            throw new IllegalStateException("Failed to create cipher", e);
+        }
+    });
+
     private @NotNull SecretKeySpec key;
     private final SecureRandom random = new SecureRandom();
 
@@ -32,7 +41,7 @@ public final class AesEncryption implements Encryption {
             IvParameterSpec iv = generateIv();
 
             // initialize cipher
-            Cipher cipher = Cipher.getInstance(CIPHER);
+            Cipher cipher = CIPHER_POOL.get();
             cipher.init(Cipher.ENCRYPT_MODE, key, iv);
 
             // encrypt data
@@ -50,7 +59,7 @@ public final class AesEncryption implements Encryption {
             IvParameterSpec iv = ivFromEncrypted(encrypted);
 
             // initialize cipher
-            Cipher cipher = Cipher.getInstance(CIPHER);
+            Cipher cipher = CIPHER_POOL.get();
             cipher.init(Cipher.DECRYPT_MODE, key, iv);
 
             encrypted = dataFromEncrypted(encrypted);

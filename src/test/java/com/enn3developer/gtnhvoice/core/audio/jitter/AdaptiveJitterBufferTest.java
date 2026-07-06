@@ -96,6 +96,19 @@ class AdaptiveJitterBufferTest {
     }
 
     @Test
+    void floodOfFramesIsCappedAtMaxQueueSize() {
+        // Fixed clock: nothing is ever due, so poll() never drains - every offer either enqueues or is dropped.
+        AdaptiveJitterBuffer buffer = new AdaptiveJitterBuffer(() -> 0L, PACKET_DELAY_FRAMES);
+
+        for (int i = 0; i < 100_000; i++) {
+            buffer.offer(i * 1_000L, payloadFor(i));
+            assertTrue(buffer.size() <= 512, "queue must never exceed the hard cap, was " + buffer.size());
+        }
+
+        assertEquals(512, buffer.size(), "a sustained flood should fill the queue exactly to its hard cap");
+    }
+
+    @Test
     void discardThroughDropsLateFramesAndPeekTracksTheHead() {
         FakeClock clock = new FakeClock();
         AdaptiveJitterBuffer buffer = new AdaptiveJitterBuffer(clock, PACKET_DELAY_FRAMES);

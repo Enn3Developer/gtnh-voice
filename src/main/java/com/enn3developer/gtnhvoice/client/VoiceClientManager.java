@@ -60,6 +60,7 @@ public final class VoiceClientManager {
     private static final long PING_INTERVAL_MILLIS = 5000L;
     private static final long PING_LOG_THROTTLE_MILLIS = 30_000L;
     private static final long UNKNOWN_SECRET_LOG_THROTTLE_MILLIS = 5000L;
+    private static final long READ_FAILURE_LOG_THROTTLE_MILLIS = 5000L;
     private static final int OPUS_MTU_SIZE = 1275; // max Opus frame size per RFC 6716
     private static final long WORKER_JOIN_TIMEOUT_MILLIS = 1000L;
 
@@ -78,6 +79,7 @@ public final class VoiceClientManager {
     private ScheduledExecutorService handshakeExecutor;
     private final AtomicLong lastPingLogMillis = new AtomicLong();
     private final AtomicLong lastUnknownSecretLogMillis = new AtomicLong();
+    private final AtomicLong lastReadFailureLogMillis = new AtomicLong();
 
     private volatile CaptureManager captureManager;
     private volatile ActivationGate activationGate;
@@ -534,7 +536,9 @@ public final class VoiceClientManager {
                 sourceManager.onSourceEnd((SourceEndPacket) packet);
             }
         } catch (Exception e) {
-            GtnhVoice.LOG.error("Failed to read voice UDP packet from {}", sender, e);
+            if (LogThrottle.shouldLog(lastReadFailureLogMillis, READ_FAILURE_LOG_THROTTLE_MILLIS)) {
+                GtnhVoice.LOG.error("Failed to read voice UDP packet from {}", sender, e);
+            }
         }
     }
 

@@ -80,7 +80,7 @@ public class PacketUdpCodec {
 
         ByteArrayDataOutput out = ByteStreams.newDataOutput();
         out.writeInt(MAGIC_NUMBER);
-        out.writeByte(type);
+        out.writeShort(type);
         PacketUtil.writeUUID(out, secret);
         out.writeLong(System.currentTimeMillis());
         PacketUtil.writeBytes(out, encryptedBody);
@@ -101,18 +101,18 @@ public class PacketUdpCodec {
         throws IOException {
         try {
             if (in.readInt() != MAGIC_NUMBER) return Optional.empty(); // bad packet
+
+            Packet<?> packet = PACKETS.byType(in.readUnsignedShort(), direction);
+            if (packet == null) return Optional.empty();
+
+            UUID secret = PacketUtil.readUUID(in);
+            long timestamp = in.readLong();
+            byte[] encryptedBody = PacketUtil.readBytes(in, MAX_ENCRYPTED_BODY_SIZE);
+
+            return Optional.of(new PacketUdp(secret, timestamp, packet, encryptedBody));
         } catch (Exception e) {
             return Optional.empty();
         }
-
-        Packet<?> packet = PACKETS.byType(in.readByte(), direction);
-        if (packet == null) return Optional.empty();
-
-        UUID secret = PacketUtil.readUUID(in);
-        long timestamp = in.readLong();
-        byte[] encryptedBody = PacketUtil.readBytes(in, MAX_ENCRYPTED_BODY_SIZE);
-
-        return Optional.of(new PacketUdp(secret, timestamp, packet, encryptedBody));
     }
 
     private PacketUdpCodec() {}

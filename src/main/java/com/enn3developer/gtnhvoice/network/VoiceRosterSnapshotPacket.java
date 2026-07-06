@@ -16,6 +16,8 @@ import io.netty.buffer.ByteBuf;
  */
 public class VoiceRosterSnapshotPacket implements IMessage {
 
+    private static final int MIN_ENTRY_BYTES = 17;
+
     private byte protocolVersion;
     private Map<UUID, String> roster;
 
@@ -38,6 +40,8 @@ public class VoiceRosterSnapshotPacket implements IMessage {
     public void fromBytes(ByteBuf buf) {
         protocolVersion = buf.readByte();
         int count = buf.readInt();
+        if (count < 0 || count > buf.readableBytes() / MIN_ENTRY_BYTES)
+            throw new IllegalArgumentException("Invalid roster count: " + count);
         Map<UUID, String> map = new LinkedHashMap<>(count);
         for (int i = 0; i < count; i++) {
             UUID uuid = new UUID(buf.readLong(), buf.readLong());
