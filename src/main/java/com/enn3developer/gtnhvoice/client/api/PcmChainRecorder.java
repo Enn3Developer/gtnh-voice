@@ -26,6 +26,9 @@ final class PcmChainRecorder implements IPcmChain {
 
     private static final double NYQUIST = VoiceFormat.SAMPLE_RATE / 2.0;
 
+    private static final double MULAW_MU = 255.0;
+    private static final double MULAW_LOG1P_MU = Math.log1p(MULAW_MU);
+
     private final List<Supplier<FrameStage>> factories = new ArrayList<>();
 
     @Override
@@ -177,14 +180,13 @@ final class PcmChainRecorder implements IPcmChain {
     }
 
     private static double mulawRoundTrip(double x) {
-        double mu = 255.0;
         double sign = Math.signum(x);
         double magnitude = Math.min(1.0, Math.abs(x));
         // Compress to the mu-law domain, quantize to 8 bits (255 steps) - the step that stamps on the telephone
         // grit - then expand straight back.
-        double compressed = sign * Math.log1p(mu * magnitude) / Math.log1p(mu);
+        double compressed = sign * Math.log1p(MULAW_MU * magnitude) / MULAW_LOG1P_MU;
         double quantized = Math.round(compressed * 127.0) / 127.0;
-        double expandMagnitude = (Math.pow(1.0 + mu, Math.abs(quantized)) - 1.0) / mu;
+        double expandMagnitude = (Math.pow(1.0 + MULAW_MU, Math.abs(quantized)) - 1.0) / MULAW_MU;
         return Math.signum(quantized) * expandMagnitude;
     }
 

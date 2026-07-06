@@ -68,6 +68,8 @@ public class PlaybackThread extends Thread {
 
     private volatile boolean running = true;
 
+    private final float[] listenerOrientation = { 0f, 0f, 0f, 0f, 1f, 0f };
+
     public PlaybackThread(PlaybackManager manager, String initialDeviceName, Config.HrtfMode initialHrtfMode) {
         super("gtnhvoice-playback");
         this.manager = manager;
@@ -348,9 +350,10 @@ public class PlaybackThread extends Thread {
     private void applyListenerSnapshot() {
         ListenerSnapshot snapshot = manager.currentListenerSnapshot();
         AL10.alListener3f(AL10.AL_POSITION, (float) snapshot.x(), (float) snapshot.y(), (float) snapshot.z());
-        AL10.alListenerfv(
-            AL10.AL_ORIENTATION,
-            new float[] { snapshot.lookX(), snapshot.lookY(), snapshot.lookZ(), 0f, 1f, 0f });
+        listenerOrientation[0] = snapshot.lookX();
+        listenerOrientation[1] = snapshot.lookY();
+        listenerOrientation[2] = snapshot.lookZ();
+        AL10.alListenerfv(AL10.AL_ORIENTATION, listenerOrientation);
     }
 
     /**

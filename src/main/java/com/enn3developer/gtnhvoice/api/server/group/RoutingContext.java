@@ -114,13 +114,14 @@ public final class RoutingContext {
      * thread.
      */
     public Predicate<IVoiceSession> withinDistanceOf(double x, double y, double z, int dimensionId, double radius) {
+        double radiusSq = radius * radius;
         return recipientSnapshotFilter(recipientPos -> {
             if (recipientPos.getDimensionId() != dimensionId) return false;
 
             double dx = recipientPos.getX() - x;
             double dy = recipientPos.getY() - y;
             double dz = recipientPos.getZ() - z;
-            return Math.sqrt(dx * dx + dy * dy + dz * dz) <= radius;
+            return dx * dx + dy * dy + dz * dz <= radiusSq;
         });
     }
 

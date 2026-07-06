@@ -19,12 +19,10 @@ public final class AudioUtil {
         short[] shorts = new short[floats.length];
 
         for (int i = 0; i < floats.length; i++) {
-            shorts[i] = Float.valueOf(
-                Math.min( // Clamp to prevent overdrive causing clipping
-                          // (https://github.com/remjey/mumble/commit/f16b47c81aceaf0c8704b355d9316bf685cb3704)
-                    Short.MAX_VALUE,
-                    Math.max(Short.MIN_VALUE, floats[i])))
-                .shortValue();
+            // Clamp to prevent overdrive causing clipping
+            // (https://github.com/remjey/mumble/commit/f16b47c81aceaf0c8704b355d9316bf685cb3704)
+            float clamped = Math.max((float) Short.MIN_VALUE, Math.min((float) Short.MAX_VALUE, floats[i]));
+            shorts[i] = (short) clamped;
         }
 
         return shorts;
@@ -40,8 +38,7 @@ public final class AudioUtil {
         float[] ret = new float[input.length];
 
         for (int i = 0; i < input.length; i++) {
-            ret[i] = Short.valueOf(input[i])
-                .floatValue();
+            ret[i] = (float) input[i];
         }
 
         return ret;

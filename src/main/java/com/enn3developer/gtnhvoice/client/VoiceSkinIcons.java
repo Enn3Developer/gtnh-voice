@@ -1,5 +1,7 @@
 package com.enn3developer.gtnhvoice.client;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 
 import net.minecraft.client.Minecraft;
@@ -35,6 +37,10 @@ public final class VoiceSkinIcons {
     // The face/hat regions in the skin texture are always an 8x8 pixel block, regardless of what size the icon
     // is drawn at on screen - this is the *source* region size, not the destination draw size.
     private static final int SKIN_REGION_SIZE = 8;
+
+    // The glGet width/height queries return constants per skin texture, so the derived tileHeight is cached
+    // per ResourceLocation. draw() is only ever called on the render thread, so a plain HashMap is fine.
+    private static final Map<ResourceLocation, Float> TILE_HEIGHT_CACHE = new HashMap<>();
 
     private VoiceSkinIcons() {}
 
@@ -79,9 +85,21 @@ public final class VoiceSkinIcons {
 
         mc.getTextureManager()
             .bindTexture(skin);
-        int texWidth = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_WIDTH);
-        int texHeight = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_HEIGHT);
-        float tileHeight = texWidth > 0 ? SKIN_TEX_WIDTH * texHeight / texWidth : SKIN_TEX_WIDTH / 2.0F;
+        Float cachedTileHeight = TILE_HEIGHT_CACHE.get(skin);
+        float tileHeight;
+        if (cachedTileHeight != null) {
+            tileHeight = cachedTileHeight;
+        } else {
+            int texWidth = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_WIDTH);
+            int texHeight = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_HEIGHT);
+            if (texWidth > 0) {
+                tileHeight = SKIN_TEX_WIDTH * texHeight / texWidth;
+                TILE_HEIGHT_CACHE.put(skin, tileHeight);
+            } else {
+                // No caching for the fallback: retry once the texture actually loads.
+                tileHeight = SKIN_TEX_WIDTH / 2.0F;
+            }
+        }
         GL11.glColor4f(1.0F, 1.0F, 1.0F, alpha);
         GL11.glEnable(GL11.GL_BLEND);
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
