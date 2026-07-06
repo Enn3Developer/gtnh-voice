@@ -312,6 +312,8 @@ public final class VoiceClientManager {
             roster.remove(packet.getPlayerUuid());
             HeadIconCache.getInstance()
                 .evict(packet.getPlayerUuid());
+            VoiceSourceManager mgr = voiceSourceManager;
+            if (mgr != null) mgr.removeSource(packet.getPlayerUuid());
         }
         GtnhVoice.LOG.info(
             "Client voice roster updated ({} {}): {}",
@@ -371,7 +373,7 @@ public final class VoiceClientManager {
                 packet.getFrameSize(),
                 packet.getSampleRate());
 
-            voiceSourceManager = new VoiceSourceManager();
+            voiceSourceManager = new VoiceSourceManager(this::resolveName);
             voiceSourceManager.start();
 
             startPinging(secret, encryption);

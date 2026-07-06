@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- Bound resources against malicious peers (roster snapshot, jitter buffer, error logging)
+- Bound client resources against malicious peers (roster, jitter buffer, voice sources, error logging)
 
 ### Fixed
 

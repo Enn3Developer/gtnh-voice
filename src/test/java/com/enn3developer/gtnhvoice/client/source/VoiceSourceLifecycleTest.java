@@ -2,7 +2,10 @@ package com.enn3developer.gtnhvoice.client.source;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
@@ -83,7 +86,7 @@ class VoiceSourceLifecycleTest {
             return new CountingDecoder();
         };
 
-        VoiceSourceManager mgr = new VoiceSourceManager(new NoOpPlaybackManager(), factory);
+        VoiceSourceManager mgr = new VoiceSourceManager(new NoOpPlaybackManager(), factory, id -> Optional.of("test"));
         mgr.start();
         mgr.stop();
 
@@ -98,6 +101,94 @@ class VoiceSourceLifecycleTest {
         mgr.onSourceAudio(packet, 16);
 
         assertEquals(0, created.get());
+    }
+
+    @Test
+    void audioForNonRosterSourceCreatesNothing() {
+        AtomicInteger created = new AtomicInteger();
+        DecoderFactory factory = (sr, st, fs) -> {
+            created.incrementAndGet();
+            return new CountingDecoder();
+        };
+
+        VoiceSourceManager mgr = new VoiceSourceManager(new NoOpPlaybackManager(), factory, id -> Optional.empty());
+        mgr.start();
+
+        SourceAudioPacket packet = new SourceAudioPacket(
+            0L,
+            SourceAudioPacket.STATE_POSITIONAL,
+            new byte[] { 1, 2, 3, 4 },
+            UUID.randomUUID(),
+            1.0,
+            2.0,
+            3.0);
+        mgr.onSourceAudio(packet, 16);
+
+        assertEquals(0, created.get());
+    }
+
+    @Test
+    void resurrectionAfterRemovalBlockedByRoster() {
+        AtomicInteger created = new AtomicInteger();
+        DecoderFactory factory = (sr, st, fs) -> {
+            created.incrementAndGet();
+            return new CountingDecoder();
+        };
+
+        Set<UUID> present = ConcurrentHashMap.newKeySet();
+        VoiceSourceManager mgr = new VoiceSourceManager(
+            new NoOpPlaybackManager(),
+            factory,
+            id -> present.contains(id) ? Optional.of("x") : Optional.empty());
+
+        UUID id = UUID.randomUUID();
+        present.add(id);
+        mgr.start();
+
+        SourceAudioPacket packet = new SourceAudioPacket(
+            0L,
+            SourceAudioPacket.STATE_POSITIONAL,
+            new byte[] { 1, 2, 3, 4 },
+            id,
+            1.0,
+            2.0,
+            3.0);
+        mgr.onSourceAudio(packet, 16);
+        assertEquals(1, created.get());
+
+        mgr.removeSource(id);
+        present.remove(id);
+
+        mgr.onSourceAudio(packet, 16);
+        assertEquals(1, created.get());
+    }
+
+    @Test
+    void capBoundsConcurrentSources() {
+        AtomicInteger created = new AtomicInteger();
+        DecoderFactory factory = (sr, st, fs) -> {
+            created.incrementAndGet();
+            return new CountingDecoder();
+        };
+
+        VoiceSourceManager mgr = new VoiceSourceManager(new NoOpPlaybackManager(), factory, id -> Optional.of("x"));
+        mgr.start();
+
+        for (int i = 0; i < 65; i++) {
+            UUID id = UUID.randomUUID();
+            SourceAudioPacket packet = new SourceAudioPacket(
+                0L,
+                SourceAudioPacket.STATE_POSITIONAL,
+                new byte[] { 1, 2, 3, 4 },
+                id,
+                1.0,
+                2.0,
+                3.0);
+            mgr.onSourceAudio(packet, 16);
+        }
+
+        assertEquals(64, created.get());
+        mgr.stop();
     }
 
     @Test

@@ -2,18 +2,19 @@ package com.enn3developer.gtnhvoice.client.source;
 
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 
 import org.jetbrains.annotations.NotNull;
 
 import com.enn3developer.gtnhvoice.Config;
 import com.enn3developer.gtnhvoice.GtnhVoice;
-import com.enn3developer.gtnhvoice.client.VoiceClientManager;
 import com.enn3developer.gtnhvoice.client.playback.PlaybackManager;
 import com.enn3developer.gtnhvoice.core.api.audio.codec.CodecException;
 import com.enn3developer.gtnhvoice.core.audio.codec.opus.OpusCodecSupplier;
@@ -33,21 +34,25 @@ public final class VoiceSourceManager {
 
     private static final long INACTIVITY_TIMEOUT_MILLIS = 250L;
     private static final long WATCHDOG_INTERVAL_MILLIS = 100L;
+    private static final int MAX_SOURCES = 64;
 
     private final Map<UUID, VoiceSource> sources = new ConcurrentHashMap<>();
     private final PlaybackManager playbackManager;
     private final DecoderFactory decoderFactory;
+    private final Function<UUID, Optional<String>> rosterLookup;
 
     private ScheduledExecutorService watchdog;
     private volatile boolean running;
 
-    public VoiceSourceManager() {
-        this(new PlaybackManager(), OpusCodecSupplier::createDecoder);
+    public VoiceSourceManager(Function<UUID, Optional<String>> rosterLookup) {
+        this(new PlaybackManager(), OpusCodecSupplier::createDecoder, rosterLookup);
     }
 
-    VoiceSourceManager(PlaybackManager playbackManager, DecoderFactory decoderFactory) {
+    VoiceSourceManager(PlaybackManager playbackManager, DecoderFactory decoderFactory,
+        Function<UUID, Optional<String>> rosterLookup) {
         this.playbackManager = playbackManager;
         this.decoderFactory = decoderFactory;
+        this.rosterLookup = rosterLookup;
     }
 
     public void start() {
@@ -91,8 +96,15 @@ public final class VoiceSourceManager {
     public void onSourceAudio(@NotNull SourceAudioPacket packet, int distance) {
         if (!running) return;
 
-        VoiceSource source = sources.computeIfAbsent(packet.getSourceId(), uuid -> createSource(uuid, distance));
-        if (source == null) return; // creation failed, already logged
+        UUID sourceId = packet.getSourceId();
+        if (!sources.containsKey(sourceId)) {
+            if (!rosterLookup.apply(sourceId)
+                .isPresent()) return; // only create for a roster-present speaker
+            if (sources.size() >= MAX_SOURCES) return; // hard cap against a source flood
+        }
+
+        VoiceSource source = sources.computeIfAbsent(sourceId, uuid -> running ? createSource(uuid, distance) : null);
+        if (source == null) return;
 
         source.handleAudio(
             packet.getSequenceNumber(),
@@ -103,9 +115,13 @@ public final class VoiceSourceManager {
             packet.isPositional());
     }
 
-    public void onSourceEnd(@NotNull SourceEndPacket packet) {
-        VoiceSource source = sources.remove(packet.getSourceId());
+    public void removeSource(UUID sourceId) {
+        VoiceSource source = sources.remove(sourceId);
         if (source != null) source.destroy();
+    }
+
+    public void onSourceEnd(@NotNull SourceEndPacket packet) {
+        removeSource(packet.getSourceId());
     }
 
     /**
@@ -156,8 +172,7 @@ public final class VoiceSourceManager {
         GtnhVoice.LOG.info(
             "[VoiceSource] New source sourceId={} resolved via roster to name={}",
             sourceId,
-            VoiceClientManager.getInstance()
-                .resolveName(sourceId)
+            rosterLookup.apply(sourceId)
                 .orElse("<unknown>"));
 
         return source;
