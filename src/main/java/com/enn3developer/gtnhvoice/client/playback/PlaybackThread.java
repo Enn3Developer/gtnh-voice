@@ -67,7 +67,6 @@ public class PlaybackThread extends Thread {
     final SourceChannelPool channelPool;
 
     private volatile boolean running = true;
-    private volatile boolean openedSuccessfully = false;
 
     public PlaybackThread(PlaybackManager manager, String initialDeviceName, Config.HrtfMode initialHrtfMode) {
         super("gtnhvoice-playback");
@@ -77,10 +76,6 @@ public class PlaybackThread extends Thread {
         this.dispatcher = new LifecycleEventDispatcher(manager, isolatedRunner);
         this.channelPool = new SourceChannelPool(manager, dispatcher);
         setDaemon(true);
-    }
-
-    public boolean didOpenSuccessfully() {
-        return openedSuccessfully;
     }
 
     public void shutdown() {
@@ -183,7 +178,6 @@ public class PlaybackThread extends Thread {
         }
 
         deviceContext.adopt(device, context, deviceContext.currentDeviceName());
-        openedSuccessfully = true;
         dispatcher.fireContextCreated(deviceContext.deviceHandle());
         GtnhVoice.LOG.info(
             "[Playback] Playback started: {}Hz mono16, {} buffer pool per source, device={}, hrtf={}",
@@ -231,7 +225,6 @@ public class PlaybackThread extends Thread {
             deviceContext.teardownContext();
             deviceContext.closeDevice(deviceContext.deviceHandle());
             deviceContext.clear();
-            openedSuccessfully = false;
             // Drop anything that won the enqueueCommand acceptance race against shutdown (see its javadoc) -
             // nothing will ever drain this queue again.
             commands.clear();

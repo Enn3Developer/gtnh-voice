@@ -40,7 +40,6 @@ public class CaptureThread extends Thread {
     private final boolean startMuted;
 
     private volatile boolean running = true;
-    private volatile boolean openedSuccessfully = false;
     private volatile boolean muteRequested;
 
     public CaptureThread(BlockingQueue<short[]> frameQueue, String deviceName, boolean startMuted) {
@@ -50,10 +49,6 @@ public class CaptureThread extends Thread {
         this.startMuted = startMuted;
         this.muteRequested = startMuted;
         setDaemon(true);
-    }
-
-    public boolean didOpenSuccessfully() {
-        return openedSuccessfully;
     }
 
     public void shutdown() {
@@ -96,7 +91,6 @@ public class CaptureThread extends Thread {
             }
         }
 
-        openedSuccessfully = true;
         GtnhVoice.LOG.info(
             "[Capture] Capture started: {}Hz mono16, {} samples/frame{}",
             SAMPLE_RATE,

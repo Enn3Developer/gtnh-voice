@@ -31,10 +31,6 @@ public class CaptureManager {
         return captureThread != null && captureThread.isAlive();
     }
 
-    public String getDeviceName() {
-        return deviceName;
-    }
-
     /**
      * Whether the mic is currently self-muted (hard mute: the capture device itself has been stopped via {@code
      * alcCaptureStop}). Safe to poll from any thread, e.g. the HUD renderer.

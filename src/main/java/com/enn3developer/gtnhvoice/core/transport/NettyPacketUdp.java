@@ -11,21 +11,15 @@ import io.netty.channel.socket.DatagramPacket;
 public final class NettyPacketUdp {
 
     private final DatagramPacket datagramPacket;
-    private final byte[] packetData;
     private final PacketUdp packetUdp;
 
-    public NettyPacketUdp(DatagramPacket datagramPacket, byte[] packetData, PacketUdp packetUdp) {
+    public NettyPacketUdp(DatagramPacket datagramPacket, PacketUdp packetUdp) {
         this.datagramPacket = datagramPacket;
-        this.packetData = packetData;
         this.packetUdp = packetUdp;
     }
 
     public DatagramPacket getDatagramPacket() {
         return datagramPacket;
-    }
-
-    public byte[] getPacketData() {
-        return packetData;
     }
 
     public PacketUdp getPacketUdp() {

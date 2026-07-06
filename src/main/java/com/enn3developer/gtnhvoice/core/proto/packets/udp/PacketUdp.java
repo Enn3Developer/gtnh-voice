@@ -31,23 +31,8 @@ public class PacketUdp {
         this.encryptedBody = encryptedBody;
     }
 
-    public PacketUdp(@NotNull UUID secret, long timestamp, @NotNull Packet<?> packet) {
-        this.secret = secret;
-        this.timestamp = timestamp;
-        this.packet = packet;
-        this.read = true;
-    }
-
     public UUID getSecret() {
         return secret;
-    }
-
-    public long getTimestamp() {
-        return timestamp;
-    }
-
-    public boolean isRead() {
-        return read;
     }
 
     public Packet<?> getPacketUntyped(@NotNull Encryption encryption) throws IOException {

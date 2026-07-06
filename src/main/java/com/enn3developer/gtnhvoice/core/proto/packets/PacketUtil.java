@@ -5,14 +5,8 @@
 package com.enn3developer.gtnhvoice.core.proto.packets;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.UUID;
 
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-
-import com.enn3developer.gtnhvoice.core.proto.serializer.PacketSerializer;
 import com.google.common.io.ByteArrayDataInput;
 import com.google.common.io.ByteArrayDataOutput;
 import com.google.common.io.ByteStreams;
@@ -51,77 +45,6 @@ public class PacketUtil {
         ByteArrayDataOutput out = ByteStreams.newDataOutput();
         writeUUID(out, uuid);
         return out.toByteArray();
-    }
-
-    public static void writeUUIDList(ByteArrayDataOutput out, List<UUID> uuids) {
-        out.writeInt(uuids.size());
-        for (UUID uuid : uuids) {
-            writeUUID(out, uuid);
-        }
-    }
-
-    public static List<UUID> readUUIDList(ByteArrayDataInput in) {
-        int size = in.readInt();
-        List<UUID> uuids = new ArrayList<>(size);
-        for (int i = 0; i < size; i++) uuids.add(readUUID(in));
-        return uuids;
-    }
-
-    public static void writeIntList(ByteArrayDataOutput out, List<Integer> list) {
-        out.writeInt(list.size());
-        list.forEach(out::writeInt);
-    }
-
-    public static List<Integer> readIntList(ByteArrayDataInput in) throws IOException {
-        return readIntList(in, Short.MAX_VALUE);
-    }
-
-    public static List<Integer> readIntList(ByteArrayDataInput in, int maxSize) throws IOException {
-        int size = readSafeInt(in, 0, maxSize);
-        List<Integer> list = new ArrayList<>(size);
-        for (int i = 0; i < size; i++) list.add(in.readInt());
-        return list;
-    }
-
-    public static void writeNullableString(ByteArrayDataOutput out, @Nullable String str) {
-        out.writeBoolean(str != null);
-        if (str != null) out.writeUTF(str);
-    }
-
-    public static @Nullable String readNullableString(ByteArrayDataInput in) {
-        if (in.readBoolean()) return in.readUTF();
-        return null;
-    }
-
-    public static <T> void writeNullable(@NotNull ByteArrayDataOutput buffer, @NotNull PacketSerializer<T> serializer,
-        @Nullable T obj) throws IOException {
-        buffer.writeBoolean(obj != null);
-        if (obj != null) serializer.serialize(obj, buffer);
-    }
-
-    public static <T> @Nullable T readNullable(@NotNull ByteArrayDataInput buffer,
-        @NotNull PacketSerializer<T> serializer) throws IOException {
-        if (buffer.readBoolean()) return serializer.deserialize(buffer);
-        return null;
-    }
-
-    public static <T> void writeList(@NotNull ByteArrayDataOutput buffer, @NotNull PacketSerializer<T> serializer,
-        @NotNull List<T> list) throws IOException {
-        buffer.writeInt(list.size());
-        for (T obj : list) {
-            serializer.serialize(obj, buffer);
-        }
-    }
-
-    public static <T> List<T> readList(@NotNull ByteArrayDataInput buffer, @NotNull PacketSerializer<T> serializer)
-        throws IOException {
-        int size = buffer.readInt();
-        List<T> list = new ArrayList<>(size);
-        for (int i = 0; i < size; i++) {
-            list.add(serializer.deserialize(buffer));
-        }
-
-        return list;
     }
 
     private PacketUtil() {}

@@ -50,14 +50,6 @@ public class PacketUdpCodec {
         PACKETS.register(0x100, PacketDirection.ANY, CustomPacket.class, CustomPacket::new);
     }
 
-    public static byte[] replaceSecret(byte[] data, UUID secret) {
-        ByteArrayDataOutput out = ByteStreams.newDataOutput();
-        PacketUtil.writeUUID(out, secret);
-
-        System.arraycopy(out.toByteArray(), 0, data, 5, 16);
-        return data;
-    }
-
     public static byte[] encode(Packet<?> packet, UUID secret, @NotNull Encryption encryption) {
         int type = PACKETS.getType(packet);
         if (type < 0) return null;

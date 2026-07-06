@@ -35,6 +35,6 @@ public final class NettyPacketUdpDecoder extends MessageToMessageDecoder<Datagra
         Optional<PacketUdp> packetUdp = PacketUdpCodec.decode(ByteStreams.newDataInput(bytes), direction);
         if (!packetUdp.isPresent()) throw new IOException("Invalid packet header");
 
-        out.add(new NettyPacketUdp(packet, bytes, packetUdp.get()));
+        out.add(new NettyPacketUdp(packet, packetUdp.get()));
     }
 }

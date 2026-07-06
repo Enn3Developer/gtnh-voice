@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- Internal dead-code purge
+
 ### Added
 
 - Fluent PCM filter chains for client addons (`chain(...)`/`playbackChain(...)`)

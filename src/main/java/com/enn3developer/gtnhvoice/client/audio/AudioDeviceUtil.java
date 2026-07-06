@@ -39,9 +39,4 @@ public final class AudioDeviceUtil {
     public static String defaultInputDevice() {
         return ALC10.alcGetString(0L, ALC11.ALC_CAPTURE_DEFAULT_DEVICE_SPECIFIER);
     }
-
-    public static String defaultOutputDevice() {
-        String name = ALC10.alcGetString(0L, ALC11.ALC_DEFAULT_ALL_DEVICES_SPECIFIER);
-        return name != null ? name : ALC10.alcGetString(0L, ALC10.ALC_DEFAULT_DEVICE_SPECIFIER);
-    }
 }

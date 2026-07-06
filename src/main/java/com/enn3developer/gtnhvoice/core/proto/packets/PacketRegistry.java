@@ -29,10 +29,6 @@ public class PacketRegistry {
         packetDirectionById.put(packetId, direction);
     }
 
-    public @Nullable Packet<?> byType(int type) {
-        return byType(type, PacketDirection.ANY);
-    }
-
     public @Nullable Packet<?> byType(int type, @NotNull PacketDirection direction) {
         PacketDirection packetDirection = packetDirectionById.get(type);
         if (packetDirection == null || !packetDirection.accepts(direction)) return null;
