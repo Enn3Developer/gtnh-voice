@@ -16,6 +16,7 @@ import com.enn3developer.gtnhvoice.GtnhVoice;
 import com.enn3developer.gtnhvoice.client.VoiceClientManager;
 import com.enn3developer.gtnhvoice.client.playback.PlaybackManager;
 import com.enn3developer.gtnhvoice.core.api.audio.codec.CodecException;
+import com.enn3developer.gtnhvoice.core.audio.codec.opus.OpusCodecSupplier;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.clientbound.SourceAudioPacket;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.clientbound.SourceEndPacket;
 
@@ -34,10 +35,20 @@ public final class VoiceSourceManager {
     private static final long WATCHDOG_INTERVAL_MILLIS = 100L;
 
     private final Map<UUID, VoiceSource> sources = new ConcurrentHashMap<>();
-    private final PlaybackManager playbackManager = new PlaybackManager();
+    private final PlaybackManager playbackManager;
+    private final DecoderFactory decoderFactory;
 
     private ScheduledExecutorService watchdog;
     private volatile boolean running;
+
+    public VoiceSourceManager() {
+        this(new PlaybackManager(), OpusCodecSupplier::createDecoder);
+    }
+
+    VoiceSourceManager(PlaybackManager playbackManager, DecoderFactory decoderFactory) {
+        this.playbackManager = playbackManager;
+        this.decoderFactory = decoderFactory;
+    }
 
     public void start() {
         if (running) return;
@@ -78,6 +89,8 @@ public final class VoiceSourceManager {
     }
 
     public void onSourceAudio(@NotNull SourceAudioPacket packet, int distance) {
+        if (!running) return;
+
         VoiceSource source = sources.computeIfAbsent(packet.getSourceId(), uuid -> createSource(uuid, distance));
         if (source == null) return; // creation failed, already logged
 
@@ -130,7 +143,7 @@ public final class VoiceSourceManager {
     }
 
     private VoiceSource createSource(UUID sourceId, int distance) {
-        VoiceSource source = new VoiceSource(sourceId, playbackManager);
+        VoiceSource source = new VoiceSource(sourceId, playbackManager, decoderFactory);
         try {
             source.create(distance);
         } catch (CodecException e) {
