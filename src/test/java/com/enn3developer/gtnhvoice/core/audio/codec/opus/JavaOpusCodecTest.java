@@ -1,10 +1,14 @@
 package com.enn3developer.gtnhvoice.core.audio.codec.opus;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
+import com.enn3developer.gtnhvoice.core.api.audio.codec.CodecException;
 import com.enn3developer.gtnhvoice.core.api.util.AudioUtil;
 import com.enn3developer.gtnhvoice.core.proto.data.audio.codec.opus.OpusMode;
 
@@ -54,6 +58,22 @@ class JavaOpusCodecTest {
             short[] concealed = decoder.decodePLC();
             assertEquals(FRAME_SIZE, concealed.length, "PLC frame should have the requested sample count");
         }
+    }
+
+    @Test
+    void closeIsIdempotentAndDecodingAfterCloseThrows() throws Exception {
+        JavaOpusDecoder decoder = new JavaOpusDecoder(SAMPLE_RATE, false, FRAME_SIZE);
+        decoder.open();
+
+        decoder.close();
+        assertFalse(decoder.isOpen(), "Decoder should not be open after close");
+
+        assertDoesNotThrow(decoder::close, "Calling close a second time should be a no-op");
+
+        assertThrows(
+            CodecException.class,
+            () -> decoder.decode(new byte[] { 1, 2, 3 }),
+            "Decoding after close should throw CodecException");
     }
 
     private static short[] generateSine(int samples, int sampleRate, double frequencyHz) {

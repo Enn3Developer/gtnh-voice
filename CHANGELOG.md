@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Bound resources against malicious peers (roster snapshot, jitter buffer, error logging)
 
+### Fixed
+
+- Native crash (double-free) when a voice source is torn down
+
 ### Changed
 
 - Lower CPU cost per voice frame (cached AES cipher)

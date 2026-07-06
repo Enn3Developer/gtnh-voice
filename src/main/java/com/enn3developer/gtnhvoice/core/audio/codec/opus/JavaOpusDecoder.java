@@ -15,8 +15,8 @@ public final class JavaOpusDecoder implements BaseOpusDecoder {
     private final int channels;
     private final int frameSize;
 
-    private OpusDecoder decoder;
-    private short[] buffer;
+    private volatile OpusDecoder decoder;
+    private volatile short[] buffer;
 
     public JavaOpusDecoder(int sampleRate, boolean stereo, int frameSize) {
         this.sampleRate = sampleRate;
@@ -69,8 +69,8 @@ public final class JavaOpusDecoder implements BaseOpusDecoder {
     }
 
     @Override
-    public void close() {
-        if (!isOpen()) return;
+    public synchronized void close() {
+        if (decoder == null) return;
 
         this.decoder = null;
         this.buffer = null;

@@ -1,6 +1,7 @@
 package com.enn3developer.gtnhvoice.client.source;
 
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.jetbrains.annotations.NotNull;
 
@@ -50,6 +51,7 @@ final class VoiceSource {
     private final UUID sourceId;
     private final PlaybackManager playbackManager;
     private final AdaptiveJitterBuffer jitterBuffer;
+    private final AtomicBoolean destroyed = new AtomicBoolean();
 
     private AudioDecoder decoder;
     private volatile long lastPacketMillis;
@@ -147,6 +149,7 @@ final class VoiceSource {
     }
 
     void destroy() {
+        if (!destroyed.compareAndSet(false, true)) return;
         running = false;
         if (pollerThread != null) {
             pollerThread.interrupt();

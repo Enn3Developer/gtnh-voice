@@ -21,7 +21,7 @@ public final class NativeOpusDecoder implements BaseOpusDecoder {
     private final int channels;
     private final int frameSize;
 
-    private OpusDecoder decoder;
+    private volatile OpusDecoder decoder;
 
     NativeOpusDecoder(int sampleRate, boolean stereo, int frameSize) {
         this.sampleRate = sampleRate;
@@ -57,11 +57,11 @@ public final class NativeOpusDecoder implements BaseOpusDecoder {
     }
 
     @Override
-    public void close() {
-        if (!isOpen()) return;
-
-        decoder.close();
-        this.decoder = null;
+    public synchronized void close() {
+        OpusDecoder d = decoder;
+        if (d == null) return;
+        decoder = null;
+        d.close();
     }
 
     @Override
