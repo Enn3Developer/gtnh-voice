@@ -162,6 +162,21 @@ public final class ClientApiBackend {
     }
 
     /**
+     * The effective auxiliary-sends requirement right now: the maximum {@link AudioRegistrationBundle#auxiliarySends()}
+     * across every live audio bundle, or {@code 0} when none asked for any (the OpenAL Soft default, no attribute
+     * requested). Recomputed on demand - the bundle list is short and this is only read on registration churn and
+     * at session/context creation - so it always reflects exactly the bundles live at the moment of the call,
+     * which is what lets an {@code IRegistration.close()} drop its contribution for free with no bookkeeping.
+     */
+    int effectiveAuxiliarySends() {
+        int max = 0;
+        for (AudioRegistrationBundle bundle : audioBundles) {
+            max = Math.max(max, bundle.auxiliarySends());
+        }
+        return max;
+    }
+
+    /**
      * Shared {@code register(addonName)} validation: attribution must exist, but it is not a unique key -
      * multiple bundles may share a name, so nothing here checks for duplicates.
      */
@@ -199,6 +214,11 @@ public final class ClientApiBackend {
         @Override
         public void detachPlaybackFilter(Object handle) {
             playback.detachAddonPlaybackFilter(handle);
+        }
+
+        @Override
+        public void updateAuxiliarySends(int effective) {
+            playback.updateAuxiliarySends(effective);
         }
     }
 

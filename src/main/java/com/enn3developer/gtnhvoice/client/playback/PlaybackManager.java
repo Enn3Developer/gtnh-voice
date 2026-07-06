@@ -51,6 +51,11 @@ public class PlaybackManager {
     private final List<PlaybackPcmFilter> pcmFilters = new CopyOnWriteArrayList<>();
     private final AtomicLong lastFilterErrorLogMillis = new AtomicLong();
 
+    // The effective auxiliary-sends requirement to build the context with, pushed by the addon API's session
+    // bridge. Volatile because the playback thread reads it when it creates/rebuilds the context while the
+    // session-transition/addon threads publish it. 0 = OpenAL Soft's default (no attribute requested).
+    private volatile int requestedAuxiliarySends;
+
     private volatile ListenerSnapshot listenerSnapshot = ListenerSnapshot.ORIGIN;
     // Volatile because the AudioThreadExecutor seam reads it from arbitrary (future addon) threads while the
     // client thread swaps it in start()/stop() - a stale read would silently reject or misroute commands.
@@ -280,6 +285,25 @@ public class PlaybackManager {
         }
 
         playbackThread.requestRebuild(deviceName, hrtfMode);
+    }
+
+    /**
+     * API-backing seam (driven by the addon API's session bridge) for the effective auxiliary-sends requirement
+     * across all live addon registrations. Publishes {@code effective} for the next context creation, and - when
+     * a context is already live and was built with fewer sends - asks the playback thread to rebuild it so a
+     * mid-session registrant is provisioned; a same-or-lower value only updates the stored requirement and never
+     * shrinks the live context (the drop applies at the next natural rebuild). Callable from any thread.
+     */
+    public void updateAuxiliarySends(int effective) {
+        requestedAuxiliarySends = effective;
+
+        PlaybackThread thread = playbackThread;
+        if (thread != null) thread.requestAuxiliarySendsRebuildIfNeeded(effective);
+    }
+
+    /** The auxiliary-sends count the playback thread builds its context with - see {@link #updateAuxiliarySends}. */
+    int requestedAuxiliarySends() {
+        return requestedAuxiliarySends;
     }
 
     /**

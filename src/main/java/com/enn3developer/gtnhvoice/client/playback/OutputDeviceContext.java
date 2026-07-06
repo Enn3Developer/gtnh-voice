@@ -9,6 +9,7 @@ import org.lwjgl.openal.ALC;
 import org.lwjgl.openal.ALC10;
 import org.lwjgl.openal.ALCCapabilities;
 import org.lwjgl.openal.ALCapabilities;
+import org.lwjgl.openal.EXTEfx;
 import org.lwjgl.openal.EXTThreadLocalContext;
 import org.lwjgl.openal.SOFTHRTF;
 import org.lwjgl.system.MemoryStack;
@@ -40,6 +41,10 @@ final class OutputDeviceContext {
     private ALCCapabilities alcCaps;
     private String currentDeviceName;
     private Config.HrtfMode appliedHrtfMode;
+    // The effective auxiliary-sends requirement the live context was created FOR (the aggregate request, not
+    // the granted count), 0 when none was requested - what a late registration compares against to decide
+    // whether a rebuild is needed. See createContext.
+    private int contextAuxiliarySends;
 
     OutputDeviceContext(String initialDeviceName, Config.HrtfMode initialHrtfMode) {
         this.currentDeviceName = initialDeviceName;
@@ -57,6 +62,11 @@ final class OutputDeviceContext {
 
     Config.HrtfMode appliedHrtfMode() {
         return appliedHrtfMode;
+    }
+
+    /** The auxiliary-sends requirement the live context was created for - the rebuild-decision baseline. */
+    int contextAuxiliarySends() {
+        return contextAuxiliarySends;
     }
 
     /**
@@ -124,33 +134,43 @@ final class OutputDeviceContext {
     }
 
     /**
-     * Creates a context on {@code dev} with the HRTF attributes for {@code mode}, feature-detecting {@code
-     * ALC_SOFT_HRTF} via {@link #alcCaps} (the LWJGL-computed equivalent of {@code alcIsExtensionPresent}) and
-     * degrading to AUTO (no explicit attribute - openal-soft's own default) if unsupported. Sets {@link
-     * #appliedHrtfMode} to whatever was actually applied. Returns {@code MemoryUtil#NULL} on ALC failure.
+     * Creates a context on {@code dev} with the HRTF attributes for {@code mode} and, when {@code
+     * requestedAuxSends > 0} and the device advertises {@code ALC_EXT_EFX}, the {@code ALC_MAX_AUXILIARY_SENDS}
+     * attribute - both feature-detected via {@link #alcCaps} (the LWJGL-computed equivalent of {@code
+     * alcIsExtensionPresent}). HRTF degrades to AUTO (no explicit attribute - openal-soft's own default) if
+     * unsupported. Sets {@link #appliedHrtfMode} to whatever was actually applied and {@link #contextAuxiliarySends}
+     * to the requested count (regardless of whether EFX granted it, so a repeat request never re-triggers a
+     * rebuild). Returns {@code MemoryUtil#NULL} on ALC failure.
      */
-    long createContext(long dev, Config.HrtfMode mode) {
+    long createContext(long dev, Config.HrtfMode mode, int requestedAuxSends) {
         boolean hrtfSupported = alcCaps.ALC_SOFT_HRTF;
-        Config.HrtfMode applied = mode;
-        long ctx;
+        boolean wantHrtf = mode != Config.HrtfMode.AUTO && hrtfSupported;
+        boolean efxSupported = alcCaps.ALC_EXT_EFX;
+        boolean wantAuxSends = requestedAuxSends > 0 && efxSupported;
 
-        if (mode != Config.HrtfMode.AUTO && hrtfSupported) {
+        Config.HrtfMode applied = mode;
+        if (mode != Config.HrtfMode.AUTO && !hrtfSupported) {
+            GtnhVoice.LOG.warn(
+                "[Playback] ALC_SOFT_HRTF not supported by this driver; requested {} but applying AUTO",
+                mode);
+            applied = Config.HrtfMode.AUTO;
+        }
+
+        long ctx;
+        if (!wantHrtf && !wantAuxSends) {
+            ctx = ALC10.alcCreateContext(dev, (IntBuffer) null);
+        } else {
             try (MemoryStack stack = MemoryStack.stackPush()) {
-                IntBuffer attribs = stack.mallocInt(3);
-                attribs.put(SOFTHRTF.ALC_HRTF_SOFT)
-                    .put(mode == Config.HrtfMode.ON ? ALC10.ALC_TRUE : ALC10.ALC_FALSE)
-                    .put(0)
+                // Up to two key/value attribute pairs plus the terminating 0.
+                IntBuffer attribs = stack.mallocInt(5);
+                if (wantHrtf) attribs.put(SOFTHRTF.ALC_HRTF_SOFT)
+                    .put(mode == Config.HrtfMode.ON ? ALC10.ALC_TRUE : ALC10.ALC_FALSE);
+                if (wantAuxSends) attribs.put(EXTEfx.ALC_MAX_AUXILIARY_SENDS)
+                    .put(requestedAuxSends);
+                attribs.put(0)
                     .flip();
                 ctx = ALC10.alcCreateContext(dev, attribs);
             }
-        } else {
-            if (mode != Config.HrtfMode.AUTO) {
-                GtnhVoice.LOG.warn(
-                    "[Playback] ALC_SOFT_HRTF not supported by this driver; requested {} but applying AUTO",
-                    mode);
-                applied = Config.HrtfMode.AUTO;
-            }
-            ctx = ALC10.alcCreateContext(dev, (IntBuffer) null);
         }
 
         if (ctx == MemoryUtil.NULL || !AlDebug.checkAlcError(dev, "alcCreateContext")) {
@@ -158,8 +178,28 @@ final class OutputDeviceContext {
         }
 
         appliedHrtfMode = applied;
+        contextAuxiliarySends = requestedAuxSends;
         GtnhVoice.LOG.info("[Playback] HRTF requested={} applied={} extensionPresent={}", mode, applied, hrtfSupported);
+        if (requestedAuxSends > 0) GtnhVoice.LOG.info(
+            "[Playback] Auxiliary sends requested={} granted={} extensionPresent={}",
+            requestedAuxSends,
+            queryMaxAuxiliarySends(dev, efxSupported),
+            efxSupported);
         return ctx;
+    }
+
+    /**
+     * The auxiliary sends the ALC implementation actually granted, queried straight off the device (openal-soft
+     * stores the count at context creation, so this is valid before the context is made current). {@code -1}
+     * when EFX is absent - there is no attribute to query and none was requested into the context.
+     */
+    private static int queryMaxAuxiliarySends(long dev, boolean efxSupported) {
+        if (!efxSupported) return -1;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            IntBuffer granted = stack.mallocInt(1);
+            ALC10.alcGetIntegerv(dev, EXTEfx.ALC_MAX_AUXILIARY_SENDS, granted);
+            return granted.get(0);
+        }
     }
 
     /**

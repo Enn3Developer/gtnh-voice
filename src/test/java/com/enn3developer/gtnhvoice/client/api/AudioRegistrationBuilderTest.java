@@ -235,6 +235,96 @@ class AudioRegistrationBuilderTest {
     }
 
     @Test
+    void auxiliarySendsRejectsValuesOutsideOneToEight() {
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> backend.audio()
+                .register("addon")
+                .auxiliarySends(0));
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> backend.audio()
+                .register("addon")
+                .auxiliarySends(9));
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> backend.audio()
+                .register("addon")
+                .auxiliarySends(-1));
+    }
+
+    @Test
+    void auxiliarySendsAloneMakesTheBundleNonEmpty() {
+        IRegistration registration = backend.audio()
+            .register("addon")
+            .auxiliarySends(4)
+            .done();
+
+        AudioRegistrationBundle bundle = onlyBundle();
+        assertNull(bundle.listener());
+        assertTrue(bundle.playbackFilters()
+            .isEmpty());
+        assertEquals(4, bundle.auxiliarySends());
+        registration.unregister();
+    }
+
+    @Test
+    void repeatedAuxiliarySendsKeepsTheLargestNotTheLast() {
+        backend.audio()
+            .register("addon")
+            .auxiliarySends(4)
+            .auxiliarySends(2)
+            .done();
+
+        assertEquals(4, onlyBundle().auxiliarySends());
+    }
+
+    @Test
+    void effectiveAuxiliarySendsIsZeroWhenNoBundleAsksForAny() {
+        backend.audio()
+            .register("addon")
+            .onAudioTick(() -> {})
+            .done();
+
+        assertEquals(0, backend.effectiveAuxiliarySends());
+        assertEquals(0, onlyBundle().auxiliarySends());
+    }
+
+    @Test
+    void effectiveAuxiliarySendsIsTheMaxAcrossLiveBundles() {
+        backend.audio()
+            .register("a")
+            .auxiliarySends(2)
+            .done();
+        backend.audio()
+            .register("b")
+            .lifecycle(new IAudioLifecycleListener() {})
+            .done();
+        backend.audio()
+            .register("c")
+            .auxiliarySends(4)
+            .done();
+
+        assertEquals(4, backend.effectiveAuxiliarySends());
+    }
+
+    @Test
+    void closingTheTopRegistrationDropsItsContributionFromTheAggregate() {
+        backend.audio()
+            .register("a")
+            .auxiliarySends(2)
+            .done();
+        IRegistration top = backend.audio()
+            .register("b")
+            .auxiliarySends(6)
+            .done();
+        assertEquals(6, backend.effectiveAuxiliarySends());
+
+        top.close();
+        assertEquals(2, backend.effectiveAuxiliarySends());
+    }
+
+    @Test
     void closeDelegatesToUnregister() {
         IRegistration registration = backend.audio()
             .register("addon")

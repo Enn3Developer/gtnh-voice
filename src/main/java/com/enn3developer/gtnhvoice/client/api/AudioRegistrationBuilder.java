@@ -24,10 +24,13 @@ import com.enn3developer.gtnhvoice.api.client.ISourceEvent;
  */
 final class AudioRegistrationBuilder implements IAudioRegistrationBuilder {
 
+    private static final int MAX_AUXILIARY_SENDS = 8;
+
     private final ClientApiBackend backend;
     private final String addonName;
     private final List<IAudioLifecycleListener> listenerParts = new ArrayList<>();
     private final List<IPlaybackPcmFilter> playbackFilters = new ArrayList<>();
+    private int auxiliarySends;
     private boolean consumed;
 
     AudioRegistrationBuilder(ClientApiBackend backend, String addonName) {
@@ -122,16 +125,28 @@ final class AudioRegistrationBuilder implements IAudioRegistrationBuilder {
     }
 
     @Override
+    public IAudioRegistrationBuilder auxiliarySends(int sends) {
+        requireNotConsumed();
+        if (sends < 1 || sends > MAX_AUXILIARY_SENDS) throw new IllegalArgumentException(
+            "auxiliarySends for '" + addonName + "' must be in [1, " + MAX_AUXILIARY_SENDS + "], got " + sends);
+        // Repeated calls keep the strongest requirement, not the last one (see the interface contract).
+        auxiliarySends = Math.max(auxiliarySends, sends);
+        return this;
+    }
+
+    @Override
     public IRegistration done() {
         requireNotConsumed();
-        if (listenerParts.isEmpty() && playbackFilters.isEmpty()) throw new IllegalStateException(
-            "empty registration for '" + addonName + "': add a listener, callback or filter before done()");
+        if (listenerParts.isEmpty() && playbackFilters.isEmpty() && auxiliarySends == 0)
+            throw new IllegalStateException(
+                "empty registration for '" + addonName + "': add a listener, callback, filter or auxiliarySends before done()");
         consumed = true;
 
         AudioRegistrationBundle bundle = new AudioRegistrationBundle(
             addonName,
             assembleListener(),
-            Collections.unmodifiableList(new ArrayList<>(playbackFilters)));
+            Collections.unmodifiableList(new ArrayList<>(playbackFilters)),
+            auxiliarySends);
         backend.addAudioBundle(bundle);
         return new Registration(() -> backend.removeAudioBundle(bundle));
     }

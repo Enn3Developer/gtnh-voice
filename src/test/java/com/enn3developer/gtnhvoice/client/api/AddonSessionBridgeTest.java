@@ -43,6 +43,7 @@ class AddonSessionBridgeTest {
         final List<Attachment> filterAttaches = new ArrayList<>();
         final List<Object> detachedListeners = new ArrayList<>();
         final List<Object> detachedFilters = new ArrayList<>();
+        final List<Integer> auxiliarySendsUpdates = new ArrayList<>();
 
         @Override
         public Object attachListener(String addonName, IAudioLifecycleListener listener) {
@@ -66,6 +67,16 @@ class AddonSessionBridgeTest {
         @Override
         public void detachPlaybackFilter(Object handle) {
             detachedFilters.add(handle);
+        }
+
+        @Override
+        public void updateAuxiliarySends(int effective) {
+            auxiliarySendsUpdates.add(effective);
+        }
+
+        Integer lastAuxiliarySends() {
+            return auxiliarySendsUpdates.isEmpty() ? null
+                : auxiliarySendsUpdates.get(auxiliarySendsUpdates.size() - 1);
         }
 
         int totalCalls() {
@@ -222,13 +233,57 @@ class AddonSessionBridgeTest {
     void doubleWireOfOneBundleIsGuarded() {
         // The stored-just-before-sessionStarted race: the bundle arrives both through the backend's view
         // iteration and through the add hook - whichever runs second must no-op.
-        AudioRegistrationBundle bundle = new AudioRegistrationBundle("addon", LISTENER, Collections.emptyList());
+        AudioRegistrationBundle bundle = new AudioRegistrationBundle("addon", LISTENER, Collections.emptyList(), 0);
         bridge.onSessionStarted(playback);
 
         bridge.onAudioBundleAdded(bundle);
         bridge.onAudioBundleAdded(bundle);
 
         assertEquals(1, playback.listenerAttaches.size(), "one stored bundle instance must wire exactly once");
+    }
+
+    @Test
+    void sessionStartedSeedsTheEffectiveAuxiliarySends() {
+        backend.audio()
+            .register("addon")
+            .auxiliarySends(4)
+            .done();
+
+        bridge.onSessionStarted(playback);
+
+        assertEquals(Integer.valueOf(4), playback.lastAuxiliarySends());
+    }
+
+    @Test
+    void midSessionRegistrationPublishesTheRaisedAggregate() {
+        bridge.onSessionStarted(playback);
+        assertEquals(Integer.valueOf(0), playback.lastAuxiliarySends(), "seed with no requirement is zero");
+
+        backend.audio()
+            .register("addon")
+            .lifecycle(LISTENER)
+            .auxiliarySends(4)
+            .done();
+
+        assertEquals(Integer.valueOf(4), playback.lastAuxiliarySends());
+    }
+
+    @Test
+    void unregistrationPublishesTheDroppedAggregate() {
+        bridge.onSessionStarted(playback);
+        backend.audio()
+            .register("keep")
+            .auxiliarySends(2)
+            .done();
+        IRegistration top = backend.audio()
+            .register("drop")
+            .auxiliarySends(6)
+            .done();
+        assertEquals(Integer.valueOf(6), playback.lastAuxiliarySends());
+
+        top.unregister();
+
+        assertEquals(Integer.valueOf(2), playback.lastAuxiliarySends());
     }
 
     @Test

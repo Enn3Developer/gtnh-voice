@@ -120,13 +120,41 @@ public class PlaybackThread extends Thread {
      * unthrottled and disable output via {@link #running}.
      */
     void requestRebuild(String targetDeviceName, Config.HrtfMode targetHrtfMode) {
+        enqueueCommand(() -> guardedRebuild(targetDeviceName, targetHrtfMode));
+    }
+
+    /**
+     * {@link #performRebuild} under the loud-failure guard both rebuild entry points share: {@link
+     * #performRebuild} handles every expected failure itself, so a Throwable escaping it is an internal bug that
+     * leaves device/context state desynced from reality - rather than let {@link #runCommandIsolated} swallow it
+     * and limp on, log unthrottled and disable output. Runs on this thread only.
+     */
+    private void guardedRebuild(String targetDeviceName, Config.HrtfMode targetHrtfMode) {
+        try {
+            performRebuild(targetDeviceName, targetHrtfMode);
+        } catch (Throwable t) {
+            GtnhVoice.LOG.error("[Playback] Rebuild threw unexpectedly; disabling output", t);
+            running = false;
+        }
+    }
+
+    /**
+     * Marshalled onto this thread by {@link PlaybackManager#updateAuxiliarySends}: rebuilds the live context so
+     * it carries at least {@code effective} auxiliary sends, but ONLY when the current context was built with
+     * fewer - a same-or-lower requirement is a no-op (the reduced case never shrinks a live context; it waits
+     * for the next natural rebuild). Reuses the device/context recreate path with the current device and applied
+     * HRTF, so {@code createContext} picks up the raised count published to the manager just before this ran.
+     */
+    void requestAuxiliarySendsRebuildIfNeeded(int effective) {
         enqueueCommand(() -> {
-            try {
-                performRebuild(targetDeviceName, targetHrtfMode);
-            } catch (Throwable t) {
-                GtnhVoice.LOG.error("[Playback] Rebuild threw unexpectedly; disabling output", t);
-                running = false;
-            }
+            if (!deviceContext.hasLiveContext()) return;
+            if (effective <= deviceContext.contextAuxiliarySends()) return;
+
+            GtnhVoice.LOG.info(
+                "[Playback] Auxiliary-sends requirement rose to {} (context built with {}); rebuilding context",
+                effective,
+                deviceContext.contextAuxiliarySends());
+            guardedRebuild(deviceContext.currentDeviceName(), deviceContext.appliedHrtfMode());
         });
     }
 
@@ -139,7 +167,8 @@ public class PlaybackThread extends Thread {
             return;
         }
 
-        long context = deviceContext.createContext(device, deviceContext.appliedHrtfMode());
+        long context = deviceContext
+            .createContext(device, deviceContext.appliedHrtfMode(), manager.requestedAuxiliarySends());
         if (context == MemoryUtil.NULL) {
             deviceContext.closeDevice(device);
             abortStartup();
@@ -280,7 +309,7 @@ public class PlaybackThread extends Thread {
         }
 
         long newContext = newDevice == MemoryUtil.NULL ? MemoryUtil.NULL
-            : deviceContext.createContext(newDevice, targetHrtfMode);
+            : deviceContext.createContext(newDevice, targetHrtfMode, manager.requestedAuxiliarySends());
         boolean bound = newContext != MemoryUtil.NULL && deviceContext.bindContext(newContext);
 
         if (!bound) {
@@ -293,7 +322,7 @@ public class PlaybackThread extends Thread {
 
             newDevice = deviceContext.openDevice(null);
             newContext = newDevice == MemoryUtil.NULL ? MemoryUtil.NULL
-                : deviceContext.createContext(newDevice, Config.HrtfMode.AUTO);
+                : deviceContext.createContext(newDevice, Config.HrtfMode.AUTO, manager.requestedAuxiliarySends());
             bound = newContext != MemoryUtil.NULL && deviceContext.bindContext(newContext);
 
             if (!bound) {

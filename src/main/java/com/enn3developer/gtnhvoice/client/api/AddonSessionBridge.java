@@ -46,6 +46,13 @@ final class AddonSessionBridge {
         Object attachPlaybackFilter(String addonName, IPlaybackPcmFilter filter);
 
         void detachPlaybackFilter(Object handle);
+
+        /**
+         * Publishes the effective auxiliary-sends requirement to the live session, which uses it at the next
+         * context creation and rebuilds a live context that was built with fewer - never one built with more
+         * (see {@code PlaybackManager#updateAuxiliarySends}).
+         */
+        void updateAuxiliarySends(int effective);
     }
 
     /** The durable capture attach seams ({@code VoiceClientManager}'s API-backing methods in production). */
@@ -93,6 +100,11 @@ final class AddonSessionBridge {
      */
     synchronized void onSessionStarted(PlaybackSessionTarget target) {
         liveSession = target;
+        // Seed the requirement BEFORE wiring: the new thread races us to create its context, so publishing first
+        // lets it read the right count at creation (no rebuild), and if it already built with fewer, the rebuild
+        // it triggers is queued ahead of the listener replays below - so addons see one final contextCreated,
+        // never the pre-rebuild one first.
+        target.updateAuxiliarySends(backend.effectiveAuxiliarySends());
         for (AudioRegistrationBundle bundle : backend.audioBundlesView()) {
             wireAudioBundle(bundle);
         }
@@ -116,6 +128,9 @@ final class AddonSessionBridge {
     synchronized void onAudioBundleAdded(AudioRegistrationBundle bundle) {
         if (liveSession == null) return;
         wireAudioBundle(bundle);
+        // A raised requirement rebuilds the live context (the mid-session case the API contract calls out); an
+        // unchanged one is a cheap no-op on the audio thread.
+        liveSession.updateAuxiliarySends(backend.effectiveAuxiliarySends());
     }
 
     /**
@@ -131,6 +146,9 @@ final class AddonSessionBridge {
         for (Object handle : wiring.filterHandles) {
             liveSession.detachPlaybackFilter(handle);
         }
+        // Wiring was non-null, so the bundle was wired to THIS live session (sessionStopping clears the map) -
+        // publish the dropped aggregate. It never shrinks the live context; it just applies at the next rebuild.
+        liveSession.updateAuxiliarySends(backend.effectiveAuxiliarySends());
     }
 
     /**

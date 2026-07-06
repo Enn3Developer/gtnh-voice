@@ -7,10 +7,13 @@ import org.jetbrains.annotations.NotNull;
  * {@link IClientAudioApi#register}. Chain any mix of whole listeners, per-event callbacks and playback filters -
  * every method returns this builder, every method may be called repeatedly and ALL calls accumulate (two
  * {@code onAudioTick} callbacks both fire, in registration order) - then terminate with {@link #done()}, which
- * activates the bundle and returns the {@link IRegistration} handle that removes it as a whole.
+ * activates the bundle and returns the {@link IRegistration} handle that removes it as a whole. The lone
+ * exception to "all calls accumulate" is {@link #auxiliarySends}, a per-bundle scalar that keeps its largest
+ * argument rather than stacking.
  * <p>
  * Nothing is registered until {@link #done()}: an abandoned builder leaks nothing. An empty bundle is a caller
- * bug - {@code done()} without at least one listener, callback or filter throws {@link IllegalStateException}.
+ * bug - {@code done()} without at least one listener, callback, filter or auxiliary-sends request throws
+ * {@link IllegalStateException}.
  * Single use is enforced: any call after {@code done()}, including a second {@code done()}, throws
  * {@link IllegalStateException}.
  * <p>
@@ -46,6 +49,34 @@ public interface IAudioRegistrationBuilder {
      * format and failure contract. Filters across all bundles run in registration order.
      */
     IAudioRegistrationBuilder playbackFilter(@NotNull IPlaybackPcmFilter filter);
+
+    /**
+     * Declares that this bundle needs at least {@code sends} auxiliary sends per voice source - the number of
+     * EFX effect slots (reverb, echo, ...) a single source can feed at once. OpenAL Soft provisions two per
+     * source by default; an addon routing a source through more slots than that (e.g. a multi-slot reverb bus)
+     * must ask for the count it needs here. The host aggregates the maximum across all live registrations and,
+     * when that maximum is non-zero and the device advertises {@code ALC_EXT_EFX}, passes it as
+     * {@code ALC_MAX_AUXILIARY_SENDS} when it creates the OpenAL context. Not calling this method means the
+     * bundle imposes no requirement and the host keeps OpenAL Soft's default. Calling it more than once keeps
+     * the largest value, not the last.
+     * <p>
+     * This is a REQUEST, not a guarantee. The ALC implementation is free to grant fewer sends than asked (the
+     * EFX specification explicitly permits it), and extra sends carry a per-source mixing cost, which is why the
+     * host only widens the count when an addon declares it needs to. Query what was actually granted from
+     * {@link IAudioLifecycleListener#contextCreated} - you run on the audio thread with the device handle in
+     * hand, so {@code alcGetIntegerv(deviceHandle, EXTEfx.ALC_MAX_AUXILIARY_SENDS, ...)} is available - and
+     * degrade gracefully (fold effects onto fewer slots) if you got less than you asked for.
+     * <p>
+     * Requesting more than the context was already built with on a live session triggers a context rebuild
+     * (the same teardown/recreate as a device or HRTF change), so a mid-session registrant is provisioned too;
+     * registering before the session's context exists - the usual FML-init case - is simply picked up at
+     * creation with no rebuild. Dropping a registration never shrinks a live context; the reduced requirement
+     * applies at the next natural rebuild.
+     *
+     * @param sends the minimum auxiliary sends per source this bundle needs, in {@code [1, 8]}
+     * @throws IllegalArgumentException if {@code sends} is outside {@code [1, 8]}
+     */
+    IAudioRegistrationBuilder auxiliarySends(int sends);
 
     /**
      * Terminal: activates the accumulated bundle durably and returns the handle that removes it. The builder is
