@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Fluent PCM filter chains for client addons (`chain(...)`/`playbackChain(...)`)
+- Runtime filter enable/disable on `IRegistration` (`setFilterEnabled`), seedable via `initiallyEnabled(...)`
+
 ## [0.7.1] - 2026-07-06
 
 ### Added

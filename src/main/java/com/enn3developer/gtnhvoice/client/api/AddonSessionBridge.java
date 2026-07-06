@@ -68,10 +68,15 @@ final class AddonSessionBridge {
 
         @Nullable
         final Object listenerHandle;
+        // The mod's own chain-cleanup listener handle, attached separately from the addon listener so a throwing
+        // addon part cannot abort per-source pipeline eviction; null when the bundle has no playback chains.
+        @Nullable
+        final Object cleanupHandle;
         final List<Object> filterHandles;
 
-        BundleWiring(@Nullable Object listenerHandle, List<Object> filterHandles) {
+        BundleWiring(@Nullable Object listenerHandle, @Nullable Object cleanupHandle, List<Object> filterHandles) {
             this.listenerHandle = listenerHandle;
+            this.cleanupHandle = cleanupHandle;
             this.filterHandles = filterHandles;
         }
     }
@@ -143,6 +148,7 @@ final class AddonSessionBridge {
         if (wiring == null) return;
 
         if (wiring.listenerHandle != null) liveSession.detachListener(wiring.listenerHandle);
+        if (wiring.cleanupHandle != null) liveSession.detachListener(wiring.cleanupHandle);
         for (Object handle : wiring.filterHandles) {
             liveSession.detachPlaybackFilter(handle);
         }
@@ -158,7 +164,8 @@ final class AddonSessionBridge {
     synchronized void onCaptureBundleAdded(CaptureRegistrationBundle bundle) {
         List<Object> handles = new ArrayList<>();
         for (ICapturePcmFilter filter : bundle.captureFilters()) {
-            handles.add(captureTarget.attachCaptureFilter(bundle.addonName(), filter));
+            GatedCaptureFilter gated = new GatedCaptureFilter(bundle.gate(), filter);
+            handles.add(captureTarget.attachCaptureFilter(bundle.addonName(), gated));
         }
         captureWiring.put(bundle, handles);
     }
@@ -180,10 +187,18 @@ final class AddonSessionBridge {
 
         Object listenerHandle = bundle.listener() == null ? null
             : liveSession.attachListener(bundle.addonName(), bundle.listener());
+        // Separate attach for the mod's chain cleanup - isolated from the addon listener above, so an addon part
+        // throwing on a source event never severs per-source pipeline eviction.
+        Object cleanupHandle = bundle.chainFilters()
+            .isEmpty() ? null
+                : liveSession.attachListener(
+                    bundle.addonName(),
+                    new ChainPlaybackCleanupListener(bundle.chainFilters()));
         List<Object> filterHandles = new ArrayList<>();
         for (IPlaybackPcmFilter filter : bundle.playbackFilters()) {
-            filterHandles.add(liveSession.attachPlaybackFilter(bundle.addonName(), filter));
+            GatedPlaybackFilter gated = new GatedPlaybackFilter(bundle.gate(), filter);
+            filterHandles.add(liveSession.attachPlaybackFilter(bundle.addonName(), gated));
         }
-        sessionWiring.put(bundle, new BundleWiring(listenerHandle, filterHandles));
+        sessionWiring.put(bundle, new BundleWiring(listenerHandle, cleanupHandle, filterHandles));
     }
 }

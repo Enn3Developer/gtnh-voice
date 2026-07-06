@@ -1,5 +1,7 @@
 package com.enn3developer.gtnhvoice.api.client;
 
+import java.util.function.Consumer;
+
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -49,6 +51,38 @@ public interface IAudioRegistrationBuilder {
      * format and failure contract. Filters across all bundles run in registration order.
      */
     IAudioRegistrationBuilder playbackFilter(@NotNull IPlaybackPcmFilter filter);
+
+    /**
+     * Adds a {@link IPcmChain} recipe as one playback filter - the fluent alternative to hand-writing an
+     * {@link IPlaybackPcmFilter}. The {@code spec} lambda is invoked IMMEDIATELY to record the chain's stages;
+     * the compiled filter then sits at the exact seam {@link #playbackFilter} occupies. The mod instantiates a
+     * fresh stateful pipeline PER VOICE SOURCE off the source lifecycle, so the recipe's biquads and other
+     * stateful stages get independent per-speaker delay lines automatically - satisfying
+     * {@link IPlaybackPcmFilter}'s concurrency contract with no keying-by-{@code sourceId} on your part.
+     * Deliberately NOT an overload of {@code playbackFilter(...)}: an implicitly-typed lambda is ambiguous
+     * between the two, so this carries its own name.
+     * <p>
+     * Like {@link #playbackFilter}, repeated calls ACCUMULATE - two chains both run, in registration order,
+     * interleaved with any raw filters by call order - and a non-empty chain counts as a filter for
+     * {@link #done()}'s empty-bundle check.
+     *
+     * @param spec records the chain's stages onto the supplied {@link IPcmChain}; non-null
+     * @throws NullPointerException     if {@code spec} is null
+     * @throws IllegalArgumentException if {@code spec} records no stages, or if any stage's arguments are invalid
+     *                                  (both surface here, at the call site, not later on the audio path)
+     */
+    IAudioRegistrationBuilder playbackChain(@NotNull Consumer<IPcmChain> spec);
+
+    /**
+     * Sets whether this bundle's filters start enabled - see {@link IRegistration#setFilterEnabled(boolean)} for
+     * what the gate does. Unlike the accumulating listener/filter methods this is a per-bundle SCALAR: repeated
+     * calls do NOT stack, the LAST call wins (like {@link #auxiliarySends}). The gate covers only PCM filters -
+     * lifecycle listeners and the {@code auxiliarySends} request are unaffected. Not calling it leaves the bundle
+     * enabled.
+     *
+     * @param enabled the bundle's initial filter-gate state; default {@code true}
+     */
+    IAudioRegistrationBuilder initiallyEnabled(boolean enabled);
 
     /**
      * Declares that this bundle needs at least {@code sends} auxiliary sends per voice source - the number of

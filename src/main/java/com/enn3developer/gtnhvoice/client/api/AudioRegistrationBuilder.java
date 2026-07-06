@@ -5,12 +5,14 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 import org.jetbrains.annotations.NotNull;
 
 import com.enn3developer.gtnhvoice.api.client.IAudioLifecycleListener;
 import com.enn3developer.gtnhvoice.api.client.IAudioRegistrationBuilder;
 import com.enn3developer.gtnhvoice.api.client.IContextCreated;
+import com.enn3developer.gtnhvoice.api.client.IPcmChain;
 import com.enn3developer.gtnhvoice.api.client.IPlaybackPcmFilter;
 import com.enn3developer.gtnhvoice.api.client.IRegistration;
 import com.enn3developer.gtnhvoice.api.client.ISourceEvent;
@@ -30,7 +32,9 @@ final class AudioRegistrationBuilder implements IAudioRegistrationBuilder {
     private final String addonName;
     private final List<IAudioLifecycleListener> listenerParts = new ArrayList<>();
     private final List<IPlaybackPcmFilter> playbackFilters = new ArrayList<>();
+    private final List<ChainPlaybackFilter> chainFilters = new ArrayList<>();
     private int auxiliarySends;
+    private boolean initiallyEnabled = true;
     private boolean consumed;
 
     AudioRegistrationBuilder(ClientApiBackend backend, String addonName) {
@@ -125,6 +129,30 @@ final class AudioRegistrationBuilder implements IAudioRegistrationBuilder {
     }
 
     @Override
+    public IAudioRegistrationBuilder playbackChain(@NotNull Consumer<IPcmChain> spec) {
+        requireNotConsumed();
+        Objects.requireNonNull(spec, "spec");
+        PcmChainRecorder recorder = new PcmChainRecorder();
+        spec.accept(recorder);
+        // compile() throws IllegalArgumentException on an empty spec - fail fast at the call site.
+        ChainPlaybackFilter chainFilter = new ChainPlaybackFilter(recorder.compile());
+        playbackFilters.add(chainFilter);
+        // The chain's per-source pipeline cleanup is a MOD-owned concern, kept out of the addon's listener parts
+        // on purpose: the bridge wires it off its own isolated ChainPlaybackCleanupListener, so a throwing addon
+        // lifecycle part can never abort the eviction and leak pipelines. Just record the filter here.
+        chainFilters.add(chainFilter);
+        return this;
+    }
+
+    @Override
+    public IAudioRegistrationBuilder initiallyEnabled(boolean enabled) {
+        requireNotConsumed();
+        // Per-bundle scalar, last call wins - not an accumulating listener/filter.
+        initiallyEnabled = enabled;
+        return this;
+    }
+
+    @Override
     public IAudioRegistrationBuilder auxiliarySends(int sends) {
         requireNotConsumed();
         if (sends < 1 || sends > MAX_AUXILIARY_SENDS) throw new IllegalArgumentException(
@@ -139,16 +167,20 @@ final class AudioRegistrationBuilder implements IAudioRegistrationBuilder {
         requireNotConsumed();
         if (listenerParts.isEmpty() && playbackFilters.isEmpty() && auxiliarySends == 0)
             throw new IllegalStateException(
-                "empty registration for '" + addonName + "': add a listener, callback, filter or auxiliarySends before done()");
+                "empty registration for '" + addonName
+                    + "': add a listener, callback, filter or auxiliarySends before done()");
         consumed = true;
 
+        FilterGate gate = new FilterGate(initiallyEnabled);
         AudioRegistrationBundle bundle = new AudioRegistrationBundle(
             addonName,
             assembleListener(),
             Collections.unmodifiableList(new ArrayList<>(playbackFilters)),
-            auxiliarySends);
+            auxiliarySends,
+            Collections.unmodifiableList(new ArrayList<>(chainFilters)),
+            gate);
         backend.addAudioBundle(bundle);
-        return new Registration(() -> backend.removeAudioBundle(bundle));
+        return new Registration(gate, () -> backend.removeAudioBundle(bundle));
     }
 
     private IAudioLifecycleListener assembleListener() {

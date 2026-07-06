@@ -61,6 +61,7 @@ public final class VoiceClientManager {
     private static final long PING_LOG_THROTTLE_MILLIS = 30_000L;
     private static final long UNKNOWN_SECRET_LOG_THROTTLE_MILLIS = 5000L;
     private static final int OPUS_MTU_SIZE = 1275; // max Opus frame size per RFC 6716
+    private static final long WORKER_JOIN_TIMEOUT_MILLIS = 1000L;
 
     // ClientHello travels over the same early-connection FML channel documented in
     // ClientConnectionEventHandler's Hodgepodge dispatcher-race warning: deferring the send by one client tick
@@ -84,6 +85,12 @@ public final class VoiceClientManager {
     private NoiseSuppressionFilter noiseSuppressionFilter;
     private CaptureSendWorker captureSendWorker;
     private volatile VoiceSourceManager voiceSourceManager;
+
+    /**
+     * The addon-API hook that resets durable capture chains at the start of each capture session (wired by
+     * {@code ClientApiBackend.initSessionBridging}); null until then, so pre-bridging sessions simply skip it.
+     */
+    private volatile Runnable captureSessionResetHook;
 
     /**
      * The outgoing-mic PCM filter registry, alive for the singleton's whole lifetime and handed to every
@@ -242,6 +249,17 @@ public final class VoiceClientManager {
                 onSessionStopping.run();
             }
         });
+    }
+
+    /**
+     * API-backing seam registering the addon-API capture-chain reset hook (public only so {@code
+     * ClientApiBackend} outside this package can reach it). Unlike {@link #attachAddonSessionBridge}'s callbacks
+     * this does NOT ride the session-listener registry: the reset must run inside {@link #startCaptureSending}
+     * before the fresh worker starts polling, which is earlier than {@code sessionStarted} fires. Not idempotent
+     * - the single caller ({@code ClientApiBackend.initSessionBridging}) registers it exactly once.
+     */
+    public void attachCaptureSessionResetHook(Runnable hook) {
+        captureSessionResetHook = Objects.requireNonNull(hook, "hook");
     }
 
     public synchronized void onConnectedToServer(@NotNull String host) {
@@ -553,6 +571,12 @@ public final class VoiceClientManager {
         OpusMode[] modes = OpusMode.values();
         OpusMode opusMode = modes[opusModeOrdinal >= 0 && opusModeOrdinal < modes.length ? opusModeOrdinal : 0];
 
+        // Reset any stateful chain-built capture filters before the fresh worker polls its first frame, so IIR
+        // state never leaks across a disconnect/reconnect (durable raw filters are stateless no-ops here). The
+        // old worker was already joined in closeUdp, so this reset strictly happens-after its last frame.
+        Runnable resetHook = captureSessionResetHook;
+        if (resetHook != null) resetHook.run();
+
         try {
             captureEncoder = OpusCodecSupplier.createEncoder(sampleRate, false, opusMode, OPUS_MTU_SIZE);
             noiseSuppressionFilter = NoiseSuppressionFilterSupplier.create(Config.denoiseEnabled)
@@ -588,7 +612,20 @@ public final class VoiceClientManager {
         }
 
         if (captureSendWorker != null) {
+            // Join before proceeding so the old worker is out of pcmFilterChain.apply() before the next session's
+            // reset swaps any chain pipeline - otherwise an old-session frame could step the fresh pipeline, or
+            // two workers step one unsynchronized pipeline concurrently. Bounded so a wedged worker never blocks
+            // the disconnect path.
             captureSendWorker.shutdown();
+            try {
+                captureSendWorker.join(WORKER_JOIN_TIMEOUT_MILLIS);
+            } catch (InterruptedException e) {
+                Thread.currentThread()
+                    .interrupt();
+            }
+            if (captureSendWorker.isAlive())
+                GtnhVoice.LOG.warn("[Voice] Capture-send worker did not stop within {}ms; proceeding with teardown",
+                    WORKER_JOIN_TIMEOUT_MILLIS);
             captureSendWorker = null;
         }
 

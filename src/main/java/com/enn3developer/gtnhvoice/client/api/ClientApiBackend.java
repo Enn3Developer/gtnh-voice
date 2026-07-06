@@ -78,8 +78,27 @@ public final class ClientApiBackend {
         // Publish the bridge before registering the session listener, so a bundle stored in the gap is at
         // worst hooked with no live session (storage-only, correct) rather than not hooked at all.
         bridge = newBridge;
-        VoiceClientManager.getInstance()
-            .attachAddonSessionBridge(() -> bridgeSessionStarted(newBridge), newBridge::onSessionStopping);
+        VoiceClientManager manager = VoiceClientManager.getInstance();
+        manager.attachAddonSessionBridge(() -> bridgeSessionStarted(newBridge), newBridge::onSessionStopping);
+        // Reset every durable capture chain's pipeline at the start of each capture session, before the fresh
+        // worker polls - driven bundle-level from here, not relayed through the capture-filter decorators.
+        manager.attachCaptureSessionResetHook(this::resetCaptureChains);
+    }
+
+    /**
+     * Rebuilds every registered capture chain's pipeline so its IIR state starts clean for a new capture
+     * session, called from {@code VoiceClientManager} on the session-transition path before the new worker's
+     * first frame. Reaches each {@link ChainCaptureFilter} directly through the bundle that owns it - no
+     * {@code onNewCaptureSession} relay tunnelled through the gate/adapter wrappers - so a new decorator can
+     * never silently sever the reset. Raw addon filters are stateless here and hold nothing to reset. Iterates
+     * the CopyOnWrite snapshot, so it is safe against concurrent registration churn.
+     */
+    void resetCaptureChains() {
+        for (CaptureRegistrationBundle bundle : captureBundles) {
+            for (ChainCaptureFilter chainFilter : bundle.chainFilters()) {
+                chainFilter.reset();
+            }
+        }
     }
 
     /**

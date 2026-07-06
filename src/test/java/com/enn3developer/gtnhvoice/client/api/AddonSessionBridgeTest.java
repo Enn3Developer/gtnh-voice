@@ -1,18 +1,22 @@
 package com.enn3developer.gtnhvoice.client.api;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
 import com.enn3developer.gtnhvoice.api.client.IAudioLifecycleListener;
 import com.enn3developer.gtnhvoice.api.client.IPlaybackPcmFilter;
 import com.enn3developer.gtnhvoice.api.client.IRegistration;
+import com.enn3developer.gtnhvoice.api.client.VoiceFormat;
 
 /**
  * Exercises {@link AddonSessionBridge}'s bookkeeping against recording fake targets, driven through the real
@@ -233,7 +237,13 @@ class AddonSessionBridgeTest {
     void doubleWireOfOneBundleIsGuarded() {
         // The stored-just-before-sessionStarted race: the bundle arrives both through the backend's view
         // iteration and through the add hook - whichever runs second must no-op.
-        AudioRegistrationBundle bundle = new AudioRegistrationBundle("addon", LISTENER, Collections.emptyList(), 0);
+        AudioRegistrationBundle bundle = new AudioRegistrationBundle(
+            "addon",
+            LISTENER,
+            Collections.emptyList(),
+            0,
+            Collections.emptyList(),
+            new FilterGate(true));
         bridge.onSessionStarted(playback);
 
         bridge.onAudioBundleAdded(bundle);
@@ -304,5 +314,53 @@ class AddonSessionBridgeTest {
         registration.unregister();
         assertEquals(1, capture.detached.size());
         assertSame(capture.attaches.get(0).handle, capture.detached.get(0));
+    }
+
+    @Test
+    void playbackChainCleanupSurvivesAThrowingAddonListenerPart() {
+        // #1: the chain's per-source cleanup is wired as a SEPARATE listener attach, isolated from the addon's
+        // own parts, so an addon sourceDestroying that throws can never abort pipeline eviction.
+        backend.audio()
+            .register("addon")
+            .onSourceDestroying((id, handle) -> {
+                throw new RuntimeException("boom");
+            })
+            .playbackChain(c -> c.highPass(1500))
+            .done();
+        bridge.onSessionStarted(playback);
+
+        AudioRegistrationBundle bundle = backend.audioBundlesView()
+            .get(0);
+        ChainPlaybackFilter chain = bundle.chainFilters()
+            .get(0);
+
+        UUID src = UUID.randomUUID();
+        short[] fresh = chain.process(UUID.randomUUID(), dcFrame()); // virgin first-frame response
+        chain.process(src, dcFrame()); // src speaks
+        chain.process(src, dcFrame()); // dirty src's pipeline
+
+        // Dispatch sourceDestroying to every attached listener with the per-attach isolation
+        // AddonListenerAdapter provides in production: the addon part throws, the next attach must still fire.
+        int dispatched = 0;
+        for (Attachment attachment : playback.listenerAttaches) {
+            try {
+                ((IAudioLifecycleListener) attachment.attached).sourceDestroying(src, 0);
+            } catch (RuntimeException isolatedPerAttachInProduction) {
+                // AddonListenerAdapter swallows this per listener - the point is the SEPARATE cleanup attach runs.
+            }
+            dispatched++;
+        }
+
+        assertEquals(2, dispatched, "the addon listener and the mod's chain-cleanup listener are separate attaches");
+        assertArrayEquals(
+            fresh,
+            chain.process(src, dcFrame()),
+            "the isolated cleanup listener evicted src despite the addon part throwing");
+    }
+
+    private static short[] dcFrame() {
+        short[] frame = new short[VoiceFormat.FRAME_SAMPLES];
+        Arrays.fill(frame, PcmSamples.toPcm(0.5));
+        return frame;
     }
 }
