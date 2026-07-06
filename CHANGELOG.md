@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Native crash (double-free) when a voice source is torn down
+- Voice sessions no longer linger as ghosts after a player times out
 
 ### Changed
 

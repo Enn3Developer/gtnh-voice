@@ -357,11 +357,15 @@ public final class VoiceServerManager implements UdpPacketListener {
         if (session == null) return;
 
         sessionsBySecret.remove(session.getSecret());
-        groupManager.onPlayerRemoved(playerUuid);
         GtnhVoice.LOG.info("Voice session ended for {} (logout)", session.getPlayerName());
+        endSession(session);
+    }
+
+    private void endSession(VoiceServerSession session) {
+        groupManager.onPlayerRemoved(session.getPlayerUuid());
         broadcastSourceEnd(session);
-        pendingSends
-            .add(() -> broadcastRosterUpdate(VoiceRosterUpdatePacket.MODE_REMOVE, playerUuid, session.getPlayerName()));
+        pendingSends.add(() -> broadcastRosterUpdate(
+            VoiceRosterUpdatePacket.MODE_REMOVE, session.getPlayerUuid(), session.getPlayerName()));
     }
 
     /**
@@ -501,12 +505,12 @@ public final class VoiceServerManager implements UdpPacketListener {
 
             it.remove();
             sessionsByPlayerUuid.remove(session.getPlayerUuid());
-            groupManager.onPlayerRemoved(session.getPlayerUuid());
             GtnhVoice.LOG.info(
                 "Reaped stale voice session for {} (secret {}, no traffic for {}ms)",
                 session.getPlayerName(),
                 VoiceProtocol.abbreviateSecret(session.getSecret()),
                 now - session.getLastSeenMillis());
+            endSession(session);
         }
     }
 }
