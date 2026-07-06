@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-07-06
+
 ### Added
 
 - Client audio addons can request extra EFX auxiliary sends per source via `IAudioRegistrationBuilder.auxiliarySends(int)`; the host provisions the max across live registrations at context creation
