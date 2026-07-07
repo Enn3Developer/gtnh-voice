@@ -31,7 +31,6 @@ import com.enn3developer.gtnhvoice.client.VoiceClientManager;
 import com.enn3developer.gtnhvoice.client.VoiceClientSession;
 import com.enn3developer.gtnhvoice.client.VoiceSkinIcons;
 import com.enn3developer.gtnhvoice.client.source.VoiceSourceManager;
-import com.github.bsideup.jabel.Desugar;
 
 import me.eigenraven.lwjgl3ify.api.Lwjgl3Aware;
 
@@ -254,7 +253,6 @@ public class VoiceHudRenderer {
     /**
      * A row's desired state this frame: identity, label, dot color, and target slot y.
      */
-    @Desugar
     private record TargetRow(UUID uuid, String label, int dotColor, int y) {
 
         TargetRow atY(int y) {

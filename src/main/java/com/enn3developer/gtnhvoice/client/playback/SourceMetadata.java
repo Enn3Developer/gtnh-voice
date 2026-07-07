@@ -1,7 +1,6 @@
 package com.enn3developer.gtnhvoice.client.playback;
 
 import com.enn3developer.gtnhvoice.api.client.ISourceMetadata;
-import com.github.bsideup.jabel.Desugar;
 
 /**
  * Immutable point-in-time snapshot of one voice source's spatial metadata: the speaker's last known absolute
@@ -13,6 +12,5 @@ import com.github.bsideup.jabel.Desugar;
  * {@link PlaybackManager#sourceMetadataFor} can hand instances to addons unwrapped - the record itself stays
  * package-private.
  */
-@Desugar
 record SourceMetadata(double x, double y, double z, boolean positional) implements ISourceMetadata {
 }

@@ -6,7 +6,6 @@ import org.jetbrains.annotations.Nullable;
 
 import com.enn3developer.gtnhvoice.api.client.IAudioLifecycleListener;
 import com.enn3developer.gtnhvoice.api.client.IPlaybackPcmFilter;
-import com.github.bsideup.jabel.Desugar;
 
 /**
  * One durable playback-side registration as stored by {@link ClientApiBackend}: the addon name (attribution
@@ -21,7 +20,6 @@ import com.github.bsideup.jabel.Desugar;
  * the sends folded into {@link ClientApiBackend#effectiveAuxiliarySends()} - without reshaping. The gate is the
  * one {@code IRegistration.setFilterEnabled} flips.
  */
-@Desugar
 record AudioRegistrationBundle(String addonName, @Nullable IAudioLifecycleListener listener,
     List<IPlaybackPcmFilter> playbackFilters, int auxiliarySends, List<ChainPlaybackFilter> chainFilters,
     FilterGate gate) {}
