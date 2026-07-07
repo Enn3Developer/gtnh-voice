@@ -341,10 +341,14 @@ public final class VoiceServerManager implements UdpPacketListener {
             return;
         }
 
-        session.touch(sender);
-
         try {
+            // Decrypt FIRST, then touch(). getPacketUntyped runs AES-GCM decryption, which fails on a
+            // forged body. Re-learning the source address before that check would let an on-path
+            // attacker who sniffed the cleartext sessionId hijack the victim's inbound audio to their
+            // own address with a single garbage packet - so the address is only relearned once the
+            // packet is proven to come from a holder of the session key.
             Packet<?> packet = packetUdp.getPacketUntyped(session.getEncryption());
+            session.touch(sender);
             if (packet instanceof PingPacket) {
                 // Liveness/NAT keepalive only for now - last-seen is already updated by touch() above.
             } else if (packet instanceof PlayerAudioPacket) {

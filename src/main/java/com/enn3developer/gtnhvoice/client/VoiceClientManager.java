@@ -290,6 +290,10 @@ public final class VoiceClientManager {
         closeUdp();
         session = VoiceClientSession.DISCONNECTED;
         pendingHost = null;
+        // Discard the ephemeral handshake keypair so no private key material outlives the session
+        // (forward secrecy) - a fresh one is generated on the next connect.
+        handshakeKeyPair = null;
+        handshakePublicKey = null;
         roster.clear();
         groupDisplayName = DEFAULT_GROUP_DISPLAY_NAME;
         HeadIconCache.getInstance()
