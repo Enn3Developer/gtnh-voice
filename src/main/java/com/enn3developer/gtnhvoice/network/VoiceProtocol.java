@@ -157,8 +157,10 @@ public final class VoiceProtocol {
         return hkdfExpand(prk, HKDF_INFO, AES_KEY_LENGTH_BYTES);
     }
 
-    // --- HKDF-SHA256 (RFC 5869), implemented over Mac "HmacSHA256" because the JDK's native HKDF
-    // API (JEP 510) only exists on Java 24+ and GTNH targets Java 17-23. ---
+    // --- HKDF-SHA256 (RFC 5869), a small self-contained implementation over Mac "HmacSHA256"
+    // (pinned to the RFC 5869 test vector in HandshakeKdfTest). Kept deliberately rather than the
+    // JDK's native HKDF (javax.crypto.KDF, JEP 510) so the derivation is byte-identical regardless
+    // of JDK version. ---
 
     private static byte[] hkdfExtract(byte[] salt, byte[] ikm) {
         try {

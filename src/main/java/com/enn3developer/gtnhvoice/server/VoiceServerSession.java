@@ -28,23 +28,32 @@ public final class VoiceServerSession implements IVoiceSession {
     private final AesEncryption encryption;
     private final byte[] serverPublicKey;
     private final byte[] clientPublicKey;
+    /**
+     * The connection (login) this session belongs to, held only for identity comparison so a stale
+     * logout can't tear down a session a newer connection rebuilt (see
+     * {@code VoiceServerManager#onPlayerLoggedOut}). Opaque - never dereferenced. {@code null} in
+     * tests that don't exercise the lifecycle.
+     */
+    private final Object owner;
 
     private volatile InetSocketAddress lastAddress;
     private volatile long lastSeenMillis;
 
     public VoiceServerSession(@NotNull UUID playerUuid, @NotNull String playerName, @NotNull UUID sessionId,
         @NotNull AesEncryption encryption) {
-        this(playerUuid, playerName, sessionId, encryption, new byte[0], new byte[0]);
+        this(playerUuid, playerName, sessionId, encryption, new byte[0], new byte[0], null);
     }
 
     public VoiceServerSession(@NotNull UUID playerUuid, @NotNull String playerName, @NotNull UUID sessionId,
-        @NotNull AesEncryption encryption, @NotNull byte[] serverPublicKey, @NotNull byte[] clientPublicKey) {
+        @NotNull AesEncryption encryption, @NotNull byte[] serverPublicKey, @NotNull byte[] clientPublicKey,
+        Object owner) {
         this.playerUuid = playerUuid;
         this.playerName = playerName;
         this.sessionId = sessionId;
         this.encryption = encryption;
         this.serverPublicKey = serverPublicKey;
         this.clientPublicKey = clientPublicKey;
+        this.owner = owner;
         this.lastSeenMillis = System.currentTimeMillis();
     }
 
@@ -65,6 +74,11 @@ public final class VoiceServerSession implements IVoiceSession {
 
     public UUID getSessionId() {
         return sessionId;
+    }
+
+    /** The connection this session belongs to, for identity comparison only. May be {@code null}. */
+    public Object getOwner() {
+        return owner;
     }
 
     /**
