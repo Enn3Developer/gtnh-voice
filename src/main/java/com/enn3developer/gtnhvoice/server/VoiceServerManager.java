@@ -1,6 +1,8 @@
 package com.enn3developer.gtnhvoice.server;
 
 import java.net.InetSocketAddress;
+import java.security.KeyPair;
+import java.security.PublicKey;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -71,10 +73,10 @@ public final class VoiceServerManager implements UdpPacketListener {
 
     private static final long SESSION_TIMEOUT_MILLIS = TimeUnit.MINUTES.toMillis(3);
     private static final long REAP_INTERVAL_SECONDS = 30;
-    private static final long UNKNOWN_SECRET_LOG_THROTTLE_MILLIS = 5000;
+    private static final long UNKNOWN_SESSION_LOG_THROTTLE_MILLIS = 5000;
     private static final long READ_FAILURE_LOG_THROTTLE_MILLIS = 5000;
 
-    private final Map<UUID, VoiceServerSession> sessionsBySecret = new ConcurrentHashMap<>();
+    private final Map<UUID, VoiceServerSession> sessionsBySessionId = new ConcurrentHashMap<>();
     private final Map<UUID, VoiceServerSession> sessionsByPlayerUuid = new ConcurrentHashMap<>();
     private final Map<UUID, VoiceServerSession> sessionsByPlayerUuidView = Collections
         .unmodifiableMap(sessionsByPlayerUuid);
@@ -91,7 +93,7 @@ public final class VoiceServerManager implements UdpPacketListener {
     private UdpTransportServer udpServer;
     private ScheduledExecutorService reaper;
     private volatile boolean started;
-    private final AtomicLong lastUnknownSecretLogMillis = new AtomicLong();
+    private final AtomicLong lastUnknownSessionLogMillis = new AtomicLong();
     private final AtomicLong lastReadFailureLogMillis = new AtomicLong();
 
     public static VoiceServerManager getInstance() {
@@ -163,7 +165,7 @@ public final class VoiceServerManager implements UdpPacketListener {
             .bus()
             .unregister(this);
 
-        sessionsBySecret.clear();
+        sessionsBySessionId.clear();
         sessionsByPlayerUuid.clear();
         pendingSends.clear();
         groupManager.clear();
@@ -193,11 +195,30 @@ public final class VoiceServerManager implements UdpPacketListener {
             return;
         }
 
+        byte[] clientPublicKey = packet.getPublicKey();
+        if (clientPublicKey == null || clientPublicKey.length != VoiceProtocol.X25519_PUBLIC_KEY_LENGTH) {
+            // Protocol version matched but the ClientHello had no usable X25519 public key - a broken
+            // or hostile client. Reject cleanly so it stops retrying rather than silently dropping it.
+            pendingSends.add(() -> {
+                NetworkHandler.WRAPPER.sendTo(
+                    new ServerRejectPacket(VoiceProtocol.PROTOCOL_VERSION, VoiceProtocol.REASON_HANDSHAKE_FAILED),
+                    player);
+                player.addChatMessage(
+                    new ChatComponentText(
+                        "[GTNH Voice] Voice handshake failed (bad key exchange). Voice chat is disabled."));
+            });
+            GtnhVoice.LOG.warn(
+                "Rejected voice handshake from {}: missing/invalid X25519 public key in ClientHello",
+                player.getCommandSenderName());
+            return;
+        }
+
         UUID playerUuid = player.getGameProfile()
             .getId();
         boolean isNewSession = !sessionsByPlayerUuid.containsKey(playerUuid);
-        VoiceServerSession session = sessionsByPlayerUuid
-            .computeIfAbsent(playerUuid, id -> createSession(playerUuid, player.getCommandSenderName()));
+        VoiceServerSession session = sessionsByPlayerUuid.computeIfAbsent(
+            playerUuid,
+            id -> createSession(playerUuid, player.getCommandSenderName(), clientPublicKey));
 
         if (isNewSession) {
             // Only the first ClientHello of a session actually creates it (computeIfAbsent) - retried
@@ -214,7 +235,8 @@ public final class VoiceServerManager implements UdpPacketListener {
 
         ServerHelloPacket hello = new ServerHelloPacket(
             VoiceProtocol.PROTOCOL_VERSION,
-            session.getSecret(),
+            session.getSessionId(),
+            session.getServerPublicKey(),
             "",
             Config.udpPort,
             Config.distance,
@@ -226,9 +248,9 @@ public final class VoiceServerManager implements UdpPacketListener {
         pendingSends.add(() -> NetworkHandler.WRAPPER.sendTo(hello, player));
 
         GtnhVoice.LOG.info(
-            "Accepted voice handshake from {}: queued ServerHello secret={} udpPort={} distance={} opusMode={} frameSize={} sampleRate={}",
+            "Accepted voice handshake from {}: queued ServerHello sessionId={} udpPort={} distance={} opusMode={} frameSize={} sampleRate={}",
             player.getCommandSenderName(),
-            VoiceProtocol.abbreviateSecret(session.getSecret()),
+            VoiceProtocol.abbreviateSessionId(session.getSessionId()),
             Config.udpPort,
             Config.distance,
             Config.getOpusMode(),
@@ -236,18 +258,34 @@ public final class VoiceServerManager implements UdpPacketListener {
             Config.sampleRate);
     }
 
-    private VoiceServerSession createSession(UUID playerUuid, String playerName) {
-        UUID secret = UUID.randomUUID();
-        byte[] key = VoiceProtocol.deriveKey(secret);
-        AesEncryption encryption = new AesEncryption(key);
+    /**
+     * Creates a session on the first ClientHello from a player (computeIfAbsent): generates the
+     * server's own ephemeral X25519 keypair, runs ECDH against the client's public key, and derives
+     * the AES-256 UDP key via HKDF from the shared secret. The server's ephemeral public key is
+     * stored on the session so every retried ServerHello for this player carries identical bytes.
+     */
+    private VoiceServerSession createSession(UUID playerUuid, String playerName, byte[] clientPublicKey) {
+        UUID sessionId = UUID.randomUUID();
 
-        VoiceServerSession session = new VoiceServerSession(playerUuid, playerName, secret, encryption);
-        sessionsBySecret.put(secret, session);
+        KeyPair serverKeyPair = VoiceProtocol.generateEphemeralKeyPair();
+        PublicKey clientPublic = VoiceProtocol.decodePublicKey(clientPublicKey);
+        byte[] sharedSecret = VoiceProtocol.computeSharedSecret(serverKeyPair.getPrivate(), clientPublic);
+        byte[] key = VoiceProtocol.deriveKey(sharedSecret);
+        AesEncryption encryption = new AesEncryption(key);
+        byte[] serverPublicKey = VoiceProtocol.encodePublicKey(serverKeyPair.getPublic());
+
+        VoiceServerSession session = new VoiceServerSession(
+            playerUuid,
+            playerName,
+            sessionId,
+            encryption,
+            serverPublicKey);
+        sessionsBySessionId.put(sessionId, session);
 
         GtnhVoice.LOG.info(
-            "Created voice session for {}: secret={} keyFingerprint={}",
+            "Created voice session for {}: sessionId={} keyFingerprint={}",
             playerName,
-            VoiceProtocol.abbreviateSecret(secret),
+            VoiceProtocol.abbreviateSessionId(sessionId),
             VoiceProtocol.fingerprintKey(key));
 
         return session;
@@ -255,10 +293,10 @@ public final class VoiceServerManager implements UdpPacketListener {
 
     @Override
     public void onPacket(@NotNull PacketUdp packetUdp, @NotNull InetSocketAddress sender) {
-        VoiceServerSession session = sessionsBySecret.get(packetUdp.getSecret());
+        VoiceServerSession session = sessionsBySessionId.get(packetUdp.getSessionId());
         if (session == null) {
-            if (LogThrottle.shouldLog(lastUnknownSecretLogMillis, UNKNOWN_SECRET_LOG_THROTTLE_MILLIS)) {
-                GtnhVoice.LOG.warn("Dropped UDP packet with unknown secret from {}", sender);
+            if (LogThrottle.shouldLog(lastUnknownSessionLogMillis, UNKNOWN_SESSION_LOG_THROTTLE_MILLIS)) {
+                GtnhVoice.LOG.warn("Dropped UDP packet with unknown sessionId from {}", sender);
             }
             return;
         }
@@ -277,7 +315,7 @@ public final class VoiceServerManager implements UdpPacketListener {
                 GtnhVoice.LOG.error(
                     "Failed to read UDP packet from {} (secret {})",
                     sender,
-                    VoiceProtocol.abbreviateSecret(session.getSecret()),
+                    VoiceProtocol.abbreviateSessionId(session.getSessionId()),
                     e);
             }
         }
@@ -356,7 +394,7 @@ public final class VoiceServerManager implements UdpPacketListener {
         VoiceServerSession session = sessionsByPlayerUuid.remove(playerUuid);
         if (session == null) return;
 
-        sessionsBySecret.remove(session.getSecret());
+        sessionsBySessionId.remove(session.getSessionId());
         GtnhVoice.LOG.info("Voice session ended for {} (logout)", session.getPlayerName());
         endSession(session);
     }
@@ -482,7 +520,7 @@ public final class VoiceServerManager implements UdpPacketListener {
             InetSocketAddress recipientAddress = recipientSession.getLastAddress();
             if (recipientAddress == null) continue;
 
-            server.send(packet, recipientSession.getSecret(), recipientSession.getEncryption(), recipientAddress);
+            server.send(packet, recipientSession.getSessionId(), recipientSession.getEncryption(), recipientAddress);
             sentTo++;
         }
 
@@ -496,7 +534,7 @@ public final class VoiceServerManager implements UdpPacketListener {
     private void reapStaleSessions() {
         long now = System.currentTimeMillis();
 
-        Iterator<Map.Entry<UUID, VoiceServerSession>> it = sessionsBySecret.entrySet()
+        Iterator<Map.Entry<UUID, VoiceServerSession>> it = sessionsBySessionId.entrySet()
             .iterator();
         while (it.hasNext()) {
             VoiceServerSession session = it.next()
@@ -508,7 +546,7 @@ public final class VoiceServerManager implements UdpPacketListener {
             GtnhVoice.LOG.info(
                 "Reaped stale voice session for {} (secret {}, no traffic for {}ms)",
                 session.getPlayerName(),
-                VoiceProtocol.abbreviateSecret(session.getSecret()),
+                VoiceProtocol.abbreviateSessionId(session.getSessionId()),
                 now - session.getLastSeenMillis());
             endSession(session);
         }

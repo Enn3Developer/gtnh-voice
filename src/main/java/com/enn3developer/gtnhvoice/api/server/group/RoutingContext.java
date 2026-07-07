@@ -164,7 +164,7 @@ public final class RoutingContext {
             x,
             y,
             z);
-        transport.send(packet, session.getSecret(), session.getEncryption(), address);
+        transport.send(packet, session.getSessionId(), session.getEncryption(), address);
     }
 
     /**

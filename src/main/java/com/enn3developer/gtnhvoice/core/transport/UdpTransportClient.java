@@ -75,10 +75,10 @@ public final class UdpTransportClient {
         LOGGER.info("UDP transport client connected to {}:{}", host, port);
     }
 
-    public void send(@NotNull Packet<?> packet, @NotNull UUID secret, @NotNull Encryption encryption) {
+    public void send(@NotNull Packet<?> packet, @NotNull UUID sessionId, @NotNull Encryption encryption) {
         if (channel == null) throw new IllegalStateException("Client is not connected");
 
-        byte[] encoded = PacketUdpCodec.encode(packet, secret, encryption);
+        byte[] encoded = PacketUdpCodec.encode(packet, sessionId, encryption);
         if (encoded == null) return;
 
         ByteBuf buf = Unpooled.wrappedBuffer(encoded);

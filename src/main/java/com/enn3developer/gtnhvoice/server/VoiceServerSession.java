@@ -13,27 +13,36 @@ import com.enn3developer.gtnhvoice.network.VoiceProtocol;
 
 /**
  * Server-side view of one player's voice session, established over the reliable control channel.
- * The player's UUID/name and the secret are identity; the {@link InetSocketAddress} is volatile
+ * The player's UUID/name and the sessionId are identity; the {@link InetSocketAddress} is volatile
  * transport data that gets re-learned from every inbound datagram, not re-established via a new
- * handshake. Addons see it only as {@link IVoiceSession} - the secret, encryption, and address
- * never leave the server internals.
+ * handshake. The sessionId is a public token (UDP header + lookup), NOT key material - the AES key
+ * lives inside {@code encryption}, derived from the ephemeral X25519 handshake. Addons see this
+ * only as {@link IVoiceSession} - the sessionId, encryption, and address never leave the server
+ * internals.
  */
 public final class VoiceServerSession implements IVoiceSession {
 
     private final UUID playerUuid;
     private final String playerName;
-    private final UUID secret;
+    private final UUID sessionId;
     private final AesEncryption encryption;
+    private final byte[] serverPublicKey;
 
     private volatile InetSocketAddress lastAddress;
     private volatile long lastSeenMillis;
 
-    public VoiceServerSession(@NotNull UUID playerUuid, @NotNull String playerName, @NotNull UUID secret,
+    public VoiceServerSession(@NotNull UUID playerUuid, @NotNull String playerName, @NotNull UUID sessionId,
         @NotNull AesEncryption encryption) {
+        this(playerUuid, playerName, sessionId, encryption, new byte[0]);
+    }
+
+    public VoiceServerSession(@NotNull UUID playerUuid, @NotNull String playerName, @NotNull UUID sessionId,
+        @NotNull AesEncryption encryption, @NotNull byte[] serverPublicKey) {
         this.playerUuid = playerUuid;
         this.playerName = playerName;
-        this.secret = secret;
+        this.sessionId = sessionId;
         this.encryption = encryption;
+        this.serverPublicKey = serverPublicKey;
         this.lastSeenMillis = System.currentTimeMillis();
     }
 
@@ -52,8 +61,16 @@ public final class VoiceServerSession implements IVoiceSession {
         return lastAddress != null;
     }
 
-    public UUID getSecret() {
-        return secret;
+    public UUID getSessionId() {
+        return sessionId;
+    }
+
+    /**
+     * The server's ephemeral raw X25519 public key for this session, captured at creation so every
+     * (possibly retried) ServerHello for this session carries identical bytes.
+     */
+    public byte[] getServerPublicKey() {
+        return serverPublicKey;
     }
 
     public AesEncryption getEncryption() {
@@ -82,14 +99,14 @@ public final class VoiceServerSession implements IVoiceSession {
             GtnhVoice.LOG.info(
                 "session established: player {} <-> secret {} <-> {}",
                 playerName,
-                VoiceProtocol.abbreviateSecret(secret),
+                VoiceProtocol.abbreviateSessionId(sessionId),
                 address);
         } else if (!previous.equals(address)) {
             lastAddress = address;
             GtnhVoice.LOG.info(
                 "session re-learned source address: player {} <-> secret {} <-> {} (was {})",
                 playerName,
-                VoiceProtocol.abbreviateSecret(secret),
+                VoiceProtocol.abbreviateSessionId(sessionId),
                 address,
                 previous);
         }

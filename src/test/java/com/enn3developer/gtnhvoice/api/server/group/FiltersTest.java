@@ -12,7 +12,6 @@ import org.junit.jupiter.api.Test;
 
 import com.enn3developer.gtnhvoice.api.server.IVoiceSession;
 import com.enn3developer.gtnhvoice.core.encryption.aes.AesEncryption;
-import com.enn3developer.gtnhvoice.network.VoiceProtocol;
 import com.enn3developer.gtnhvoice.server.VoiceServerSession;
 
 /**
@@ -69,6 +68,6 @@ class FiltersTest {
             UUID.randomUUID(),
             name,
             secret,
-            new AesEncryption(VoiceProtocol.deriveKey(secret)));
+            new AesEncryption(new byte[32]));
     }
 }

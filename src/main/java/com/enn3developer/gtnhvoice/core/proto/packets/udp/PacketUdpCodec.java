@@ -50,7 +50,7 @@ public class PacketUdpCodec {
         PACKETS.register(0x100, PacketDirection.ANY, CustomPacket.class, CustomPacket::new);
     }
 
-    public static byte[] encode(Packet<?> packet, UUID secret, @NotNull Encryption encryption) {
+    public static byte[] encode(Packet<?> packet, UUID sessionId, @NotNull Encryption encryption) {
         int type = PACKETS.getType(packet);
         if (type < 0) return null;
 
@@ -81,7 +81,7 @@ public class PacketUdpCodec {
         ByteArrayDataOutput out = ByteStreams.newDataOutput();
         out.writeInt(MAGIC_NUMBER);
         out.writeShort(type);
-        PacketUtil.writeUUID(out, secret);
+        PacketUtil.writeUUID(out, sessionId);
         out.writeLong(System.currentTimeMillis());
         PacketUtil.writeBytes(out, encryptedBody);
 
@@ -94,7 +94,7 @@ public class PacketUdpCodec {
 
     /**
      * Reads the packet header and the still-encrypted body. The body is deliberately not decrypted
-     * here: the key is per-session and only the caller (after resolving {@code secret} to a
+     * here: the key is per-session and only the caller (after resolving {@code sessionId} to a
      * session) knows which one to use - see {@link PacketUdp#getPacketUntyped}.
      */
     public static Optional<PacketUdp> decode(@NotNull ByteArrayDataInput in, @NotNull PacketDirection direction)
@@ -105,11 +105,11 @@ public class PacketUdpCodec {
             Packet<?> packet = PACKETS.byType(in.readUnsignedShort(), direction);
             if (packet == null) return Optional.empty();
 
-            UUID secret = PacketUtil.readUUID(in);
+            UUID sessionId = PacketUtil.readUUID(in);
             long timestamp = in.readLong();
             byte[] encryptedBody = PacketUtil.readBytes(in, MAX_ENCRYPTED_BODY_SIZE);
 
-            return Optional.of(new PacketUdp(secret, timestamp, packet, encryptedBody));
+            return Optional.of(new PacketUdp(sessionId, timestamp, packet, encryptedBody));
         } catch (Exception e) {
             return Optional.empty();
         }

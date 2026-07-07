@@ -17,22 +17,26 @@ import com.google.common.io.ByteStreams;
 
 public class PacketUdp {
 
-    private final UUID secret;
+    // The per-session token from the UDP header. Public (travels in cleartext) and used only for
+    // server session lookup / client match - it is NOT key material. The AES key is negotiated
+    // out-of-band via the X25519 handshake and never appears on the UDP leg.
+    private final UUID sessionId;
     private final long timestamp;
     private final Packet<?> packet;
 
     private byte[] encryptedBody;
     private boolean read;
 
-    public PacketUdp(@NotNull UUID secret, long timestamp, @NotNull Packet<?> packet, @NotNull byte[] encryptedBody) {
-        this.secret = secret;
+    public PacketUdp(@NotNull UUID sessionId, long timestamp, @NotNull Packet<?> packet,
+        @NotNull byte[] encryptedBody) {
+        this.sessionId = sessionId;
         this.timestamp = timestamp;
         this.packet = packet;
         this.encryptedBody = encryptedBody;
     }
 
-    public UUID getSecret() {
-        return secret;
+    public UUID getSessionId() {
+        return sessionId;
     }
 
     public Packet<?> getPacketUntyped(@NotNull Encryption encryption) throws IOException {
@@ -70,6 +74,6 @@ public class PacketUdp {
 
     @Override
     public String toString() {
-        return "PacketUdp(secret=" + secret + ", timestamp=" + timestamp + ")";
+        return "PacketUdp(sessionId=" + sessionId + ", timestamp=" + timestamp + ")";
     }
 }

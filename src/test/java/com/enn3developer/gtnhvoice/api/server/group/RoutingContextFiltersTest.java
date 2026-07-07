@@ -19,7 +19,6 @@ import com.enn3developer.gtnhvoice.api.server.PlayerSnapshot;
 import com.enn3developer.gtnhvoice.api.server.SourceState;
 import com.enn3developer.gtnhvoice.core.encryption.aes.AesEncryption;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.serverbound.PlayerAudioPacket;
-import com.enn3developer.gtnhvoice.network.VoiceProtocol;
 import com.enn3developer.gtnhvoice.server.VoiceServerSession;
 
 /**
@@ -131,7 +130,7 @@ class RoutingContextFiltersTest {
             playerUuid,
             name,
             secret,
-            new AesEncryption(VoiceProtocol.deriveKey(secret)));
+            new AesEncryption(new byte[32]));
         session.touch(new InetSocketAddress("127.0.0.1", nextPort++));
         sessions.put(playerUuid, session);
         return session;

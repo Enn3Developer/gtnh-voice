@@ -30,18 +30,18 @@ public final class VoiceClientSession {
 
     private final State state;
     private final String disabledReason;
-    private final UUID secret;
+    private final UUID sessionId;
     private final AesEncryption encryption;
     private final int distance;
     private final byte opusMode;
     private final int frameSize;
     private final int sampleRate;
 
-    public VoiceClientSession(State state, @Nullable String disabledReason, @Nullable UUID secret,
+    public VoiceClientSession(State state, @Nullable String disabledReason, @Nullable UUID sessionId,
         @Nullable AesEncryption encryption, int distance, byte opusMode, int frameSize, int sampleRate) {
         this.state = state;
         this.disabledReason = disabledReason;
-        this.secret = secret;
+        this.sessionId = sessionId;
         this.encryption = encryption;
         this.distance = distance;
         this.opusMode = opusMode;
@@ -57,8 +57,8 @@ public final class VoiceClientSession {
         return disabledReason;
     }
 
-    public @Nullable UUID getSecret() {
-        return secret;
+    public @Nullable UUID getSessionId() {
+        return sessionId;
     }
 
     public @Nullable AesEncryption getEncryption() {

@@ -21,7 +21,6 @@ import com.enn3developer.gtnhvoice.core.proto.data.audio.codec.opus.OpusMode;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.PacketUdp;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.serverbound.PlayerAudioPacket;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.serverbound.ServerPacketUdpHandler;
-import com.enn3developer.gtnhvoice.network.VoiceProtocol;
 
 /**
  * Loopback proof that the MC-independent UDP transport actually moves bytes: encodes real
@@ -46,7 +45,7 @@ class UdpTransportLoopbackTest {
         }
 
         UUID secret = UUID.randomUUID();
-        AesEncryption encryption = new AesEncryption(VoiceProtocol.deriveKey(secret));
+        AesEncryption encryption = new AesEncryption(new byte[32]);
         UUID activationId = UUID.randomUUID();
         long sequenceNumber = 42L;
         short distance = 16;
@@ -65,7 +64,7 @@ class UdpTransportLoopbackTest {
             PacketUdp receivedPacket = received.poll(5, TimeUnit.SECONDS);
             if (receivedPacket == null) fail("Server did not receive the packet within the timeout");
 
-            assertEquals(secret, receivedPacket.getSecret());
+            assertEquals(secret, receivedPacket.getSessionId());
 
             PlayerAudioPacket decodedPacket = (PlayerAudioPacket) receivedPacket
                 .<ServerPacketUdpHandler>getPacket(encryption);

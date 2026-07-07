@@ -24,7 +24,6 @@ import com.enn3developer.gtnhvoice.core.encryption.aes.AesEncryption;
 import com.enn3developer.gtnhvoice.core.proto.packets.Packet;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.clientbound.SourceAudioPacket;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.serverbound.PlayerAudioPacket;
-import com.enn3developer.gtnhvoice.network.VoiceProtocol;
 import com.enn3developer.gtnhvoice.server.VoiceServerSession;
 
 /**
@@ -59,7 +58,7 @@ class LocalGroupTest {
 
         assertEquals(1, sent.size());
         CapturedSend only = sent.get(0);
-        assertEquals(inRange.getSecret(), only.secret);
+        assertEquals(inRange.getSessionId(), only.secret);
         assertSame(inRange.getEncryption(), only.encryption);
         assertEquals(inRange.getLastAddress(), only.recipient);
 
@@ -105,7 +104,7 @@ class LocalGroupTest {
             playerUuid,
             name,
             secret,
-            new AesEncryption(VoiceProtocol.deriveKey(secret)));
+            new AesEncryption(new byte[32]));
         if (withUdpAddress) session.touch(new InetSocketAddress("127.0.0.1", nextPort++));
         sessions.put(playerUuid, session);
         return session;
