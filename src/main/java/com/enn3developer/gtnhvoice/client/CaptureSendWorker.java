@@ -39,7 +39,7 @@ final class CaptureSendWorker extends Thread {
     private final NoiseSuppressionFilter noiseSuppressionFilter;
     private final CapturePcmFilterChain pcmFilterChain;
     private final UdpTransportClient client;
-    private final UUID secret;
+    private final UUID sessionId;
     private final Encryption encryption;
     private final UUID activationId;
     private final ActivationGate activationGate;
@@ -53,14 +53,14 @@ final class CaptureSendWorker extends Thread {
 
     CaptureSendWorker(BlockingQueue<short[]> captureFrameQueue, AudioEncoder encoder,
         NoiseSuppressionFilter noiseSuppressionFilter, CapturePcmFilterChain pcmFilterChain, UdpTransportClient client,
-        UUID secret, Encryption encryption, UUID activationId, ActivationGate activationGate) {
+        UUID sessionId, Encryption encryption, UUID activationId, ActivationGate activationGate) {
         super("gtnhvoice-capture-send");
         this.captureFrameQueue = captureFrameQueue;
         this.encoder = encoder;
         this.noiseSuppressionFilter = noiseSuppressionFilter;
         this.pcmFilterChain = pcmFilterChain;
         this.client = client;
-        this.secret = secret;
+        this.sessionId = sessionId;
         this.encryption = encryption;
         this.activationId = activationId;
         this.activationGate = activationGate;
@@ -126,7 +126,7 @@ final class CaptureSendWorker extends Thread {
             byte[] encoded = encoder.encode(frame);
 
             PlayerAudioPacket packet = new PlayerAudioPacket(sequenceNumber++, encoded, activationId, DISTANCE, false);
-            client.send(packet, secret, encryption);
+            client.send(packet, sessionId, encryption);
             framesSent++;
         } catch (CodecException e) {
             GtnhVoice.LOG.error("[Voice] Failed to encode captured frame", e);

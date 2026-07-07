@@ -1,6 +1,8 @@
 package com.enn3developer.gtnhvoice.client;
 
 import java.net.InetSocketAddress;
+import java.security.KeyPair;
+import java.security.PublicKey;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Objects;
@@ -59,7 +61,7 @@ public final class VoiceClientManager {
 
     private static final long PING_INTERVAL_MILLIS = 5000L;
     private static final long PING_LOG_THROTTLE_MILLIS = 30_000L;
-    private static final long UNKNOWN_SECRET_LOG_THROTTLE_MILLIS = 5000L;
+    private static final long UNKNOWN_SESSION_LOG_THROTTLE_MILLIS = 5000L;
     private static final long READ_FAILURE_LOG_THROTTLE_MILLIS = 5000L;
     private static final int OPUS_MTU_SIZE = 1275; // max Opus frame size per RFC 6716
     private static final long WORKER_JOIN_TIMEOUT_MILLIS = 1000L;
@@ -74,11 +76,17 @@ public final class VoiceClientManager {
 
     private volatile VoiceClientSession session = VoiceClientSession.DISCONNECTED;
     private volatile String pendingHost;
+
+    // The client's ephemeral X25519 keypair for the current connection attempt. Generated once in
+    // onConnectedToServer and reused across every ClientHello retry, so a retried handshake re-offers
+    // the same public key and completing the ECDH with any resulting ServerHello yields the same key.
+    private volatile KeyPair handshakeKeyPair;
+    private volatile byte[] handshakePublicKey;
     private UdpTransportClient udpClient;
     private ScheduledExecutorService pingExecutor;
     private ScheduledExecutorService handshakeExecutor;
     private final AtomicLong lastPingLogMillis = new AtomicLong();
-    private final AtomicLong lastUnknownSecretLogMillis = new AtomicLong();
+    private final AtomicLong lastUnknownSessionLogMillis = new AtomicLong();
     private final AtomicLong lastReadFailureLogMillis = new AtomicLong();
 
     private volatile CaptureManager captureManager;
@@ -267,6 +275,12 @@ public final class VoiceClientManager {
     public synchronized void onConnectedToServer(@NotNull String host) {
         closeUdp();
         pendingHost = host;
+
+        // Fresh ephemeral keypair per connection attempt (forward secrecy: it is discarded when the
+        // session ends). Reused across handshake retries via the stored fields.
+        handshakeKeyPair = VoiceProtocol.generateEphemeralKeyPair();
+        handshakePublicKey = VoiceProtocol.encodePublicKey(handshakeKeyPair.getPublic());
+
         session = new VoiceClientSession(VoiceClientSession.State.CONNECTING, null, null, null, 0, (byte) 0, 0, 0);
 
         startHandshakeRetry(host);
@@ -276,6 +290,7 @@ public final class VoiceClientManager {
         closeUdp();
         session = VoiceClientSession.DISCONNECTED;
         pendingHost = null;
+        discardHandshakeKeypair();
         roster.clear();
         groupDisplayName = DEFAULT_GROUP_DISPLAY_NAME;
         HeadIconCache.getInstance()
@@ -333,25 +348,55 @@ public final class VoiceClientManager {
     }
 
     public synchronized void handleServerHello(@NotNull ServerHelloPacket packet) {
-        UUID secret = packet.getSecret();
+        UUID sessionId = packet.getSessionId();
 
-        // The server replies with a ServerHello carrying the SAME secret for every ClientHello of an
-        // already-established session (see VoiceServerManager#handleClientHello's computeIfAbsent), which is
-        // exactly what makes our handshake retry (see #startHandshakeRetry) safe to fire repeatedly - a
-        // retried ClientHello that raced with the first ServerHello produces a harmless duplicate reply. But
-        // that's only true end-to-end if we also treat a duplicate reply as a no-op here: tearing down and
-        // rebuilding an already-connected UDP link/capture worker/voice sources for no reason would glitch a
-        // perfectly working session.
+        // The server replies with a ServerHello carrying the SAME sessionId (and the SAME server public
+        // key) for every ClientHello of an already-established session (see
+        // VoiceServerManager#handleClientHello's computeIfAbsent), which is exactly what makes our
+        // handshake retry (see #startHandshakeRetry) safe to fire repeatedly - a retried ClientHello that
+        // raced with the first ServerHello produces a harmless duplicate reply. But that's only true
+        // end-to-end if we also treat a duplicate reply as a no-op here: tearing down and rebuilding an
+        // already-connected UDP link/capture worker/voice sources for no reason would glitch a perfectly
+        // working session.
         VoiceClientSession currentSession = session;
         if (currentSession.getState() == VoiceClientSession.State.CONNECTED
-            && secret.equals(currentSession.getSecret())) {
+            && sessionId.equals(currentSession.getSessionId())) {
             GtnhVoice.LOG.info(
-                "Ignored duplicate ServerHello for already-connected session (secret={})",
-                VoiceProtocol.abbreviateSecret(secret));
+                "Ignored duplicate ServerHello for already-connected session (sessionId={})",
+                VoiceProtocol.abbreviateSessionId(sessionId));
             return;
         }
 
-        byte[] key = VoiceProtocol.deriveKey(secret);
+        // Complete the X25519 ECDH against the server's ephemeral public key and derive the AES-256 UDP
+        // key from the shared secret via HKDF. The sessionId never enters key derivation.
+        KeyPair keyPair = handshakeKeyPair;
+        if (keyPair == null) {
+            GtnhVoice.LOG.warn("Received ServerHello with no local handshake keypair; ignoring");
+            return;
+        }
+        byte[] key;
+        try {
+            PublicKey serverPublic = VoiceProtocol.decodePublicKey(packet.getPublicKey());
+            byte[] sharedSecret = VoiceProtocol.computeSharedSecret(keyPair.getPrivate(), serverPublic);
+            key = VoiceProtocol.deriveKey(sharedSecret);
+        } catch (Exception e) {
+            // Tear down any still-running previous session first: a ServerHello with a NEW sessionId
+            // but a bad key gets past the duplicate-sessionId short-circuit above, so without this the
+            // old session's UDP client, ping and capture threads would leak while we report DISABLED.
+            closeUdp();
+            discardHandshakeKeypair();
+            session = new VoiceClientSession(
+                VoiceClientSession.State.DISABLED,
+                "voice key exchange failed: " + e.getMessage(),
+                null,
+                null,
+                0,
+                (byte) 0,
+                0,
+                0);
+            GtnhVoice.LOG.error("Voice key exchange failed", e);
+            return;
+        }
         AesEncryption encryption = new AesEncryption(key);
 
         String host = packet.getUdpHost()
@@ -366,7 +411,7 @@ public final class VoiceClientManager {
             session = new VoiceClientSession(
                 VoiceClientSession.State.CONNECTED,
                 null,
-                secret,
+                sessionId,
                 encryption,
                 packet.getDistance(),
                 packet.getOpusMode(),
@@ -376,19 +421,19 @@ public final class VoiceClientManager {
             voiceSourceManager = new VoiceSourceManager(this::resolveName);
             voiceSourceManager.start();
 
-            startPinging(secret, encryption);
+            startPinging(sessionId, encryption);
 
             CaptureManager manager = captureManager;
             if (manager != null) {
                 manager.start();
             }
-            startCaptureSending(secret, encryption, packet.getOpusMode(), packet.getSampleRate());
+            startCaptureSending(sessionId, encryption, packet.getOpusMode(), packet.getSampleRate());
 
             sessionListeners.fireSessionStarted();
 
             GtnhVoice.LOG.info(
-                "Voice connected: secret={} keyFingerprint={} udp={}:{} distance={} opusMode={} frameSize={} sampleRate={}",
-                VoiceProtocol.abbreviateSecret(secret),
+                "Voice connected: sessionId={} keyFingerprint={} udp={}:{} distance={} opusMode={} frameSize={} sampleRate={}",
+                VoiceProtocol.abbreviateSessionId(sessionId),
                 VoiceProtocol.fingerprintKey(key),
                 host,
                 packet.getUdpPort(),
@@ -397,6 +442,11 @@ public final class VoiceClientManager {
                 packet.getFrameSize(),
                 packet.getSampleRate());
         } catch (Exception e) {
+            // Tear down whatever the try started before it threw (udpClient, voiceSourceManager,
+            // ping/capture threads); otherwise they run on as zombies - the capture worker would keep
+            // transmitting mic audio - while the UI reports voice DISABLED.
+            closeUdp();
+            discardHandshakeKeypair();
             session = new VoiceClientSession(
                 VoiceClientSession.State.DISABLED,
                 "failed to open UDP: " + e.getMessage(),
@@ -412,6 +462,7 @@ public final class VoiceClientManager {
 
     public synchronized void handleServerReject(@NotNull ServerRejectPacket packet) {
         closeUdp();
+        discardHandshakeKeypair();
 
         String reason = "incompatible (server protocol " + packet.getServerProtocolVersion()
             + ", reason code "
@@ -451,6 +502,7 @@ public final class VoiceClientManager {
         int attempt = attempts.incrementAndGet();
         if (attempt > HANDSHAKE_MAX_ATTEMPTS) {
             stopHandshakeRetry();
+            discardHandshakeKeypair();
             session = new VoiceClientSession(
                 VoiceClientSession.State.DISABLED,
                 "voice handshake timed out after " + HANDSHAKE_MAX_ATTEMPTS + " attempts (no ServerHello/ServerReject)",
@@ -467,7 +519,7 @@ public final class VoiceClientManager {
         byte claimedVersion = Config.debugForceProtocolMismatch ? (byte) (VoiceProtocol.PROTOCOL_VERSION + 1)
             : VoiceProtocol.PROTOCOL_VERSION;
         boolean hasChannel = NetworkRegistry.INSTANCE.hasChannel(VoiceProtocol.CHANNEL, Side.CLIENT);
-        NetworkHandler.WRAPPER.sendToServer(new ClientHelloPacket(claimedVersion, Tags.VERSION));
+        NetworkHandler.WRAPPER.sendToServer(new ClientHelloPacket(claimedVersion, Tags.VERSION, handshakePublicKey));
 
         GtnhVoice.LOG.info(
             "Sent ClientHello to {} (attempt {}/{}, protocolVersion={}, modVersion={}, hasChannel(CLIENT)={})",
@@ -486,7 +538,19 @@ public final class VoiceClientManager {
         }
     }
 
-    private void startPinging(UUID secret, AesEncryption encryption) {
+    /**
+     * Discards the ephemeral X25519 handshake keypair once the handshake is over (forward secrecy: no
+     * private key material outlives a session, even a failed one). Also makes {@link #handleServerHello}'s
+     * null-keypair guard reject a ServerHello that arrives after we already gave up - so voice can't
+     * silently come up after the client reported the handshake DISABLED. A fresh keypair is generated on
+     * the next {@link #onConnectedToServer}.
+     */
+    private void discardHandshakeKeypair() {
+        handshakeKeyPair = null;
+        handshakePublicKey = null;
+    }
+
+    private void startPinging(UUID sessionId, AesEncryption encryption) {
         pingExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread thread = new Thread(r, "gtnhvoice-ping");
             thread.setDaemon(true);
@@ -494,18 +558,18 @@ public final class VoiceClientManager {
         });
 
         pingExecutor
-            .scheduleAtFixedRate(() -> sendPing(secret, encryption), 0, PING_INTERVAL_MILLIS, TimeUnit.MILLISECONDS);
+            .scheduleAtFixedRate(() -> sendPing(sessionId, encryption), 0, PING_INTERVAL_MILLIS, TimeUnit.MILLISECONDS);
     }
 
-    private void sendPing(UUID secret, AesEncryption encryption) {
+    private void sendPing(UUID sessionId, AesEncryption encryption) {
         UdpTransportClient client = udpClient;
         if (client == null) return;
 
         try {
-            client.send(new PingPacket(), secret, encryption);
+            client.send(new PingPacket(), sessionId, encryption);
 
             if (LogThrottle.shouldLog(lastPingLogMillis, PING_LOG_THROTTLE_MILLIS)) {
-                GtnhVoice.LOG.info("Voice ping sent (secret={})", VoiceProtocol.abbreviateSecret(secret));
+                GtnhVoice.LOG.info("Voice ping sent (sessionId={})", VoiceProtocol.abbreviateSessionId(sessionId));
             }
         } catch (Exception e) {
             GtnhVoice.LOG.error("Failed to send voice ping", e);
@@ -522,10 +586,10 @@ public final class VoiceClientManager {
         VoiceSourceManager sourceManager = voiceSourceManager;
         if (currentSession.getState() != VoiceClientSession.State.CONNECTED || sourceManager == null) return;
 
-        if (!packetUdp.getSecret()
-            .equals(currentSession.getSecret())) {
-            if (LogThrottle.shouldLog(lastUnknownSecretLogMillis, UNKNOWN_SECRET_LOG_THROTTLE_MILLIS)) {
-                GtnhVoice.LOG.warn("Dropped UDP packet with unexpected secret from {}", sender);
+        if (!packetUdp.getSessionId()
+            .equals(currentSession.getSessionId())) {
+            if (LogThrottle.shouldLog(lastUnknownSessionLogMillis, UNKNOWN_SESSION_LOG_THROTTLE_MILLIS)) {
+                GtnhVoice.LOG.warn("Dropped UDP packet with unexpected sessionId from {}", sender);
             }
             return;
         }
@@ -561,7 +625,7 @@ public final class VoiceClientManager {
         sourceManager.onSourceAudio(audioPacket, distance);
     }
 
-    private void startCaptureSending(UUID secret, AesEncryption encryption, byte opusModeOrdinal, int sampleRate) {
+    private void startCaptureSending(UUID sessionId, AesEncryption encryption, byte opusModeOrdinal, int sampleRate) {
         CaptureManager manager = captureManager;
         if (manager == null) {
             GtnhVoice.LOG.warn("Voice connected but no CaptureManager bound yet - mic audio will not be sent");
@@ -594,7 +658,7 @@ public final class VoiceClientManager {
                 noiseSuppressionFilter,
                 capturePcmFilterChain,
                 udpClient,
-                secret,
+                sessionId,
                 encryption,
                 UUID.randomUUID(),
                 gate);

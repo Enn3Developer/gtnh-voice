@@ -20,7 +20,6 @@ import com.enn3developer.gtnhvoice.core.proto.packets.udp.clientbound.SelfAudioI
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.clientbound.SourceAudioPacket;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.clientbound.SourceEndPacket;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.serverbound.PlayerAudioPacket;
-import com.enn3developer.gtnhvoice.network.VoiceProtocol;
 import com.google.common.io.ByteStreams;
 
 /**
@@ -35,7 +34,7 @@ class PacketUdpCodecTest {
     @Test
     void everyRegisteredPacketRoundTrips() throws Exception {
         UUID secret = UUID.randomUUID();
-        AesEncryption enc = new AesEncryption(VoiceProtocol.deriveKey(secret));
+        AesEncryption enc = new AesEncryption(new byte[32]);
 
         byte[] audio = { 1, 2, 3, 4, 5, 6, 7, 8 };
         byte[] custom = { 9, 8, 7, 6 };
@@ -54,15 +53,19 @@ class PacketUdpCodecTest {
 
             Optional<PacketUdp> out = PacketUdpCodec.decode(ByteStreams.newDataInput(b), PacketDirection.ANY);
             assertTrue(out.isPresent(), () -> "decode returned empty for " + pkt.getClass().getSimpleName());
-            assertEquals(secret, out.get().getSecret());
-            assertEquals(pkt.getClass(), out.get().getPacketUntyped(enc).getClass());
+            assertEquals(secret, out.get().getSessionId());
+            PacketUdp decoded = out.get();
+            assertEquals(pkt.getClass(), decoded.getPacketUntyped(enc).getClass());
+            // The send timestamp now travels inside the encrypted body (not the cleartext header) so
+            // AES-GCM authenticates it; it must be recovered when the body is decrypted.
+            assertTrue(decoded.getTimestamp() > 0, "authenticated timestamp must be recovered from the body");
         }
     }
 
     @Test
     void truncatedOrMismagickedBuffersDecodeToEmpty() throws Exception {
         UUID secret = UUID.randomUUID();
-        AesEncryption enc = new AesEncryption(VoiceProtocol.deriveKey(secret));
+        AesEncryption enc = new AesEncryption(new byte[32]);
 
         byte[] full = PacketUdpCodec
             .encode(new PingPacket("127.0.0.1", 24454), secret, enc);

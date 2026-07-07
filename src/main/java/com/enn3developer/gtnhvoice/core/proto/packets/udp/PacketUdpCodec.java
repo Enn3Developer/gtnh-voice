@@ -50,11 +50,16 @@ public class PacketUdpCodec {
         PACKETS.register(0x100, PacketDirection.ANY, CustomPacket.class, CustomPacket::new);
     }
 
-    public static byte[] encode(Packet<?> packet, UUID secret, @NotNull Encryption encryption) {
+    public static byte[] encode(Packet<?> packet, UUID sessionId, @NotNull Encryption encryption) {
         int type = PACKETS.getType(packet);
         if (type < 0) return null;
 
+        // The send timestamp goes INSIDE the encrypted body (prepended before the packet fields), not
+        // in the cleartext header, so AES-GCM authenticates it. The server's anti-replay address guard
+        // trusts this timestamp; if it lived in the cleartext header an attacker could replay a genuine
+        // body while forging a newer timestamp to defeat the guard (GCM authenticates only the body).
         ByteArrayDataOutput body = ByteStreams.newDataOutput();
+        body.writeLong(System.currentTimeMillis());
         try {
             packet.write(body);
         } catch (IOException e) {
@@ -81,8 +86,7 @@ public class PacketUdpCodec {
         ByteArrayDataOutput out = ByteStreams.newDataOutput();
         out.writeInt(MAGIC_NUMBER);
         out.writeShort(type);
-        PacketUtil.writeUUID(out, secret);
-        out.writeLong(System.currentTimeMillis());
+        PacketUtil.writeUUID(out, sessionId);
         PacketUtil.writeBytes(out, encryptedBody);
 
         return out.toByteArray();
@@ -94,7 +98,7 @@ public class PacketUdpCodec {
 
     /**
      * Reads the packet header and the still-encrypted body. The body is deliberately not decrypted
-     * here: the key is per-session and only the caller (after resolving {@code secret} to a
+     * here: the key is per-session and only the caller (after resolving {@code sessionId} to a
      * session) knows which one to use - see {@link PacketUdp#getPacketUntyped}.
      */
     public static Optional<PacketUdp> decode(@NotNull ByteArrayDataInput in, @NotNull PacketDirection direction)
@@ -105,11 +109,12 @@ public class PacketUdpCodec {
             Packet<?> packet = PACKETS.byType(in.readUnsignedShort(), direction);
             if (packet == null) return Optional.empty();
 
-            UUID secret = PacketUtil.readUUID(in);
-            long timestamp = in.readLong();
+            UUID sessionId = PacketUtil.readUUID(in);
             byte[] encryptedBody = PacketUtil.readBytes(in, MAX_ENCRYPTED_BODY_SIZE);
 
-            return Optional.of(new PacketUdp(secret, timestamp, packet, encryptedBody));
+            // The timestamp is no longer in the header - it is authenticated inside the encrypted body
+            // and recovered when the body is decrypted (see PacketUdp#readPacket).
+            return Optional.of(new PacketUdp(sessionId, packet, encryptedBody));
         } catch (Exception e) {
             return Optional.empty();
         }

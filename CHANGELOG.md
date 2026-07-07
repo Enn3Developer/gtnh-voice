@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Encrypt voice with an ephemeral X25519 handshake (HKDF-SHA256 key, AES-GCM), replacing the leaked key sent in cleartext
 - Bound client resources against malicious peers (roster, jitter buffer, voice sources, error logging)
 
 ### Fixed

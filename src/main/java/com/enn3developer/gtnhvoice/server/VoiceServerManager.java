@@ -1,7 +1,10 @@
 package com.enn3developer.gtnhvoice.server;
 
 import java.net.InetSocketAddress;
+import java.security.KeyPair;
+import java.security.PublicKey;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -71,10 +74,10 @@ public final class VoiceServerManager implements UdpPacketListener {
 
     private static final long SESSION_TIMEOUT_MILLIS = TimeUnit.MINUTES.toMillis(3);
     private static final long REAP_INTERVAL_SECONDS = 30;
-    private static final long UNKNOWN_SECRET_LOG_THROTTLE_MILLIS = 5000;
+    private static final long UNKNOWN_SESSION_LOG_THROTTLE_MILLIS = 5000;
     private static final long READ_FAILURE_LOG_THROTTLE_MILLIS = 5000;
 
-    private final Map<UUID, VoiceServerSession> sessionsBySecret = new ConcurrentHashMap<>();
+    private final Map<UUID, VoiceServerSession> sessionsBySessionId = new ConcurrentHashMap<>();
     private final Map<UUID, VoiceServerSession> sessionsByPlayerUuid = new ConcurrentHashMap<>();
     private final Map<UUID, VoiceServerSession> sessionsByPlayerUuidView = Collections
         .unmodifiableMap(sessionsByPlayerUuid);
@@ -91,7 +94,7 @@ public final class VoiceServerManager implements UdpPacketListener {
     private UdpTransportServer udpServer;
     private ScheduledExecutorService reaper;
     private volatile boolean started;
-    private final AtomicLong lastUnknownSecretLogMillis = new AtomicLong();
+    private final AtomicLong lastUnknownSessionLogMillis = new AtomicLong();
     private final AtomicLong lastReadFailureLogMillis = new AtomicLong();
 
     public static VoiceServerManager getInstance() {
@@ -163,7 +166,7 @@ public final class VoiceServerManager implements UdpPacketListener {
             .bus()
             .unregister(this);
 
-        sessionsBySecret.clear();
+        sessionsBySessionId.clear();
         sessionsByPlayerUuid.clear();
         pendingSends.clear();
         groupManager.clear();
@@ -193,15 +196,80 @@ public final class VoiceServerManager implements UdpPacketListener {
             return;
         }
 
+        byte[] clientPublicKey = packet.getPublicKey();
+        if (clientPublicKey == null || clientPublicKey.length != VoiceProtocol.X25519_PUBLIC_KEY_LENGTH) {
+            // Protocol version matched but the ClientHello had no usable X25519 public key - a broken
+            // or hostile client. Reject cleanly so it stops retrying rather than silently dropping it.
+            pendingSends.add(() -> {
+                NetworkHandler.WRAPPER.sendTo(
+                    new ServerRejectPacket(VoiceProtocol.PROTOCOL_VERSION, VoiceProtocol.REASON_HANDSHAKE_FAILED),
+                    player);
+                player.addChatMessage(
+                    new ChatComponentText(
+                        "[GTNH Voice] Voice handshake failed (bad key exchange). Voice chat is disabled."));
+            });
+            GtnhVoice.LOG.warn(
+                "Rejected voice handshake from {}: missing/invalid X25519 public key in ClientHello",
+                player.getCommandSenderName());
+            return;
+        }
+
         UUID playerUuid = player.getGameProfile()
             .getId();
-        boolean isNewSession = !sessionsByPlayerUuid.containsKey(playerUuid);
-        VoiceServerSession session = sessionsByPlayerUuid
-            .computeIfAbsent(playerUuid, id -> createSession(playerUuid, player.getCommandSenderName()));
 
-        if (isNewSession) {
-            // Only the first ClientHello of a session actually creates it (computeIfAbsent) - retried
-            // ClientHellos from the handshake-retry loop must not re-send the roster or re-broadcast the join.
+        VoiceServerSession existing = sessionsByPlayerUuid.get(playerUuid);
+
+        // Resend the roster snapshot + group update whenever we (re)build the session - a brand-new
+        // session OR a genuine reconnect/relog rebuild - because a reconnecting client has reset its
+        // voice state and nothing else backfills players already in voice. A pure retry (same
+        // ephemeral key) reuses the session and must NOT resend, or it would spam on every retry.
+        VoiceServerSession session;
+        boolean sendInitialState;
+        if (existing != null && Arrays.equals(existing.getClientPublicKey(), clientPublicKey)) {
+            // Retried ClientHello carrying the SAME ephemeral key: reuse the session so the
+            // ServerHello (and thus the derived key) stays byte-identical - the client's handshake-
+            // retry loop depends on this.
+            session = existing;
+            sendInitialState = false;
+        } else {
+            // First ClientHello, or a reconnect/relog whose fresh ephemeral key raced
+            // onPlayerLoggedOut (IO vs server thread): (re)run the ECDH so both sides agree on the
+            // key rather than reusing a session whose key was derived against a now-gone client key.
+            // A bad/low-order key surfaces as a clean reject here, not a silently broken session the
+            // client would retry against until it times out.
+            VoiceServerSession rebuilt;
+            try {
+                rebuilt = createSession(
+                    playerUuid,
+                    player.getCommandSenderName(),
+                    clientPublicKey,
+                    player.playerNetServerHandler);
+            } catch (RuntimeException e) {
+                pendingSends.add(() -> {
+                    NetworkHandler.WRAPPER.sendTo(
+                        new ServerRejectPacket(VoiceProtocol.PROTOCOL_VERSION, VoiceProtocol.REASON_HANDSHAKE_FAILED),
+                        player);
+                    player.addChatMessage(
+                        new ChatComponentText(
+                            "[GTNH Voice] Voice handshake failed (bad key exchange). Voice chat is disabled."));
+                });
+                GtnhVoice.LOG.warn(
+                    "Rejected voice handshake from {}: X25519 key agreement failed",
+                    player.getCommandSenderName(),
+                    e);
+                return;
+            }
+
+            VoiceServerSession previous = sessionsByPlayerUuid.put(playerUuid, rebuilt);
+            if (previous != null) sessionsBySessionId.remove(previous.getSessionId());
+            session = rebuilt;
+            sendInitialState = true;
+        }
+
+        if (sendInitialState) {
+            // Fired for a new session or a rebuild (reconnect/relog). The ADD broadcast to others is a
+            // harmless refresh when the player was already in voice; the roster snapshot and group
+            // update are what a reset client needs.
             pendingSends.add(() -> sendRosterSnapshot(player, playerUuid));
             pendingSends.add(
                 () -> broadcastRosterUpdate(VoiceRosterUpdatePacket.MODE_ADD, playerUuid, session.getPlayerName()));
@@ -214,7 +282,8 @@ public final class VoiceServerManager implements UdpPacketListener {
 
         ServerHelloPacket hello = new ServerHelloPacket(
             VoiceProtocol.PROTOCOL_VERSION,
-            session.getSecret(),
+            session.getSessionId(),
+            session.getServerPublicKey(),
             "",
             Config.udpPort,
             Config.distance,
@@ -226,9 +295,9 @@ public final class VoiceServerManager implements UdpPacketListener {
         pendingSends.add(() -> NetworkHandler.WRAPPER.sendTo(hello, player));
 
         GtnhVoice.LOG.info(
-            "Accepted voice handshake from {}: queued ServerHello secret={} udpPort={} distance={} opusMode={} frameSize={} sampleRate={}",
+            "Accepted voice handshake from {}: queued ServerHello sessionId={} udpPort={} distance={} opusMode={} frameSize={} sampleRate={}",
             player.getCommandSenderName(),
-            VoiceProtocol.abbreviateSecret(session.getSecret()),
+            VoiceProtocol.abbreviateSessionId(session.getSessionId()),
             Config.udpPort,
             Config.distance,
             Config.getOpusMode(),
@@ -236,18 +305,42 @@ public final class VoiceServerManager implements UdpPacketListener {
             Config.sampleRate);
     }
 
-    private VoiceServerSession createSession(UUID playerUuid, String playerName) {
-        UUID secret = UUID.randomUUID();
-        byte[] key = VoiceProtocol.deriveKey(secret);
-        AesEncryption encryption = new AesEncryption(key);
+    /**
+     * (Re)creates a session for a player's ClientHello: generates the server's own ephemeral X25519
+     * keypair, runs ECDH against the client's public key, and derives the AES-256 UDP key via HKDF
+     * from the shared secret. Both the server's ephemeral public key and the client's public key are
+     * stored on the session - the former so every retried ServerHello carries identical bytes, the
+     * latter so a later ClientHello with a changed key is detected and rebuilt (see
+     * {@link #handleClientHello}). Throws if the client key is invalid or yields a degenerate shared
+     * secret, which the caller turns into a clean reject. {@code owner} is the connection's net
+     * handler - stable across respawn/dimension change, replaced only on a true reconnect - stored
+     * for the stale-logout guard in {@link #onPlayerLoggedOut}.
+     */
+    private VoiceServerSession createSession(UUID playerUuid, String playerName, byte[] clientPublicKey,
+        Object owner) {
+        UUID sessionId = UUID.randomUUID();
 
-        VoiceServerSession session = new VoiceServerSession(playerUuid, playerName, secret, encryption);
-        sessionsBySecret.put(secret, session);
+        KeyPair serverKeyPair = VoiceProtocol.generateEphemeralKeyPair();
+        PublicKey clientPublic = VoiceProtocol.decodePublicKey(clientPublicKey);
+        byte[] sharedSecret = VoiceProtocol.computeSharedSecret(serverKeyPair.getPrivate(), clientPublic);
+        byte[] key = VoiceProtocol.deriveKey(sharedSecret);
+        AesEncryption encryption = new AesEncryption(key);
+        byte[] serverPublicKey = VoiceProtocol.encodePublicKey(serverKeyPair.getPublic());
+
+        VoiceServerSession session = new VoiceServerSession(
+            playerUuid,
+            playerName,
+            sessionId,
+            encryption,
+            serverPublicKey,
+            clientPublicKey,
+            owner);
+        sessionsBySessionId.put(sessionId, session);
 
         GtnhVoice.LOG.info(
-            "Created voice session for {}: secret={} keyFingerprint={}",
+            "Created voice session for {}: sessionId={} keyFingerprint={}",
             playerName,
-            VoiceProtocol.abbreviateSecret(secret),
+            VoiceProtocol.abbreviateSessionId(sessionId),
             VoiceProtocol.fingerprintKey(key));
 
         return session;
@@ -255,18 +348,21 @@ public final class VoiceServerManager implements UdpPacketListener {
 
     @Override
     public void onPacket(@NotNull PacketUdp packetUdp, @NotNull InetSocketAddress sender) {
-        VoiceServerSession session = sessionsBySecret.get(packetUdp.getSecret());
+        VoiceServerSession session = sessionsBySessionId.get(packetUdp.getSessionId());
         if (session == null) {
-            if (LogThrottle.shouldLog(lastUnknownSecretLogMillis, UNKNOWN_SECRET_LOG_THROTTLE_MILLIS)) {
-                GtnhVoice.LOG.warn("Dropped UDP packet with unknown secret from {}", sender);
+            if (LogThrottle.shouldLog(lastUnknownSessionLogMillis, UNKNOWN_SESSION_LOG_THROTTLE_MILLIS)) {
+                GtnhVoice.LOG.warn("Dropped UDP packet with unknown sessionId from {}", sender);
             }
             return;
         }
 
-        session.touch(sender);
-
         try {
+            // Decrypt FIRST, then touch(). getPacketUntyped runs AES-GCM decryption, which fails on a
+            // forged body, so a garbage packet can never relearn the address. The packet timestamp is
+            // passed to touch() so a REPLAY of a genuine (authentic) datagram - which decrypts fine but
+            // carries an old timestamp - also can't hijack where this session's audio is delivered.
             Packet<?> packet = packetUdp.getPacketUntyped(session.getEncryption());
+            session.touch(sender, packetUdp.getTimestamp());
             if (packet instanceof PingPacket) {
                 // Liveness/NAT keepalive only for now - last-seen is already updated by touch() above.
             } else if (packet instanceof PlayerAudioPacket) {
@@ -277,7 +373,7 @@ public final class VoiceServerManager implements UdpPacketListener {
                 GtnhVoice.LOG.error(
                     "Failed to read UDP packet from {} (secret {})",
                     sender,
-                    VoiceProtocol.abbreviateSecret(session.getSecret()),
+                    VoiceProtocol.abbreviateSessionId(session.getSessionId()),
                     e);
             }
         }
@@ -353,10 +449,25 @@ public final class VoiceServerManager implements UdpPacketListener {
     public void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
         UUID playerUuid = event.player.getGameProfile()
             .getId();
-        VoiceServerSession session = sessionsByPlayerUuid.remove(playerUuid);
+        VoiceServerSession session = sessionsByPlayerUuid.get(playerUuid);
         if (session == null) return;
 
-        sessionsBySecret.remove(session.getSecret());
+        // A fast relog can rebuild this player's session on the Netty thread before this logout event
+        // (server thread) runs. Only tear down the session that belongs to the connection logging out
+        // - identified by its net handler, which survives respawn/dimension changes and is replaced
+        // only on a genuine reconnect - so an old connection's logout can't delete the freshly-rebuilt
+        // session of a new one, which would strand the client CONNECTED with no session.
+        if (session.getOwner() != ((EntityPlayerMP) event.player).playerNetServerHandler) {
+            GtnhVoice.LOG.info(
+                "Ignoring stale voice logout for {} - session belongs to a newer connection",
+                session.getPlayerName());
+            return;
+        }
+        // Value-conditional remove: if a rebuild swapped in a newer session between the get above and
+        // here, leave it alone.
+        if (!sessionsByPlayerUuid.remove(playerUuid, session)) return;
+
+        sessionsBySessionId.remove(session.getSessionId());
         GtnhVoice.LOG.info("Voice session ended for {} (logout)", session.getPlayerName());
         endSession(session);
     }
@@ -482,7 +593,7 @@ public final class VoiceServerManager implements UdpPacketListener {
             InetSocketAddress recipientAddress = recipientSession.getLastAddress();
             if (recipientAddress == null) continue;
 
-            server.send(packet, recipientSession.getSecret(), recipientSession.getEncryption(), recipientAddress);
+            server.send(packet, recipientSession.getSessionId(), recipientSession.getEncryption(), recipientAddress);
             sentTo++;
         }
 
@@ -496,7 +607,7 @@ public final class VoiceServerManager implements UdpPacketListener {
     private void reapStaleSessions() {
         long now = System.currentTimeMillis();
 
-        Iterator<Map.Entry<UUID, VoiceServerSession>> it = sessionsBySecret.entrySet()
+        Iterator<Map.Entry<UUID, VoiceServerSession>> it = sessionsBySessionId.entrySet()
             .iterator();
         while (it.hasNext()) {
             VoiceServerSession session = it.next()
@@ -504,11 +615,16 @@ public final class VoiceServerManager implements UdpPacketListener {
             if (now - session.getLastSeenMillis() <= SESSION_TIMEOUT_MILLIS) continue;
 
             it.remove();
-            sessionsByPlayerUuid.remove(session.getPlayerUuid());
+            // Value-conditional: if a reconnect rebuilt this player's session under the same
+            // playerUuid between the iterator read and here, the remove fails and we must NOT tear
+            // the player out of voice - the stale sessionId entry is already gone (it.remove above),
+            // and endSession would wrongly drop the live session from its group and broadcast SourceEnd.
+            if (!sessionsByPlayerUuid.remove(session.getPlayerUuid(), session)) continue;
+
             GtnhVoice.LOG.info(
                 "Reaped stale voice session for {} (secret {}, no traffic for {}ms)",
                 session.getPlayerName(),
-                VoiceProtocol.abbreviateSecret(session.getSecret()),
+                VoiceProtocol.abbreviateSessionId(session.getSessionId()),
                 now - session.getLastSeenMillis());
             endSession(session);
         }

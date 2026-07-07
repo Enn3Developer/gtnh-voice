@@ -3,7 +3,6 @@ package com.enn3developer.gtnhvoice.client.api;
 import java.util.List;
 
 import com.enn3developer.gtnhvoice.api.client.ICapturePcmFilter;
-import com.github.bsideup.jabel.Desugar;
 
 /**
  * One durable capture-side registration as stored by {@link ClientApiBackend}: the addon name (attribution
@@ -14,6 +13,5 @@ import com.github.bsideup.jabel.Desugar;
  * whole bundle shares. The {@link AddonSessionBridge} wraps each filter in the gate when it wires them onto the
  * capture PCM filter chain; the gate itself is the one {@code IRegistration.setFilterEnabled} flips.
  */
-@Desugar
 record CaptureRegistrationBundle(String addonName, List<ICapturePcmFilter> captureFilters,
     List<ChainCaptureFilter> chainFilters, FilterGate gate) {}
