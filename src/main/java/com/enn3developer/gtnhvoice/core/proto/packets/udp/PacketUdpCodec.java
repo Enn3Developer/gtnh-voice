@@ -54,7 +54,12 @@ public class PacketUdpCodec {
         int type = PACKETS.getType(packet);
         if (type < 0) return null;
 
+        // The send timestamp goes INSIDE the encrypted body (prepended before the packet fields), not
+        // in the cleartext header, so AES-GCM authenticates it. The server's anti-replay address guard
+        // trusts this timestamp; if it lived in the cleartext header an attacker could replay a genuine
+        // body while forging a newer timestamp to defeat the guard (GCM authenticates only the body).
         ByteArrayDataOutput body = ByteStreams.newDataOutput();
+        body.writeLong(System.currentTimeMillis());
         try {
             packet.write(body);
         } catch (IOException e) {
@@ -82,7 +87,6 @@ public class PacketUdpCodec {
         out.writeInt(MAGIC_NUMBER);
         out.writeShort(type);
         PacketUtil.writeUUID(out, sessionId);
-        out.writeLong(System.currentTimeMillis());
         PacketUtil.writeBytes(out, encryptedBody);
 
         return out.toByteArray();
@@ -106,10 +110,11 @@ public class PacketUdpCodec {
             if (packet == null) return Optional.empty();
 
             UUID sessionId = PacketUtil.readUUID(in);
-            long timestamp = in.readLong();
             byte[] encryptedBody = PacketUtil.readBytes(in, MAX_ENCRYPTED_BODY_SIZE);
 
-            return Optional.of(new PacketUdp(sessionId, timestamp, packet, encryptedBody));
+            // The timestamp is no longer in the header - it is authenticated inside the encrypted body
+            // and recovered when the body is decrypted (see PacketUdp#readPacket).
+            return Optional.of(new PacketUdp(sessionId, packet, encryptedBody));
         } catch (Exception e) {
             return Optional.empty();
         }

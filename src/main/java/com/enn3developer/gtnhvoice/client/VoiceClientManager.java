@@ -290,10 +290,7 @@ public final class VoiceClientManager {
         closeUdp();
         session = VoiceClientSession.DISCONNECTED;
         pendingHost = null;
-        // Discard the ephemeral handshake keypair so no private key material outlives the session
-        // (forward secrecy) - a fresh one is generated on the next connect.
-        handshakeKeyPair = null;
-        handshakePublicKey = null;
+        discardHandshakeKeypair();
         roster.clear();
         groupDisplayName = DEFAULT_GROUP_DISPLAY_NAME;
         HeadIconCache.getInstance()
@@ -387,6 +384,7 @@ public final class VoiceClientManager {
             // but a bad key gets past the duplicate-sessionId short-circuit above, so without this the
             // old session's UDP client, ping and capture threads would leak while we report DISABLED.
             closeUdp();
+            discardHandshakeKeypair();
             session = new VoiceClientSession(
                 VoiceClientSession.State.DISABLED,
                 "voice key exchange failed: " + e.getMessage(),
@@ -444,6 +442,7 @@ public final class VoiceClientManager {
                 packet.getFrameSize(),
                 packet.getSampleRate());
         } catch (Exception e) {
+            discardHandshakeKeypair();
             session = new VoiceClientSession(
                 VoiceClientSession.State.DISABLED,
                 "failed to open UDP: " + e.getMessage(),
@@ -459,6 +458,7 @@ public final class VoiceClientManager {
 
     public synchronized void handleServerReject(@NotNull ServerRejectPacket packet) {
         closeUdp();
+        discardHandshakeKeypair();
 
         String reason = "incompatible (server protocol " + packet.getServerProtocolVersion()
             + ", reason code "
@@ -498,6 +498,7 @@ public final class VoiceClientManager {
         int attempt = attempts.incrementAndGet();
         if (attempt > HANDSHAKE_MAX_ATTEMPTS) {
             stopHandshakeRetry();
+            discardHandshakeKeypair();
             session = new VoiceClientSession(
                 VoiceClientSession.State.DISABLED,
                 "voice handshake timed out after " + HANDSHAKE_MAX_ATTEMPTS + " attempts (no ServerHello/ServerReject)",
@@ -531,6 +532,18 @@ public final class VoiceClientManager {
             handshakeExecutor.shutdownNow();
             handshakeExecutor = null;
         }
+    }
+
+    /**
+     * Discards the ephemeral X25519 handshake keypair once the handshake is over (forward secrecy: no
+     * private key material outlives a session, even a failed one). Also makes {@link #handleServerHello}'s
+     * null-keypair guard reject a ServerHello that arrives after we already gave up - so voice can't
+     * silently come up after the client reported the handshake DISABLED. A fresh keypair is generated on
+     * the next {@link #onConnectedToServer}.
+     */
+    private void discardHandshakeKeypair() {
+        handshakeKeyPair = null;
+        handshakePublicKey = null;
     }
 
     private void startPinging(UUID sessionId, AesEncryption encryption) {

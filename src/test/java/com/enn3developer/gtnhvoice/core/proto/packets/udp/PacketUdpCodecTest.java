@@ -54,7 +54,11 @@ class PacketUdpCodecTest {
             Optional<PacketUdp> out = PacketUdpCodec.decode(ByteStreams.newDataInput(b), PacketDirection.ANY);
             assertTrue(out.isPresent(), () -> "decode returned empty for " + pkt.getClass().getSimpleName());
             assertEquals(secret, out.get().getSessionId());
-            assertEquals(pkt.getClass(), out.get().getPacketUntyped(enc).getClass());
+            PacketUdp decoded = out.get();
+            assertEquals(pkt.getClass(), decoded.getPacketUntyped(enc).getClass());
+            // The send timestamp now travels inside the encrypted body (not the cleartext header) so
+            // AES-GCM authenticates it; it must be recovered when the body is decrypted.
+            assertTrue(decoded.getTimestamp() > 0, "authenticated timestamp must be recovered from the body");
         }
     }
 
