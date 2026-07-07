@@ -4,6 +4,7 @@ import java.net.InetSocketAddress;
 import java.security.KeyPair;
 import java.security.PublicKey;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -215,14 +216,49 @@ public final class VoiceServerManager implements UdpPacketListener {
 
         UUID playerUuid = player.getGameProfile()
             .getId();
-        boolean isNewSession = !sessionsByPlayerUuid.containsKey(playerUuid);
-        VoiceServerSession session = sessionsByPlayerUuid.computeIfAbsent(
-            playerUuid,
-            id -> createSession(playerUuid, player.getCommandSenderName(), clientPublicKey));
+
+        VoiceServerSession existing = sessionsByPlayerUuid.get(playerUuid);
+        boolean isNewSession = existing == null;
+
+        VoiceServerSession session;
+        if (existing != null && Arrays.equals(existing.getClientPublicKey(), clientPublicKey)) {
+            // Retried ClientHello carrying the SAME ephemeral key: reuse the session so the
+            // ServerHello (and thus the derived key) stays byte-identical - the client's handshake-
+            // retry loop depends on this.
+            session = existing;
+        } else {
+            // First ClientHello, or a reconnect/relog whose fresh ephemeral key raced
+            // onPlayerLoggedOut (IO vs server thread): (re)run the ECDH so both sides agree on the
+            // key rather than reusing a session whose key was derived against a now-gone client key.
+            // A bad/low-order key surfaces as a clean reject here, not a silently broken session the
+            // client would retry against until it times out.
+            VoiceServerSession rebuilt;
+            try {
+                rebuilt = createSession(playerUuid, player.getCommandSenderName(), clientPublicKey);
+            } catch (RuntimeException e) {
+                pendingSends.add(() -> {
+                    NetworkHandler.WRAPPER.sendTo(
+                        new ServerRejectPacket(VoiceProtocol.PROTOCOL_VERSION, VoiceProtocol.REASON_HANDSHAKE_FAILED),
+                        player);
+                    player.addChatMessage(
+                        new ChatComponentText(
+                            "[GTNH Voice] Voice handshake failed (bad key exchange). Voice chat is disabled."));
+                });
+                GtnhVoice.LOG.warn(
+                    "Rejected voice handshake from {}: X25519 key agreement failed",
+                    player.getCommandSenderName(),
+                    e);
+                return;
+            }
+
+            VoiceServerSession previous = sessionsByPlayerUuid.put(playerUuid, rebuilt);
+            if (previous != null) sessionsBySessionId.remove(previous.getSessionId());
+            session = rebuilt;
+        }
 
         if (isNewSession) {
-            // Only the first ClientHello of a session actually creates it (computeIfAbsent) - retried
-            // ClientHellos from the handshake-retry loop must not re-send the roster or re-broadcast the join.
+            // Only a genuinely new player (not a retry or a same-player rebuild) re-sends the roster
+            // or re-broadcasts the join.
             pendingSends.add(() -> sendRosterSnapshot(player, playerUuid));
             pendingSends.add(
                 () -> broadcastRosterUpdate(VoiceRosterUpdatePacket.MODE_ADD, playerUuid, session.getPlayerName()));
@@ -259,10 +295,13 @@ public final class VoiceServerManager implements UdpPacketListener {
     }
 
     /**
-     * Creates a session on the first ClientHello from a player (computeIfAbsent): generates the
-     * server's own ephemeral X25519 keypair, runs ECDH against the client's public key, and derives
-     * the AES-256 UDP key via HKDF from the shared secret. The server's ephemeral public key is
-     * stored on the session so every retried ServerHello for this player carries identical bytes.
+     * (Re)creates a session for a player's ClientHello: generates the server's own ephemeral X25519
+     * keypair, runs ECDH against the client's public key, and derives the AES-256 UDP key via HKDF
+     * from the shared secret. Both the server's ephemeral public key and the client's public key are
+     * stored on the session - the former so every retried ServerHello carries identical bytes, the
+     * latter so a later ClientHello with a changed key is detected and rebuilt (see
+     * {@link #handleClientHello}). Throws if the client key is invalid or yields a degenerate shared
+     * secret, which the caller turns into a clean reject.
      */
     private VoiceServerSession createSession(UUID playerUuid, String playerName, byte[] clientPublicKey) {
         UUID sessionId = UUID.randomUUID();
@@ -279,7 +318,8 @@ public final class VoiceServerManager implements UdpPacketListener {
             playerName,
             sessionId,
             encryption,
-            serverPublicKey);
+            serverPublicKey,
+            clientPublicKey);
         sessionsBySessionId.put(sessionId, session);
 
         GtnhVoice.LOG.info(

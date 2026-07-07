@@ -5,6 +5,7 @@ import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.security.MessageDigest;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.spec.NamedParameterSpec;
@@ -126,10 +127,24 @@ public final class VoiceProtocol {
             KeyAgreement agreement = KeyAgreement.getInstance("XDH");
             agreement.init(privateKey);
             agreement.doPhase(peerPublicKey, true);
-            return agreement.generateSecret();
+            byte[] sharedSecret = agreement.generateSecret();
+
+            // RFC 7748 s6.1: an all-zero output means the peer offered a low-order public key (a
+            // small-subgroup / contributory-behaviour attack) that forces a predictable shared
+            // secret. Reject it instead of deriving a key from attacker-chosen material.
+            if (isAllZero(sharedSecret)) {
+                throw new IllegalStateException("X25519 shared secret is all-zero (low-order public key)");
+            }
+            return sharedSecret;
         } catch (GeneralSecurityException e) {
             throw new IllegalStateException("X25519 key agreement failed", e);
         }
+    }
+
+    private static boolean isAllZero(byte[] data) {
+        int acc = 0;
+        for (byte b : data) acc |= b;
+        return acc == 0;
     }
 
     /**
@@ -192,10 +207,21 @@ public final class VoiceProtocol {
         return s.substring(0, Math.min(8, s.length()));
     }
 
+    /**
+     * A short, log-safe fingerprint of a derived key: the first bytes of SHA-256(key), never the
+     * key's own bytes. Lets logs correlate a session without leaking any part of the actual AES key.
+     */
     public static String fingerprintKey(byte[] key) {
+        byte[] hash;
+        try {
+            hash = MessageDigest.getInstance("SHA-256")
+                .digest(key);
+        } catch (GeneralSecurityException e) {
+            throw new IllegalStateException("SHA-256 not available", e);
+        }
         StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < Math.min(4, key.length); i++) {
-            sb.append(String.format("%02x", key[i]));
+        for (int i = 0; i < Math.min(4, hash.length); i++) {
+            sb.append(String.format("%02x", hash[i]));
         }
         return sb.toString();
     }

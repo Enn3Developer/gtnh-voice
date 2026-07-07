@@ -27,22 +27,24 @@ public final class VoiceServerSession implements IVoiceSession {
     private final UUID sessionId;
     private final AesEncryption encryption;
     private final byte[] serverPublicKey;
+    private final byte[] clientPublicKey;
 
     private volatile InetSocketAddress lastAddress;
     private volatile long lastSeenMillis;
 
     public VoiceServerSession(@NotNull UUID playerUuid, @NotNull String playerName, @NotNull UUID sessionId,
         @NotNull AesEncryption encryption) {
-        this(playerUuid, playerName, sessionId, encryption, new byte[0]);
+        this(playerUuid, playerName, sessionId, encryption, new byte[0], new byte[0]);
     }
 
     public VoiceServerSession(@NotNull UUID playerUuid, @NotNull String playerName, @NotNull UUID sessionId,
-        @NotNull AesEncryption encryption, @NotNull byte[] serverPublicKey) {
+        @NotNull AesEncryption encryption, @NotNull byte[] serverPublicKey, @NotNull byte[] clientPublicKey) {
         this.playerUuid = playerUuid;
         this.playerName = playerName;
         this.sessionId = sessionId;
         this.encryption = encryption;
         this.serverPublicKey = serverPublicKey;
+        this.clientPublicKey = clientPublicKey;
         this.lastSeenMillis = System.currentTimeMillis();
     }
 
@@ -71,6 +73,15 @@ public final class VoiceServerSession implements IVoiceSession {
      */
     public byte[] getServerPublicKey() {
         return serverPublicKey;
+    }
+
+    /**
+     * The client's ephemeral raw X25519 public key this session's key was derived against. Compared
+     * on each subsequent ClientHello so a reconnect with a fresh key rebuilds the session (matching
+     * keys) instead of silently reusing a stale one.
+     */
+    public byte[] getClientPublicKey() {
+        return clientPublicKey;
     }
 
     public AesEncryption getEncryption() {

@@ -165,6 +165,32 @@ class HandshakeKdfTest {
         assertThrows(IllegalArgumentException.class, () -> VoiceProtocol.decodePublicKey(new byte[33]));
     }
 
+    @Test
+    void lowOrderPublicKeyIsRejected() {
+        // The all-zero u-coordinate is a low-order point: X25519 agreement against it produces an
+        // all-zero (attacker-predictable) shared secret, which computeSharedSecret must refuse rather
+        // than derive a key from.
+        KeyPair pair = VoiceProtocol.generateEphemeralKeyPair();
+        PublicKey lowOrder = VoiceProtocol.decodePublicKey(new byte[VoiceProtocol.X25519_PUBLIC_KEY_LENGTH]);
+        assertThrows(IllegalStateException.class,
+            () -> VoiceProtocol.computeSharedSecret(pair.getPrivate(), lowOrder));
+    }
+
+    @Test
+    void fingerprintHashesTheKeyRatherThanLeakingItsBytes() {
+        byte[] key = new byte[32];
+        for (int i = 0; i < key.length; i++) key[i] = (byte) i;
+
+        String fingerprint = VoiceProtocol.fingerprintKey(key);
+
+        // Must be the first 4 bytes of SHA-256(key), never the key's own leading bytes (00010203).
+        byte[] hash = sha256(key);
+        StringBuilder expected = new StringBuilder();
+        for (int i = 0; i < 4; i++) expected.append(String.format("%02x", hash[i]));
+        assertEquals(expected.toString(), fingerprint);
+        assertNotEquals("00010203", fingerprint, "fingerprint must not expose raw key bytes");
+    }
+
     private static byte[] sha256(byte[] data) {
         try {
             return MessageDigest.getInstance("SHA-256")

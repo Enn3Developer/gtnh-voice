@@ -17,6 +17,6 @@ import com.enn3developer.gtnhvoice.core.proto.packets.Packet;
 @FunctionalInterface
 public interface PacketSender {
 
-    void send(@NotNull Packet<?> packet, @NotNull UUID secret, @NotNull Encryption encryption,
+    void send(@NotNull Packet<?> packet, @NotNull UUID sessionId, @NotNull Encryption encryption,
         @NotNull InetSocketAddress recipient);
 }
