@@ -615,8 +615,12 @@ public final class VoiceServerManager implements UdpPacketListener {
             if (now - session.getLastSeenMillis() <= SESSION_TIMEOUT_MILLIS) continue;
 
             it.remove();
-            // Value-conditional: never evict a newer session that a rebuild put under this playerUuid.
-            sessionsByPlayerUuid.remove(session.getPlayerUuid(), session);
+            // Value-conditional: if a reconnect rebuilt this player's session under the same
+            // playerUuid between the iterator read and here, the remove fails and we must NOT tear
+            // the player out of voice - the stale sessionId entry is already gone (it.remove above),
+            // and endSession would wrongly drop the live session from its group and broadcast SourceEnd.
+            if (!sessionsByPlayerUuid.remove(session.getPlayerUuid(), session)) continue;
+
             GtnhVoice.LOG.info(
                 "Reaped stale voice session for {} (secret {}, no traffic for {}ms)",
                 session.getPlayerName(),

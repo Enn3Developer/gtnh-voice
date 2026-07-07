@@ -30,6 +30,12 @@ public class ServerHelloPacket implements IMessage {
 
     public ServerHelloPacket(byte protocolVersion, UUID sessionId, byte[] publicKey, String udpHost, int udpPort,
         int distance, byte opusMode, int frameSize, int sampleRate, int capabilityFlags) {
+        // fromBytes reads exactly X25519_PUBLIC_KEY_LENGTH bytes, so a wrong-length key here would
+        // desync the receiver's buffer and corrupt the following fields - fail fast at build time.
+        if (publicKey == null || publicKey.length != VoiceProtocol.X25519_PUBLIC_KEY_LENGTH) {
+            throw new IllegalArgumentException(
+                "ServerHello public key must be " + VoiceProtocol.X25519_PUBLIC_KEY_LENGTH + " bytes");
+        }
         this.protocolVersion = protocolVersion;
         this.sessionId = sessionId;
         this.publicKey = publicKey;

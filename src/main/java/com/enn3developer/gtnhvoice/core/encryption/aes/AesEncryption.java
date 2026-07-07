@@ -39,11 +39,21 @@ public final class AesEncryption implements Encryption {
         }
     });
 
-    private @NotNull SecretKeySpec key;
+    // volatile: encrypt/decrypt run on multiple threads (the cipher pool is ThreadLocal for that
+    // reason), so a key rotation via updateKeyData must be safely published to them.
+    private volatile @NotNull SecretKeySpec key;
     private final SecureRandom random = new SecureRandom();
 
     public AesEncryption(byte[] keyData) {
-        this.key = new SecretKeySpec(keyData, "AES");
+        this.key = toAesKey(keyData);
+    }
+
+    private static SecretKeySpec toAesKey(byte[] keyData) {
+        if (keyData == null || (keyData.length != 16 && keyData.length != 24 && keyData.length != 32)) {
+            throw new IllegalArgumentException(
+                "AES key must be 16, 24 or 32 bytes, was " + (keyData == null ? "null" : keyData.length));
+        }
+        return new SecretKeySpec(keyData, "AES");
     }
 
     @Override
@@ -85,7 +95,7 @@ public final class AesEncryption implements Encryption {
 
     @Override
     public void updateKeyData(byte[] keyData) {
-        this.key = new SecretKeySpec(keyData, "AES");
+        this.key = toAesKey(keyData);
     }
 
     @Override

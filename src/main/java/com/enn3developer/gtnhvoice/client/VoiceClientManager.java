@@ -442,6 +442,10 @@ public final class VoiceClientManager {
                 packet.getFrameSize(),
                 packet.getSampleRate());
         } catch (Exception e) {
+            // Tear down whatever the try started before it threw (udpClient, voiceSourceManager,
+            // ping/capture threads); otherwise they run on as zombies - the capture worker would keep
+            // transmitting mic audio - while the UI reports voice DISABLED.
+            closeUdp();
             discardHandshakeKeypair();
             session = new VoiceClientSession(
                 VoiceClientSession.State.DISABLED,

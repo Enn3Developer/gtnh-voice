@@ -75,4 +75,10 @@ class AesEncryptionTest {
     void reportsGcmCipherName() {
         assertEquals("AES/GCM/NoPadding", new AesEncryption(key()).getName());
     }
+
+    @Test
+    void rejectsWrongLengthKey() {
+        assertThrows(IllegalArgumentException.class, () -> new AesEncryption(new byte[31]));
+        assertThrows(IllegalArgumentException.class, () -> new AesEncryption(new byte[0]));
+    }
 }

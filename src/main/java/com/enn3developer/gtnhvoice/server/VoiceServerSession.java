@@ -112,9 +112,15 @@ public final class VoiceServerSession implements IVoiceSession {
         return lastSeenMillis;
     }
 
-    /** Convenience for callers with no packet timestamp (tests); always eligible to relearn. */
+    /**
+     * Test-only convenience for callers with no packet timestamp: relearns the address immediately,
+     * bypassing (and NOT advancing) the anti-replay watermark, so it can never freeze later
+     * relearning. Production must use {@link #touch(InetSocketAddress, long)} with the authenticated
+     * packet timestamp.
+     */
     public void touch(@NotNull InetSocketAddress address) {
-        touch(address, Long.MAX_VALUE);
+        lastSeenMillis = System.currentTimeMillis();
+        relearnAddress(address);
     }
 
     /**
@@ -137,6 +143,10 @@ public final class VoiceServerSession implements IVoiceSession {
         if (packetTimestamp <= lastAcceptedTimestamp) return;
         lastAcceptedTimestamp = packetTimestamp;
 
+        relearnAddress(address);
+    }
+
+    private void relearnAddress(@NotNull InetSocketAddress address) {
         InetSocketAddress previous = lastAddress;
         if (previous == null) {
             lastAddress = address;
