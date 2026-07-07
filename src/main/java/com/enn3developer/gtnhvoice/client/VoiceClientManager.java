@@ -383,6 +383,10 @@ public final class VoiceClientManager {
             byte[] sharedSecret = VoiceProtocol.computeSharedSecret(keyPair.getPrivate(), serverPublic);
             key = VoiceProtocol.deriveKey(sharedSecret);
         } catch (Exception e) {
+            // Tear down any still-running previous session first: a ServerHello with a NEW sessionId
+            // but a bad key gets past the duplicate-sessionId short-circuit above, so without this the
+            // old session's UDP client, ping and capture threads would leak while we report DISABLED.
+            closeUdp();
             session = new VoiceClientSession(
                 VoiceClientSession.State.DISABLED,
                 "voice key exchange failed: " + e.getMessage(),

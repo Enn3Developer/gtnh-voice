@@ -39,6 +39,11 @@ public class PacketUdp {
         return sessionId;
     }
 
+    /** Sender-stamped send time (ms). Used by the server for anti-replay on source-address relearning. */
+    public long getTimestamp() {
+        return timestamp;
+    }
+
     public Packet<?> getPacketUntyped(@NotNull Encryption encryption) throws IOException {
         if (!read) readPacket(encryption);
 

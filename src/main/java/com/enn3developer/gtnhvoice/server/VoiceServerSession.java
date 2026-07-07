@@ -38,6 +38,8 @@ public final class VoiceServerSession implements IVoiceSession {
 
     private volatile InetSocketAddress lastAddress;
     private volatile long lastSeenMillis;
+    // Highest packet timestamp accepted for address relearning - the anti-replay watermark (see touch).
+    private volatile long lastAcceptedTimestamp;
 
     public VoiceServerSession(@NotNull UUID playerUuid, @NotNull String playerName, @NotNull UUID sessionId,
         @NotNull AesEncryption encryption) {
@@ -110,13 +112,30 @@ public final class VoiceServerSession implements IVoiceSession {
         return lastSeenMillis;
     }
 
+    /** Convenience for callers with no packet timestamp (tests); always eligible to relearn. */
+    public void touch(@NotNull InetSocketAddress address) {
+        touch(address, Long.MAX_VALUE);
+    }
+
     /**
-     * Records a datagram from this session's secret, updating last-seen and, if the source
+     * Records an authenticated datagram from this session, updating last-seen and, if the source
      * address changed (first packet, or the player's UDP stream resumed from a different port),
      * re-learning it transparently without requiring a new handshake.
+     * <p>
+     * {@code packetTimestamp} is the sender-stamped send time. The source address is only relearned
+     * from a packet strictly newer than the last one accepted for relearning: AES-GCM authenticates
+     * a packet but does not stop a <em>replay</em> of a genuine one, so without this an on-path
+     * attacker could resend a captured datagram from their own address and redirect this session's
+     * inbound audio to themselves. A replay carries an old timestamp and is ignored for relearning;
+     * the victim's next real packet (newer timestamp) re-adopts the correct address.
      */
-    public void touch(@NotNull InetSocketAddress address) {
+    public void touch(@NotNull InetSocketAddress address, long packetTimestamp) {
         lastSeenMillis = System.currentTimeMillis();
+
+        // Only a packet newer than the last accepted one may move the address. Reordered/duplicate
+        // packets (<=) are still counted as liveness above but never relearn the address.
+        if (packetTimestamp <= lastAcceptedTimestamp) return;
+        lastAcceptedTimestamp = packetTimestamp;
 
         InetSocketAddress previous = lastAddress;
         if (previous == null) {

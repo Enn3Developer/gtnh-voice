@@ -218,14 +218,19 @@ public final class VoiceServerManager implements UdpPacketListener {
             .getId();
 
         VoiceServerSession existing = sessionsByPlayerUuid.get(playerUuid);
-        boolean isNewSession = existing == null;
 
+        // Resend the roster snapshot + group update whenever we (re)build the session - a brand-new
+        // session OR a genuine reconnect/relog rebuild - because a reconnecting client has reset its
+        // voice state and nothing else backfills players already in voice. A pure retry (same
+        // ephemeral key) reuses the session and must NOT resend, or it would spam on every retry.
         VoiceServerSession session;
+        boolean sendInitialState;
         if (existing != null && Arrays.equals(existing.getClientPublicKey(), clientPublicKey)) {
             // Retried ClientHello carrying the SAME ephemeral key: reuse the session so the
             // ServerHello (and thus the derived key) stays byte-identical - the client's handshake-
             // retry loop depends on this.
             session = existing;
+            sendInitialState = false;
         } else {
             // First ClientHello, or a reconnect/relog whose fresh ephemeral key raced
             // onPlayerLoggedOut (IO vs server thread): (re)run the ECDH so both sides agree on the
@@ -258,11 +263,13 @@ public final class VoiceServerManager implements UdpPacketListener {
             VoiceServerSession previous = sessionsByPlayerUuid.put(playerUuid, rebuilt);
             if (previous != null) sessionsBySessionId.remove(previous.getSessionId());
             session = rebuilt;
+            sendInitialState = true;
         }
 
-        if (isNewSession) {
-            // Only a genuinely new player (not a retry or a same-player rebuild) re-sends the roster
-            // or re-broadcasts the join.
+        if (sendInitialState) {
+            // Fired for a new session or a rebuild (reconnect/relog). The ADD broadcast to others is a
+            // harmless refresh when the player was already in voice; the roster snapshot and group
+            // update are what a reset client needs.
             pendingSends.add(() -> sendRosterSnapshot(player, playerUuid));
             pendingSends.add(
                 () -> broadcastRosterUpdate(VoiceRosterUpdatePacket.MODE_ADD, playerUuid, session.getPlayerName()));
@@ -351,12 +358,11 @@ public final class VoiceServerManager implements UdpPacketListener {
 
         try {
             // Decrypt FIRST, then touch(). getPacketUntyped runs AES-GCM decryption, which fails on a
-            // forged body. Re-learning the source address before that check would let an on-path
-            // attacker who sniffed the cleartext sessionId hijack the victim's inbound audio to their
-            // own address with a single garbage packet - so the address is only relearned once the
-            // packet is proven to come from a holder of the session key.
+            // forged body, so a garbage packet can never relearn the address. The packet timestamp is
+            // passed to touch() so a REPLAY of a genuine (authentic) datagram - which decrypts fine but
+            // carries an old timestamp - also can't hijack where this session's audio is delivered.
             Packet<?> packet = packetUdp.getPacketUntyped(session.getEncryption());
-            session.touch(sender);
+            session.touch(sender, packetUdp.getTimestamp());
             if (packet instanceof PingPacket) {
                 // Liveness/NAT keepalive only for now - last-seen is already updated by touch() above.
             } else if (packet instanceof PlayerAudioPacket) {
