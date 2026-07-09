@@ -31,6 +31,16 @@ public final class HelloCodec {
 
     private HelloCodec() {}
 
+    /**
+     * Upper bound on the decoded byte-length of any UTF-8 string in a hello body. The real strings are
+     * tiny (a mod version string, an empty {@code udpHost}), so an 8 KiB cap is generous while making the
+     * unbounded {@code new byte[length]} allocation DoS (a 6-byte hello claiming ~2 GiB) impossible:
+     * {@link #readUtf8String} rejects the length prefix before allocating. Mirrors the {@code max} bound
+     * {@link com.enn3developer.gtnhvoice.core.proto.packets.PacketUtil#readBytes} already applies on the
+     * UDP path.
+     */
+    public static final int MAX_UTF8_STRING_LENGTH = 8 * 1024;
+
     // ---------------------------------------------------------------------------------------------
     // ClientHello (C->S) body
     // ---------------------------------------------------------------------------------------------
@@ -179,6 +189,13 @@ public final class HelloCodec {
     /** Reproduces {@code ByteBufUtils.readUTF8String}: LEB128 VarInt byte-length prefix + UTF-8 bytes. */
     public static String readUtf8String(DataInput in) throws IOException {
         int length = readVarInt(in);
+        // Validate the attacker-controlled length prefix BEFORE allocating: readVarInt permits ~2 GiB, so
+        // a 6-byte hello would otherwise force a giant heap allocation on the server thread (CWE-789), long
+        // before the per-player HelloRateLimiter ever sees the packet.
+        if (length < 0 || length > MAX_UTF8_STRING_LENGTH) {
+            throw new IOException("UTF-8 string length out of range (max: " + MAX_UTF8_STRING_LENGTH
+                + ", value: " + length + ")");
+        }
         byte[] bytes = new byte[length];
         in.readFully(bytes);
         return new String(bytes, StandardCharsets.UTF_8);
