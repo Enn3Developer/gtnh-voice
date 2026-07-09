@@ -2,7 +2,6 @@ package com.enn3developer.gtnhvoice.network;
 
 import java.util.UUID;
 
-import cpw.mods.fml.common.network.ByteBufUtils;
 import cpw.mods.fml.common.network.simpleimpl.IMessage;
 import io.netty.buffer.ByteBuf;
 
@@ -89,33 +88,28 @@ public class ServerHelloPacket implements IMessage {
         return capabilityFlags;
     }
 
+    // Body wire format lives in the shared :protocol HelloCodec (single source of truth for the mod and the
+    // exploit harness). SimpleNetworkWrapper hands each IMessage exactly its own payload slice.
     @Override
     public void fromBytes(ByteBuf buf) {
-        protocolVersion = buf.readByte();
-        sessionId = new UUID(buf.readLong(), buf.readLong());
-        publicKey = new byte[VoiceProtocol.X25519_PUBLIC_KEY_LENGTH];
-        buf.readBytes(publicKey);
-        udpHost = ByteBufUtils.readUTF8String(buf);
-        udpPort = buf.readInt();
-        distance = buf.readInt();
-        opusMode = buf.readByte();
-        frameSize = buf.readInt();
-        sampleRate = buf.readInt();
-        capabilityFlags = buf.readInt();
+        byte[] body = new byte[buf.readableBytes()];
+        buf.readBytes(body);
+        HelloCodec.ServerHello decoded = HelloCodec.decodeServerHello(body);
+        protocolVersion = decoded.protocolVersion;
+        sessionId = decoded.sessionId;
+        publicKey = decoded.publicKey;
+        udpHost = decoded.udpHost;
+        udpPort = decoded.udpPort;
+        distance = decoded.distance;
+        opusMode = decoded.opusMode;
+        frameSize = decoded.frameSize;
+        sampleRate = decoded.sampleRate;
+        capabilityFlags = decoded.capabilityFlags;
     }
 
     @Override
     public void toBytes(ByteBuf buf) {
-        buf.writeByte(protocolVersion);
-        buf.writeLong(sessionId.getMostSignificantBits());
-        buf.writeLong(sessionId.getLeastSignificantBits());
-        buf.writeBytes(publicKey);
-        ByteBufUtils.writeUTF8String(buf, udpHost);
-        buf.writeInt(udpPort);
-        buf.writeInt(distance);
-        buf.writeByte(opusMode);
-        buf.writeInt(frameSize);
-        buf.writeInt(sampleRate);
-        buf.writeInt(capabilityFlags);
+        buf.writeBytes(HelloCodec.encodeServerHello(protocolVersion, sessionId, publicKey, udpHost, udpPort, distance,
+            opusMode, frameSize, sampleRate, capabilityFlags));
     }
 }

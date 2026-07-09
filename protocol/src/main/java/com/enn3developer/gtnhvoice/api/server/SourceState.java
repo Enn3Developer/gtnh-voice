@@ -1,11 +1,8 @@
 package com.enn3developer.gtnhvoice.api.server;
 
-import com.enn3developer.gtnhvoice.api.server.group.RecipientSelection;
-import com.enn3developer.gtnhvoice.api.server.group.RoutingContext;
-
 /**
- * The sourceState values groups stamp on outgoing audio ({@link RecipientSelection#send},
- * {@link RoutingContext#sendTo}), deciding per packet how the recipient plays the frame back:
+ * The sourceState values groups stamp on outgoing audio ({@code RecipientSelection.send},
+ * {@code RoutingContext.sendTo}), deciding per packet how the recipient plays the frame back:
  * {@link #POSITIONAL} applies the packet's source position (gain attenuates with distance), {@link #FLAT} plays
  * at full gain with no spatialization. Positional is deliberately the zero/legacy wire value: peers that predate
  * the flag always sent 0, so a version-skewed pairing degrades to the proximity behavior it always had instead of

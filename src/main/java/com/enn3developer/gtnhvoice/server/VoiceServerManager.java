@@ -76,6 +76,14 @@ public final class VoiceServerManager implements UdpPacketListener {
     private static final long REAP_INTERVAL_SECONDS = 30;
     private static final long UNKNOWN_SESSION_LOG_THROTTLE_MILLIS = 5000;
     private static final long READ_FAILURE_LOG_THROTTLE_MILLIS = 5000;
+    private static final long HANDSHAKE_LOG_THROTTLE_MILLIS = 5000;
+
+    // Per-player ClientHello budget. A legitimate client retries at most once/sec for 10 attempts (see
+    // VoiceClientManager.HANDSHAKE_RETRY_INTERVAL_MILLIS), so a 5-hello burst refilling at 2/sec passes
+    // a real handshake untouched while dropping a flood (finding #9: 172k hellos froze the server ~34s
+    // running per-hello ECDH on the IO thread) at the door, before any ECDH/enqueue/log.
+    private static final int HELLO_BURST = 5;
+    private static final long HELLO_REFILL_INTERVAL_MILLIS = 500;
 
     private final Map<UUID, VoiceServerSession> sessionsBySessionId = new ConcurrentHashMap<>();
     private final Map<UUID, VoiceServerSession> sessionsByPlayerUuid = new ConcurrentHashMap<>();
@@ -96,6 +104,10 @@ public final class VoiceServerManager implements UdpPacketListener {
     private volatile boolean started;
     private final AtomicLong lastUnknownSessionLogMillis = new AtomicLong();
     private final AtomicLong lastReadFailureLogMillis = new AtomicLong();
+    private final AtomicLong lastHelloDropLogMillis = new AtomicLong();
+    private final AtomicLong lastHandshakeAcceptLogMillis = new AtomicLong();
+    private final AtomicLong lastHandshakeRejectLogMillis = new AtomicLong();
+    private final HelloRateLimiter helloRateLimiter = new HelloRateLimiter(HELLO_BURST, HELLO_REFILL_INTERVAL_MILLIS);
 
     public static VoiceServerManager getInstance() {
         return INSTANCE;
@@ -174,6 +186,20 @@ public final class VoiceServerManager implements UdpPacketListener {
     }
 
     public void handleClientHello(@NotNull EntityPlayerMP player, @NotNull ClientHelloPacket packet) {
+        UUID playerUuid = player.getGameProfile()
+            .getId();
+
+        // Per-player rate limit FIRST, before any ECDH/HKDF, pendingSends enqueue, or log - a flood
+        // (finding #9) must cost nothing past this point. runs on the Netty IO thread.
+        if (!helloRateLimiter.tryAcquire(playerUuid)) {
+            if (LogThrottle.shouldLog(lastHelloDropLogMillis, HANDSHAKE_LOG_THROTTLE_MILLIS)) {
+                GtnhVoice.LOG.warn(
+                    "Rate-limiting voice handshakes from {}: dropping excess ClientHello (flood or misbehaving client)",
+                    player.getCommandSenderName());
+            }
+            return;
+        }
+
         if (packet.getProtocolVersion() != VoiceProtocol.PROTOCOL_VERSION) {
             pendingSends.add(() -> {
                 NetworkHandler.WRAPPER.sendTo(
@@ -187,12 +213,14 @@ public final class VoiceServerManager implements UdpPacketListener {
                             + VoiceProtocol.PROTOCOL_VERSION
                             + "). Voice chat is disabled."));
             });
-            GtnhVoice.LOG.warn(
-                "Rejected voice handshake from {}: client protocol {} != server protocol {} (mod version {})",
-                player.getCommandSenderName(),
-                packet.getProtocolVersion(),
-                VoiceProtocol.PROTOCOL_VERSION,
-                packet.getModVersion());
+            if (LogThrottle.shouldLog(lastHandshakeRejectLogMillis, HANDSHAKE_LOG_THROTTLE_MILLIS)) {
+                GtnhVoice.LOG.warn(
+                    "Rejected voice handshake from {}: client protocol {} != server protocol {} (mod version {})",
+                    player.getCommandSenderName(),
+                    packet.getProtocolVersion(),
+                    VoiceProtocol.PROTOCOL_VERSION,
+                    packet.getModVersion());
+            }
             return;
         }
 
@@ -208,14 +236,13 @@ public final class VoiceServerManager implements UdpPacketListener {
                     new ChatComponentText(
                         "[GTNH Voice] Voice handshake failed (bad key exchange). Voice chat is disabled."));
             });
-            GtnhVoice.LOG.warn(
-                "Rejected voice handshake from {}: missing/invalid X25519 public key in ClientHello",
-                player.getCommandSenderName());
+            if (LogThrottle.shouldLog(lastHandshakeRejectLogMillis, HANDSHAKE_LOG_THROTTLE_MILLIS)) {
+                GtnhVoice.LOG.warn(
+                    "Rejected voice handshake from {}: missing/invalid X25519 public key in ClientHello",
+                    player.getCommandSenderName());
+            }
             return;
         }
-
-        UUID playerUuid = player.getGameProfile()
-            .getId();
 
         VoiceServerSession existing = sessionsByPlayerUuid.get(playerUuid);
 
@@ -253,10 +280,12 @@ public final class VoiceServerManager implements UdpPacketListener {
                         new ChatComponentText(
                             "[GTNH Voice] Voice handshake failed (bad key exchange). Voice chat is disabled."));
                 });
-                GtnhVoice.LOG.warn(
-                    "Rejected voice handshake from {}: X25519 key agreement failed",
-                    player.getCommandSenderName(),
-                    e);
+                if (LogThrottle.shouldLog(lastHandshakeRejectLogMillis, HANDSHAKE_LOG_THROTTLE_MILLIS)) {
+                    GtnhVoice.LOG.warn(
+                        "Rejected voice handshake from {}: X25519 key agreement failed",
+                        player.getCommandSenderName(),
+                        e);
+                }
                 return;
             }
 
@@ -294,15 +323,17 @@ public final class VoiceServerManager implements UdpPacketListener {
             0);
         pendingSends.add(() -> NetworkHandler.WRAPPER.sendTo(hello, player));
 
-        GtnhVoice.LOG.info(
-            "Accepted voice handshake from {}: queued ServerHello sessionId={} udpPort={} distance={} opusMode={} frameSize={} sampleRate={}",
-            player.getCommandSenderName(),
-            VoiceProtocol.abbreviateSessionId(session.getSessionId()),
-            Config.udpPort,
-            Config.distance,
-            Config.getOpusMode(),
-            Config.frameSize,
-            Config.sampleRate);
+        if (LogThrottle.shouldLog(lastHandshakeAcceptLogMillis, HANDSHAKE_LOG_THROTTLE_MILLIS)) {
+            GtnhVoice.LOG.info(
+                "Accepted voice handshake from {}: queued ServerHello sessionId={} udpPort={} distance={} opusMode={} frameSize={} sampleRate={}",
+                player.getCommandSenderName(),
+                VoiceProtocol.abbreviateSessionId(session.getSessionId()),
+                Config.udpPort,
+                Config.distance,
+                Config.getOpusMode(),
+                Config.frameSize,
+                Config.sampleRate);
+        }
     }
 
     /**
@@ -449,6 +480,10 @@ public final class VoiceServerManager implements UdpPacketListener {
     public void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
         UUID playerUuid = event.player.getGameProfile()
             .getId();
+        // Drop the handshake rate-limit bucket regardless of voice state, so the map tracks online
+        // players only and does not accumulate churned-through UUIDs.
+        helloRateLimiter.forget(playerUuid);
+
         VoiceServerSession session = sessionsByPlayerUuid.get(playerUuid);
         if (session == null) return;
 

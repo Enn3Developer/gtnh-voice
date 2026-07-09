@@ -36,6 +36,15 @@
 dependencies {
     //runtimeOnlyNonPublishable("com.github.GTNewHorizons:NotEnoughItems:2.7.69-GTNH:dev")
 
+    // Shared MC-free protocol module (VoiceProtocol crypto, AesEncryption, the UDP PacketUdpCodec +
+    // packets, and the ClientHello/ServerHello HelloCodec body framing). NOT a binary project
+    // dependency: RetroFuturaGradle can't resolve a plain-Java subproject variant onto the mod's
+    // obfuscation-stamped runtime/shade classpath. Instead the mod compiles :protocol's main sources
+    // in-tree via an extra srcDir (see build.gradle.kts), so the shared classes are shaded naturally
+    // alongside the mod's own classes at their original fully-qualified names and RFG never sees a
+    // binary dep. The .java still lives only in :protocol; the :exploit harness consumes it as a real
+    // project dependency, so any protocol change still breaks the harness at compile time.
+
     // GTNH's ModularUI2 GUI framework (widget tree, layout engine, client/synced screens, JSON theming),
     // used for every settings screen; a hard required-after runtime dependency (see GtnhVoice's @Mod
     // dependencies), which is fine since GTNH packs ship it anyway.

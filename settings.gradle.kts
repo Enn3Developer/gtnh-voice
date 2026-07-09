@@ -19,3 +19,10 @@ pluginManagement {
 plugins {
     id("com.gtnewhorizons.gtnhsettingsconvention") version("2.0.20")
 }
+
+// Shared MC-free protocol module (crypto + wire format), single source of truth for the mod and the
+// :exploit harness. Shaded into the mod jar via shadowImplementation.
+include("protocol")
+
+// Throwaway spike: a raw Netty login/FML-handshake harness (see :exploit). Not part of the mod build.
+include("exploit")

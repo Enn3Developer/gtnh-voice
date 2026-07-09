@@ -1,6 +1,5 @@
 package com.enn3developer.gtnhvoice.network;
 
-import cpw.mods.fml.common.network.ByteBufUtils;
 import cpw.mods.fml.common.network.simpleimpl.IMessage;
 import io.netty.buffer.ByteBuf;
 
@@ -40,23 +39,21 @@ public class ClientHelloPacket implements IMessage {
         return publicKey;
     }
 
+    // The body wire format (incl. the tolerant public-key read) lives in the shared :protocol HelloCodec so
+    // the exploit harness and the mod can never drift. SimpleNetworkWrapper hands each IMessage exactly its
+    // own payload slice, so the whole remaining buffer is this hello's body.
     @Override
     public void fromBytes(ByteBuf buf) {
-        protocolVersion = buf.readByte();
-        modVersion = ByteBufUtils.readUTF8String(buf);
-        // Read the public key tolerantly: a version-mismatched peer may send a differently-shaped
-        // body, and we still want handleClientHello to run and issue a clean version-mismatch reject
-        // rather than throwing here. A correct v4 client always includes the full 32 bytes.
-        if (buf.readableBytes() >= VoiceProtocol.X25519_PUBLIC_KEY_LENGTH) {
-            publicKey = new byte[VoiceProtocol.X25519_PUBLIC_KEY_LENGTH];
-            buf.readBytes(publicKey);
-        }
+        byte[] body = new byte[buf.readableBytes()];
+        buf.readBytes(body);
+        HelloCodec.ClientHello decoded = HelloCodec.decodeClientHello(body);
+        protocolVersion = decoded.protocolVersion;
+        modVersion = decoded.modVersion;
+        publicKey = decoded.publicKey;
     }
 
     @Override
     public void toBytes(ByteBuf buf) {
-        buf.writeByte(protocolVersion);
-        ByteBufUtils.writeUTF8String(buf, modVersion);
-        if (publicKey != null) buf.writeBytes(publicKey);
+        buf.writeBytes(HelloCodec.encodeClientHello(protocolVersion, modVersion, publicKey));
     }
 }
