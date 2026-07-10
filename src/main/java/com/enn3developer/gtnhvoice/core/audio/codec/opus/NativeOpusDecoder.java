@@ -37,6 +37,12 @@ public final class NativeOpusDecoder implements BaseOpusDecoder {
             return decoder.decode(encoded);
         } catch (OpusException e) {
             throw new CodecException("Failed to decode audio", e);
+        } catch (RuntimeException | AssertionError e) {
+            // Mirror JavaOpusDecoder's contract: a malformed frame must surface as CodecException, never as an
+            // escaping unchecked throwable. The JNI binding shouldn't throw beyond OpusException, but a bad frame
+            // reaching native code must not be able to strand the caller's poller thread. Fatal Errors other than
+            // AssertionError (OOM, etc.) are intentionally left to propagate.
+            throw new CodecException("Failed to decode audio", e);
         }
     }
 

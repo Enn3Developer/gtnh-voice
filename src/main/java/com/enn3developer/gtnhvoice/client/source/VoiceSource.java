@@ -2,6 +2,7 @@ package com.enn3developer.gtnhvoice.client.source;
 
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.jetbrains.annotations.NotNull;
 
@@ -10,6 +11,7 @@ import com.enn3developer.gtnhvoice.client.PlayerVoiceSettings;
 import com.enn3developer.gtnhvoice.client.playback.PlaybackManager;
 import com.enn3developer.gtnhvoice.core.api.audio.codec.AudioDecoder;
 import com.enn3developer.gtnhvoice.core.api.audio.codec.CodecException;
+import com.enn3developer.gtnhvoice.core.api.util.LogThrottle;
 import com.enn3developer.gtnhvoice.core.audio.jitter.AdaptiveJitterBuffer;
 
 /**
@@ -63,6 +65,10 @@ final class VoiceSource {
     private volatile boolean decoderResetPending;
     private Thread pollerThread;
     private int distance;
+
+    // Throttles the poller's last-resort "unexpected throwable" log so a poison-frame flood can't turn into a log
+    // flood - see runPoller(). Per-source, since each source has its own poller thread.
+    private final AtomicLong lastPollerFaultLogMillis = new AtomicLong();
 
     // Decode bookkeeping, only ever touched from the poller thread.
     private long lastEmittedSequence = -1;
@@ -181,7 +187,22 @@ final class VoiceSource {
                 emittedSinceReset = false;
             }
 
-            boolean emitted = emitNextFrame();
+            // The decoder contract (JavaOpusDecoder/NativeOpusDecoder) now converts a malformed frame into a
+            // CodecException that emitNextFrame() swallows per-frame. This guard is defense in depth: any other
+            // unexpected non-fatal throwable from one frame must drop that frame and keep the thread alive, never
+            // strand this per-speaker poller (which would make the victim permanently deaf to this speaker). Fatal
+            // Errors (OOM, etc.) are left to propagate. The log is throttled so a poison-frame flood can't become a
+            // log flood.
+            boolean emitted;
+            try {
+                emitted = emitNextFrame();
+            } catch (RuntimeException | AssertionError e) {
+                emitted = true; // treat as progress: a frame was consumed, just drop it and move on
+                if (LogThrottle.shouldLog(lastPollerFaultLogMillis, LOG_INTERVAL_MILLIS)) {
+                    GtnhVoice.LOG
+                        .error("[VoiceSource] Dropped frame after unexpected poller fault for sourceId={}", sourceId, e);
+                }
+            }
 
             long now = System.currentTimeMillis();
             if (now - lastLogTime >= LOG_INTERVAL_MILLIS) {

@@ -37,6 +37,14 @@ public final class JavaOpusDecoder implements BaseOpusDecoder {
             }
         } catch (OpusException e) {
             throw new CodecException("Failed to decode audio", e);
+        } catch (RuntimeException | AssertionError e) {
+            // The pure-Java Concentus backend signals malformed frames with a bare AssertionError (its
+            // Inlines.OpusAssert is an unconditional if/throw, so it fires even with -da) and occasionally other
+            // unchecked RuntimeExceptions - none of which are OpusException. Surface them as the CodecException
+            // this contract promises so one poison frame is a catchable decode failure, not an escaping throwable
+            // that kills the caller's poller thread. Error subclasses other than AssertionError (OOM, etc.) are
+            // deliberately not caught so genuinely fatal JVM conditions still propagate.
+            throw new CodecException("Failed to decode audio", e);
         }
 
         short[] decoded;
