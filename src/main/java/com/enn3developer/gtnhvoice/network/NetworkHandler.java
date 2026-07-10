@@ -22,6 +22,13 @@ public final class NetworkHandler {
 
     public static final SimpleNetworkWrapper WRAPPER = NetworkRegistry.INSTANCE.newSimpleChannel(VoiceProtocol.CHANNEL);
 
+    /**
+     * The one and only serverbound discriminator on this channel (ClientHello). Every other
+     * discriminator is clientbound. {@code MixinFMLIndexedMessageToMessageCodec} uses this to drop
+     * wrong-side packets before they decode, so keep it in sync with the {@code id} assignment below.
+     */
+    public static final int SERVERBOUND_DISCRIMINATOR = 0;
+
     private static boolean initialized;
 
     public static synchronized void init() {

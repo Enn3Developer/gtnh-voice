@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rate-limit inbound voice audio per session, so one client can't flood the server or amplify its traffic onto other players
 - Throttle the UDP address-relearn log so a source-port-rotation flood can't fill the server disk
 - Contain malformed voice frames in the decoder, so a crafted packet can't kill a listener's playback thread and mute a speaker
+- Drop wrong-side control packets before they decode, so a client can't flood the server log with handshake-decode stack traces
 
 ### Fixed
 

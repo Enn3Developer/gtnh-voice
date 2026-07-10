@@ -156,3 +156,13 @@ tasks.register<JavaExec>("decodeProbe") {
     mainClass.set("com.enn3developer.gtnhvoice.security.ControlDecodeProbe")
     args = (project.findProperty("probeArgs") as String? ?: "").split(" ").filter { it.isNotEmpty() }
 }
+
+// Security review: malformed wrong-side (clientbound) control discriminators fail in FML's shared codec
+// upstream of every gtnhvoice rate limiter, logging 3 full stack traces per packet on the server thread
+// -> unthrottled disk-exhaustion + tick-starvation DoS from a single authenticated client.
+tasks.register<JavaExec>("decodeFlood") {
+    group = "security"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.enn3developer.gtnhvoice.security.ControlDecodeFlood")
+    args = (project.findProperty("decodeArgs") as String? ?: "").split(" ").filter { it.isNotEmpty() }
+}

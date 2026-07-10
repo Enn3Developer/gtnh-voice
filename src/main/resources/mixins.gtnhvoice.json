@@ -5,7 +5,9 @@
   "refmap": "mixins.gtnhvoice.refmap.json",
   "target": "@env(DEFAULT)",
   "compatibilityLevel": "JAVA_8",
-  "mixins": [],
+  "mixins": [
+    "MixinFMLIndexedMessageToMessageCodec"
+  ],
   "client": [],
   "server": []
 }
