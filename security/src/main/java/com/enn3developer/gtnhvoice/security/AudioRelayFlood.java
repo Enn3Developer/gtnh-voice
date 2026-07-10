@@ -50,7 +50,7 @@ public final class AudioRelayFlood {
         AtomicLong victimBytes = new AtomicLong();
 
         Thread victimThread = new Thread(() -> {
-            try (VoiceSession victim = EvilClient.connect(host, port)
+            try (VoiceSession victim = Client.connect(host, port)
                 .username("victimbot")
                 .establish()) {
 
@@ -80,7 +80,7 @@ public final class AudioRelayFlood {
 
         victimReady.await();
 
-        try (VoiceSession mallory = EvilClient.connect(host, port)
+        try (VoiceSession mallory = Client.connect(host, port)
             .username("mallory")
             .establish()) {
 

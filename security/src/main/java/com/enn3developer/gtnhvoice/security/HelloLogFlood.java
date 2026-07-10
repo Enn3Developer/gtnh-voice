@@ -40,7 +40,7 @@ public final class HelloLogFlood {
         System.out.println("[hello-log] each ClientHello body = " + body.length + " bytes (modVersion="
             + bigModVersion.length() + " chars); firing " + count);
 
-        try (VoiceSession s = EvilClient.connect(host, port)
+        try (VoiceSession s = Client.connect(host, port)
             .username("mallory")
             .establish()) {
 

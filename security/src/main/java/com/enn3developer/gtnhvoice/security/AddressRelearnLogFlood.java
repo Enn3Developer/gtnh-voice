@@ -51,7 +51,7 @@ public final class AddressRelearnLogFlood {
         int targetRate = args.length > 3 ? Integer.parseInt(args[3]) : 3000;
         int socketPoolSize = args.length > 4 ? Integer.parseInt(args[4]) : 8;
 
-        try (VoiceSession mallory = EvilClient.connect(host, port)
+        try (VoiceSession mallory = Client.connect(host, port)
             .username("mallory")
             .establish()) {
 

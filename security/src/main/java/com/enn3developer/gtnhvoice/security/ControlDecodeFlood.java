@@ -55,7 +55,7 @@ public final class ControlDecodeFlood {
         // readFully/readLong underflows on the next field -> EOFException, escaping as UncheckedIOException.
         byte[] truncatedBody = new byte[] { 0x04 };
 
-        try (VoiceSession s = EvilClient.connect(host, port)
+        try (VoiceSession s = Client.connect(host, port)
             .username(username)
             .establish()) {
 

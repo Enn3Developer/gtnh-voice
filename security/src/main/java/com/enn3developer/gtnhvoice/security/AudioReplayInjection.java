@@ -63,7 +63,7 @@ public final class AudioReplayInjection {
         AtomicBoolean allSameSeq = new AtomicBoolean(true);
 
         Thread victimThread = new Thread(() -> {
-            try (VoiceSession victim = EvilClient.connect(host, port)
+            try (VoiceSession victim = Client.connect(host, port)
                 .username("victimbot")
                 .establish()) {
 
@@ -92,7 +92,7 @@ public final class AudioReplayInjection {
         victimThread.start();
         victimReady.await();
 
-        try (VoiceSession alice = EvilClient.connect(host, port)
+        try (VoiceSession alice = Client.connect(host, port)
             .username("alice")
             .establish()) {
 

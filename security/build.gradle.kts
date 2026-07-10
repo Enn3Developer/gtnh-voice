@@ -1,4 +1,4 @@
-// Standalone spike: a hand-rolled Minecraft 1.7.10 + FML client that logs into the dev server
+// Standalone test harness: a hand-rolled Minecraft 1.7.10 + FML client that logs into the dev server
 // offline, completes the FML|HS mod-list handshake and reaches PLAY. Deliberately self-contained
 // (own repositories/toolchain) so it does not drag in the GTNHGradle mod build.
 plugins {
@@ -12,11 +12,11 @@ repositories {
     maven { url = uri("https://jitpack.io") }
 }
 
-// Security review (round 3): the ACTUAL victim-side decode classes (JavaOpusDecoder, BaseOpusDecoder,
+// Security review (round 3): the actual receiver-side decode classes (JavaOpusDecoder, BaseOpusDecoder,
 // AdaptiveJitterBuffer + the codec api interfaces) live in the mod's src/main. The mod build compiles them at
 // Java 25 (class v69), unreadable by this Java-17 harness toolchain, so instead of linking the mod's binaries
-// we pull the EXACT SAME SOURCE FILES into this module's compilation (Concentus is the only extra dep they
-// need). Same source -> same class the honest victim runs.
+// we pull the exact same source files into this module's compilation (Concentus is the only extra dep they
+// need). Same source -> same class the real receiver runs.
 sourceSets["main"].java {
     srcDir("${rootProject.projectDir}/src/main/java")
     include("com/enn3developer/gtnhvoice/security/**")
@@ -51,7 +51,7 @@ dependencies {
     // Only used to parse the FML-augmented Server List Ping (modinfo.modList) response.
     implementation("com.google.code.gson:gson:2.10.1")
 
-    // Round-3 decode-path harness: the Concentus codec the victim JavaOpusDecoder wraps (sources pulled in
+    // Round-3 decode-path harness: the Concentus codec the receiver-side JavaOpusDecoder wraps (sources pulled in
     // via the sourceSets include above).
     implementation("com.github.lostromb.concentus:Concentus:3885c4e")
 }
@@ -66,15 +66,15 @@ java {
 
 application {
     // Voice session negotiation (login + FML + ClientHello/ServerHello + a server-accepted UDP
-    // packet). The earlier login-only spike is still runnable via -PspikeMain or its class directly.
-    mainClass.set("com.enn3developer.gtnhvoice.security.EvilClient")
+    // packet). The earlier login-only harness is still runnable via -PspikeMain or its class directly.
+    mainClass.set("com.enn3developer.gtnhvoice.security.Client")
 }
 
-// Finding #9: ClientHello flood -> unbounded pendingSends growth. Temporary, do-not-commit harness.
+// Finding #9: ClientHello burst -> unbounded pendingSends growth. Temporary, do-not-commit harness.
 tasks.register<JavaExec>("flood9") {
     group = "security"
     classpath = sourceSets["main"].runtimeClasspath
-    mainClass.set("com.enn3developer.gtnhvoice.security.DosProof")
+    mainClass.set("com.enn3developer.gtnhvoice.security.PendingSendsGrowth")
     args = (project.findProperty("floodArgs") as String? ?: "").split(" ").filter { it.isNotEmpty() }
 }
 
@@ -87,7 +87,7 @@ tasks.register<JavaExec>("allocDos") {
 }
 
 // Security review: serverbound UDP audio path has no rate limit -> server relays one client's audio
-// flood to every nearby honest player at an arbitrary rate (victim-client DoS + server egress amp).
+// burst to every nearby in-range player at an arbitrary rate (receiver-side resource exhaustion + server egress amplification).
 tasks.register<JavaExec>("relayFlood") {
     group = "security"
     classpath = sourceSets["main"].runtimeClasspath
@@ -96,7 +96,7 @@ tasks.register<JavaExec>("relayFlood") {
 }
 
 // Security review: serverbound UDP audio has no replay/dedup - the anti-replay watermark gates only
-// address relearning, so a keyless on-path attacker replays one captured PlayerAudioPacket datagram and
+// address relearning, so a keyless on-path client can resend one captured PlayerAudioPacket datagram and
 // the server re-routes it to every in-range player each time (CWE-294 capture-replay).
 tasks.register<JavaExec>("audioReplay") {
     group = "security"
@@ -105,7 +105,7 @@ tasks.register<JavaExec>("audioReplay") {
     args = (project.findProperty("replayArgs") as String? ?: "").split(" ").filter { it.isNotEmpty() }
 }
 
-// Security review: per-hello entry log fires before the HelloRateLimiter, logging attacker's 8KB
+// Security review: per-hello entry log fires before the HelloRateLimiter, logging the client's 8KB
 // modVersion per hello -> log/disk I/O amplification the finding-#9 gate was meant to prevent.
 tasks.register<JavaExec>("helloLogFlood") {
     group = "security"
@@ -116,7 +116,7 @@ tasks.register<JavaExec>("helloLogFlood") {
 
 // Security review: the UDP source-address relearn log (VoiceServerSession.relearnAddress) is unthrottled
 // and runs on the event-loop thread before the audio rate limiter -> one authenticated client rotating
-// its UDP source port with monotonic timestamps floods the server log 1 line/packet (disk + event-loop DoS).
+// its UDP source port with monotonic timestamps fills the server log 1 line/packet (disk + event-loop resource exhaustion).
 tasks.register<JavaExec>("relearnLogFlood") {
     group = "security"
     classpath = sourceSets["main"].runtimeClasspath
@@ -124,9 +124,9 @@ tasks.register<JavaExec>("relearnLogFlood") {
     args = (project.findProperty("relearnArgs") as String? ?: "").split(" ").filter { it.isNotEmpty() }
 }
 
-// Security review (round 3): drive the REAL victim-side JavaOpusDecoder with attacker-controlled bytes
-// (Mallory's relayed SourceAudioPacket.data) and detect any throwable that escapes the caller's
-// CodecException-only guard -> kills the victim's jitterbuffer poller thread (permanent per-speaker deafness).
+// Security review (round 3): drive the real receiver-side JavaOpusDecoder with arbitrary relayed bytes
+// (a relayed SourceAudioPacket.data) and detect any throwable that escapes the caller's
+// CodecException-only guard -> kills the receiver's jitterbuffer poller thread (permanent per-speaker deafness).
 tasks.register<JavaExec>("opusFuzz") {
     group = "security"
     classpath = sourceSets["main"].runtimeClasspath
@@ -134,15 +134,15 @@ tasks.register<JavaExec>("opusFuzz") {
     args = (project.findProperty("fuzzArgs") as String? ?: "").split(" ").filter { it.isNotEmpty() }
 }
 
-// Security review (round 3): prove a single crafted frame poisons a FRESH victim decoder (segment-start
-// state) 100% deterministically -> replayable single-shot poller-thread kill.
+// Security review (round 3): prove a single crafted frame corrupts a fresh receiver decoder (segment-start
+// state) 100% deterministically -> reproducible single-shot poller-thread kill.
 tasks.register<JavaExec>("opusPoison") {
     group = "security"
     classpath = sourceSets["main"].runtimeClasspath
     mainClass.set("com.enn3developer.gtnhvoice.security.OpusPoisonFrame")
 }
 
-// Security review (round 3): fix verification for finding #5 - asserts the poison frame now throws a catchable
+// Security review (round 3): fix verification for finding #5 - asserts the crafted frame now throws a catchable
 // CodecException (not AssertionError), nothing escapes across many fresh decoders, and a valid frame still decodes.
 tasks.register<JavaExec>("opusPoisonVerify") {
     group = "security"
@@ -150,8 +150,8 @@ tasks.register<JavaExec>("opusPoisonVerify") {
     mainClass.set("com.enn3developer.gtnhvoice.security.OpusPoisonFixVerify")
 }
 
-// Security review (round 3): drive the REAL AdaptiveJitterBuffer with attacker-controlled sequence numbers
-// to probe integer-overflow / scheduling corruption in the victim's jitter buffer.
+// Security review (round 3): drive the real AdaptiveJitterBuffer with arbitrary sequence numbers
+// to probe integer-overflow / scheduling corruption in the receiver's jitter buffer.
 tasks.register<JavaExec>("jitterFuzz") {
     group = "security"
     classpath = sourceSets["main"].runtimeClasspath
@@ -159,7 +159,7 @@ tasks.register<JavaExec>("jitterFuzz") {
     args = (project.findProperty("jitterArgs") as String? ?: "").split(" ").filter { it.isNotEmpty() }
 }
 
-// Security review (round 3): attacker-chosen audio sequenceNumber = Long.MAX_VALUE overflows the victim's
+// Security review (round 3): a chosen audio sequenceNumber = Long.MAX_VALUE overflows the receiver's
 // AdaptiveJitterBuffer schedule so the frame plays immediately and pins VoiceSource.lastEmittedSequence to
 // Long.MAX; discardThrough() then silently drops every later frame -> permanent per-speaker deafness that
 // survives inactivity resets (no exception, no dead thread - distinct from finding #5).
@@ -169,9 +169,9 @@ tasks.register<JavaExec>("jitterSeqPoison") {
     mainClass.set("com.enn3developer.gtnhvoice.security.JitterSeqPoison")
 }
 
-// Security review: does Ping bypassing the per-session audio rate limit let a Ping flood drive enough
-// AES-GCM decrypt+touch on the single UDP event-loop thread to degrade honest voice? Built-in control:
-// same-rate UNKNOWN-session flood (dropped before decrypt) vs VALID ping flood (full decrypt).
+// Security review: does Ping bypassing the per-session audio rate limit let a Ping burst drive enough
+// AES-GCM decrypt+touch on the single UDP event-loop thread to degrade legitimate voice? Built-in control:
+// same-rate UNKNOWN-session burst (dropped before decrypt) vs VALID ping burst (full decrypt).
 tasks.register<JavaExec>("pingFlood") {
     group = "security"
     classpath = sourceSets["main"].runtimeClasspath
@@ -189,7 +189,7 @@ tasks.register<JavaExec>("decodeProbe") {
 
 // Security review: malformed wrong-side (clientbound) control discriminators fail in FML's shared codec
 // upstream of every gtnhvoice rate limiter, logging 3 full stack traces per packet on the server thread
-// -> unthrottled disk-exhaustion + tick-starvation DoS from a single authenticated client.
+// -> unthrottled disk-exhaustion + tick-starvation from a single authenticated client.
 tasks.register<JavaExec>("decodeFlood") {
     group = "security"
     classpath = sourceSets["main"].runtimeClasspath

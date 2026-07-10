@@ -64,7 +64,7 @@ public final class PingFloodProbe {
 
         // ---- honest listener ----
         Thread listener = new Thread(() -> {
-            try (VoiceSession victim = EvilClient.connect(host, port)
+            try (VoiceSession victim = Client.connect(host, port)
                 .username("listenerbot")
                 .establish()) {
                 victim.enlargeReceiveBuffer(8 * 1024 * 1024);
@@ -93,10 +93,10 @@ public final class PingFloodProbe {
         listener.start();
         victimReady.await();
 
-        try (VoiceSession speaker = EvilClient.connect(host, port)
+        try (VoiceSession speaker = Client.connect(host, port)
             .username("speakerbot")
             .establish();
-            VoiceSession mallory = EvilClient.connect(host, port)
+            VoiceSession mallory = Client.connect(host, port)
                 .username("mallorybot")
                 .establish()) {
 

@@ -16,7 +16,7 @@ public final class ControlDecodeProbe {
         int port = args.length > 1 ? Integer.parseInt(args[1]) : 25565;
         String username = args.length > 2 ? args[2] : "mallory";
 
-        try (VoiceSession s = EvilClient.connect(host, port)
+        try (VoiceSession s = Client.connect(host, port)
             .username(username)
             .establish()) {
 
