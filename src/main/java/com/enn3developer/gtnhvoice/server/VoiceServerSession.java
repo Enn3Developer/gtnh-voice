@@ -2,12 +2,14 @@ package com.enn3developer.gtnhvoice.server;
 
 import java.net.InetSocketAddress;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import com.enn3developer.gtnhvoice.GtnhVoice;
 import com.enn3developer.gtnhvoice.api.server.IVoiceSession;
+import com.enn3developer.gtnhvoice.core.api.util.LogThrottle;
 import com.enn3developer.gtnhvoice.core.encryption.aes.AesEncryption;
 import com.enn3developer.gtnhvoice.network.VoiceProtocol;
 
@@ -21,6 +23,14 @@ import com.enn3developer.gtnhvoice.network.VoiceProtocol;
  * internals.
  */
 public final class VoiceServerSession implements IVoiceSession {
+
+    // Coarse gate for the address-(re)learn logs below. relearnAddress runs inside touch(), which
+    // VoiceServerManager.onPacket calls for EVERY decryptable datagram BEFORE the audio rate limiter and
+    // for any packet type (Ping isn't rate-limited at all). An authenticated client rotating its UDP
+    // source port with monotonic timestamps can force one relearn per packet, so without this the log is
+    // 1:1 with attacker uplink (finding: 15000 pkt -> 15000 INFO lines in 5s, disk + event-loop DoS).
+    // Legitimate NAT rebinds are rare, so a 5s per-session throttle loses nothing operationally.
+    private static final long RELEARN_LOG_THROTTLE_MILLIS = 5000;
 
     private final UUID playerUuid;
     private final String playerName;
@@ -40,6 +50,8 @@ public final class VoiceServerSession implements IVoiceSession {
     private volatile long lastSeenMillis;
     // Highest packet timestamp accepted for address relearning - the anti-replay watermark (see touch).
     private volatile long lastAcceptedTimestamp;
+    // Per-session throttle timestamp for the address-(re)learn logs (see RELEARN_LOG_THROTTLE_MILLIS).
+    private final AtomicLong lastRelearnLogMillis = new AtomicLong();
 
     public VoiceServerSession(@NotNull UUID playerUuid, @NotNull String playerName, @NotNull UUID sessionId,
         @NotNull AesEncryption encryption) {
@@ -150,19 +162,29 @@ public final class VoiceServerSession implements IVoiceSession {
         InetSocketAddress previous = lastAddress;
         if (previous == null) {
             lastAddress = address;
-            GtnhVoice.LOG.info(
-                "session established: player {} <-> secret {} <-> {}",
-                playerName,
-                VoiceProtocol.abbreviateSessionId(sessionId),
-                address);
+            // The relearn itself always happens; only the log is throttled. The first-ever learn always
+            // wins the slot (lastRelearnLogMillis starts at 0), so a genuine session-established line
+            // still prints.
+            if (LogThrottle.shouldLog(lastRelearnLogMillis, RELEARN_LOG_THROTTLE_MILLIS)) {
+                GtnhVoice.LOG.info(
+                    "session established: player {} <-> secret {} <-> {}",
+                    playerName,
+                    VoiceProtocol.abbreviateSessionId(sessionId),
+                    address);
+            }
         } else if (!previous.equals(address)) {
             lastAddress = address;
-            GtnhVoice.LOG.info(
-                "session re-learned source address: player {} <-> secret {} <-> {} (was {})",
-                playerName,
-                VoiceProtocol.abbreviateSessionId(sessionId),
-                address,
-                previous);
+            // Throttled: an authenticated client rotating source ports drives this per-packet ahead of
+            // the audio rate limiter (see RELEARN_LOG_THROTTLE_MILLIS). The address is relearned above
+            // regardless; only the log is gated.
+            if (LogThrottle.shouldLog(lastRelearnLogMillis, RELEARN_LOG_THROTTLE_MILLIS)) {
+                GtnhVoice.LOG.info(
+                    "session re-learned source address: player {} <-> secret {} <-> {} (was {})",
+                    playerName,
+                    VoiceProtocol.abbreviateSessionId(sessionId),
+                    address,
+                    previous);
+            }
         }
     }
 }

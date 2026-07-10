@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cap length-prefixed fields in the voice handshake decode, so a single crafted hello can't force a multi-gigabyte server allocation
 - Rate-limit the handshake log so a hello flood can't fill the server disk (the log now sits behind the handshake rate limiter)
 - Rate-limit inbound voice audio per session, so one client can't flood the server or amplify its traffic onto other players
+- Throttle the UDP address-relearn log so a source-port-rotation flood can't fill the server disk
 
 ### Fixed
 
