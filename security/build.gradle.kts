@@ -159,6 +159,16 @@ tasks.register<JavaExec>("jitterFuzz") {
     args = (project.findProperty("jitterArgs") as String? ?: "").split(" ").filter { it.isNotEmpty() }
 }
 
+// Security review (round 3): attacker-chosen audio sequenceNumber = Long.MAX_VALUE overflows the victim's
+// AdaptiveJitterBuffer schedule so the frame plays immediately and pins VoiceSource.lastEmittedSequence to
+// Long.MAX; discardThrough() then silently drops every later frame -> permanent per-speaker deafness that
+// survives inactivity resets (no exception, no dead thread - distinct from finding #5).
+tasks.register<JavaExec>("jitterSeqPoison") {
+    group = "security"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.enn3developer.gtnhvoice.security.JitterSeqPoison")
+}
+
 // Security review: control-channel decode-exception probe (send clientbound discriminators serverbound).
 tasks.register<JavaExec>("decodeProbe") {
     group = "security"

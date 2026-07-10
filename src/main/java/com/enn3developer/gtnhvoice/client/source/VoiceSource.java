@@ -185,6 +185,11 @@ final class VoiceSource {
                 // Block concealment until the next segment's first real frame anchors the decoder again -
                 // otherwise the stale lastEmittedSequence would look like a huge "gap" to conceal.
                 emittedSinceReset = false;
+                // Re-arm sequence tracking to the fresh-source state. The jitter buffer re-anchors from the
+                // next segment's first packet, so a stale (possibly attacker-inflated) lastEmittedSequence must
+                // not survive: otherwise discardThrough(lastEmittedSequence) could keep dropping the whole next
+                // segment. Defense in depth alongside the buffer's saturating schedule arithmetic.
+                lastEmittedSequence = -1;
             }
 
             // The decoder contract (JavaOpusDecoder/NativeOpusDecoder) now converts a malformed frame into a

@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Contain malformed voice frames in the decoder, so a crafted packet can't kill a listener's playback thread and mute a speaker
 - Drop wrong-side control packets before they decode, so a client can't flood the server log with handshake-decode stack traces
 - Drop replayed voice frames with a per-session sliding window, so a captured packet can't be re-injected to nearby players
+- Clamp jitter-buffer scheduling against overflow, so a crafted audio sequence number can't permanently mute a speaker
 
 ### Fixed
 
