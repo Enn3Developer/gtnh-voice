@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Throttle the UDP address-relearn log so a source-port-rotation flood can't fill the server disk
 - Contain malformed voice frames in the decoder, so a crafted packet can't kill a listener's playback thread and mute a speaker
 - Drop wrong-side control packets before they decode, so a client can't flood the server log with handshake-decode stack traces
+- Drop replayed voice frames with a per-session sliding window, so a captured packet can't be re-injected to nearby players
 
 ### Fixed
 

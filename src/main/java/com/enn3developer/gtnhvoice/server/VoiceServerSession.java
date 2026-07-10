@@ -32,6 +32,14 @@ public final class VoiceServerSession implements IVoiceSession {
     // Legitimate NAT rebinds are rare, so a 5s per-session throttle loses nothing operationally.
     private static final long RELEARN_LOG_THROTTLE_MILLIS = 5000;
 
+    // Sliding anti-replay window (IPsec-style) over audio sequence numbers. A genuine client stamps a
+    // strictly-monotonic sequenceNumber (CaptureSendWorker: sequenceNumber++) inside the AES-GCM
+    // authenticated body, so an attacker can't forge one - only a genuine frame or a byte-for-byte replay
+    // of one carries a valid seq. The window admits any frame ahead of the highest seen and any earlier
+    // frame not yet seen within WINDOW slots (tolerating normal UDP reorder), but drops an exact duplicate
+    // or a frame older than the window - stopping capture-replay without dropping reordered live audio.
+    private static final int AUDIO_REPLAY_WINDOW = 64;
+
     private final UUID playerUuid;
     private final String playerName;
     private final UUID sessionId;
@@ -52,6 +60,13 @@ public final class VoiceServerSession implements IVoiceSession {
     private volatile long lastAcceptedTimestamp;
     // Per-session throttle timestamp for the address-(re)learn logs (see RELEARN_LOG_THROTTLE_MILLIS).
     private final AtomicLong lastRelearnLogMillis = new AtomicLong();
+
+    // Audio anti-replay window state (see acceptAudioSequence, AUDIO_REPLAY_WINDOW). Guarded by
+    // {@code this}: onPacket runs on the single UDP event-loop thread, but the lock keeps the window
+    // self-contained and correct even if that ever changes.
+    private boolean audioReplaySeen;
+    private long audioReplayHighestSeq;
+    private long audioReplayBitmap;
 
     public VoiceServerSession(@NotNull UUID playerUuid, @NotNull String playerName, @NotNull UUID sessionId,
         @NotNull AesEncryption encryption) {
@@ -156,6 +171,38 @@ public final class VoiceServerSession implements IVoiceSession {
         lastAcceptedTimestamp = packetTimestamp;
 
         relearnAddress(address);
+    }
+
+    /**
+     * Anti-replay gate for one audio frame's authenticated sequence number. Returns {@code true} to
+     * accept (fresh frame) or {@code false} to drop (an exact replay of a frame already seen, or one
+     * older than the {@link #AUDIO_REPLAY_WINDOW}-slot window). Tolerates normal UDP reordering: any
+     * earlier-but-unseen frame within the window is accepted. Advances the window on every accepted
+     * frame. Synchronized because the window is compound mutable state.
+     */
+    public synchronized boolean acceptAudioSequence(long sequenceNumber) {
+        if (!audioReplaySeen) {
+            audioReplaySeen = true;
+            audioReplayHighestSeq = sequenceNumber;
+            audioReplayBitmap = 1L;
+            return true;
+        }
+
+        if (sequenceNumber > audioReplayHighestSeq) {
+            long shift = sequenceNumber - audioReplayHighestSeq;
+            audioReplayBitmap = shift >= AUDIO_REPLAY_WINDOW ? 1L : (audioReplayBitmap << shift) | 1L;
+            audioReplayHighestSeq = sequenceNumber;
+            return true;
+        }
+
+        long diff = audioReplayHighestSeq - sequenceNumber;
+        if (diff >= AUDIO_REPLAY_WINDOW) return false;
+
+        long mask = 1L << diff;
+        if ((audioReplayBitmap & mask) != 0L) return false;
+
+        audioReplayBitmap |= mask;
+        return true;
     }
 
     private void relearnAddress(@NotNull InetSocketAddress address) {

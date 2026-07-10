@@ -95,6 +95,16 @@ tasks.register<JavaExec>("relayFlood") {
     args = (project.findProperty("relayArgs") as String? ?: "").split(" ").filter { it.isNotEmpty() }
 }
 
+// Security review: serverbound UDP audio has no replay/dedup - the anti-replay watermark gates only
+// address relearning, so a keyless on-path attacker replays one captured PlayerAudioPacket datagram and
+// the server re-routes it to every in-range player each time (CWE-294 capture-replay).
+tasks.register<JavaExec>("audioReplay") {
+    group = "security"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.enn3developer.gtnhvoice.security.AudioReplayInjection")
+    args = (project.findProperty("replayArgs") as String? ?: "").split(" ").filter { it.isNotEmpty() }
+}
+
 // Security review: per-hello entry log fires before the HelloRateLimiter, logging attacker's 8KB
 // modVersion per hello -> log/disk I/O amplification the finding-#9 gate was meant to prevent.
 tasks.register<JavaExec>("helloLogFlood") {

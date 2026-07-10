@@ -92,6 +92,7 @@ public final class VoiceServerManager implements UdpPacketListener {
     private static final int AUDIO_BURST = 100;
     private static final long AUDIO_REFILL_INTERVAL_MILLIS = 20;
     private static final long AUDIO_DROP_LOG_THROTTLE_MILLIS = 5000;
+    private static final long AUDIO_REPLAY_LOG_THROTTLE_MILLIS = 5000;
 
     private final Map<UUID, VoiceServerSession> sessionsBySessionId = new ConcurrentHashMap<>();
     private final Map<UUID, VoiceServerSession> sessionsByPlayerUuid = new ConcurrentHashMap<>();
@@ -116,6 +117,7 @@ public final class VoiceServerManager implements UdpPacketListener {
     private final AtomicLong lastHandshakeAcceptLogMillis = new AtomicLong();
     private final AtomicLong lastHandshakeRejectLogMillis = new AtomicLong();
     private final AtomicLong lastAudioDropLogMillis = new AtomicLong();
+    private final AtomicLong lastAudioReplayLogMillis = new AtomicLong();
     private final TokenBucketRateLimiter helloRateLimiter = new TokenBucketRateLimiter(
         HELLO_BURST,
         HELLO_REFILL_INTERVAL_MILLIS);
@@ -439,6 +441,21 @@ public final class VoiceServerManager implements UdpPacketListener {
      * AudioRelayFlood at 5000/s was relayed 1:1 to an honest victim). Runs on the UDP/Netty thread.
      */
     private void handleAudio(@NotNull VoiceServerSession speakerSession, @NotNull PlayerAudioPacket audio) {
+        // Anti-replay FIRST, before the rate limiter and the fan-out. AES-GCM authenticates a datagram but
+        // does not stop a REPLAY of a genuine one; without this a keyless on-path attacker could resend one
+        // captured PlayerAudioPacket and have it re-routed to every in-range player each time (finding:
+        // 1 frame replayed 200x -> victim got 200 SourceAudioPackets). The sliding window drops exact
+        // duplicates and stale frames while still admitting reordered live audio.
+        if (!speakerSession.acceptAudioSequence(audio.getSequenceNumber())) {
+            if (LogThrottle.shouldLog(lastAudioReplayLogMillis, AUDIO_REPLAY_LOG_THROTTLE_MILLIS)) {
+                GtnhVoice.LOG.warn(
+                    "Dropping replayed/stale audio from {}: sequenceNumber {} already seen or outside replay window",
+                    speakerSession.getPlayerName(),
+                    audio.getSequenceNumber());
+            }
+            return;
+        }
+
         if (!audioRateLimiter.tryAcquire(speakerSession.getPlayerUuid())) {
             if (LogThrottle.shouldLog(lastAudioDropLogMillis, AUDIO_DROP_LOG_THROTTLE_MILLIS)) {
                 GtnhVoice.LOG.warn(
