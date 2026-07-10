@@ -28,6 +28,7 @@ sourceSets["main"].java {
     include("com/enn3developer/gtnhvoice/core/audio/codec/opus/BaseOpusEncoder.java")
     include("com/enn3developer/gtnhvoice/core/api/audio/codec/AudioEncoder.java")
     include("com/enn3developer/gtnhvoice/core/audio/jitter/AdaptiveJitterBuffer.java")
+    include("com/enn3developer/gtnhvoice/core/audio/AudioUnit.java")
     include("com/enn3developer/gtnhvoice/core/api/audio/codec/AudioDecoder.java")
     include("com/enn3developer/gtnhvoice/core/api/audio/codec/AudioDecoderPlc.java")
     include("com/enn3developer/gtnhvoice/core/api/audio/codec/CodecException.java")

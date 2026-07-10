@@ -4,7 +4,10 @@
  */
 package com.enn3developer.gtnhvoice.core.audio.jitter;
 
+import com.enn3developer.gtnhvoice.core.audio.AudioUnit;
+
 import java.util.Comparator;
+import java.util.OptionalLong;
 import java.util.PriorityQueue;
 import java.util.Queue;
 import java.util.function.LongSupplier;
@@ -21,18 +24,17 @@ import java.util.function.LongSupplier;
  */
 public final class AdaptiveJitterBuffer {
 
-    private static final long FRAME_DURATION_MILLIS = 20L;
     private static final int MAX_QUEUE_SIZE = 512;
 
     private final LongSupplier timeSupplier;
-    private final long packetDelayMillis;
+    private final AudioUnit packetDelay;
     private final Queue<Entry> queue;
 
     private Long firstPacketArrival;
     private Long firstSequenceNumber;
-    private Long lastPacketArrival;
+    private OptionalLong lastPacketArrival = OptionalLong.empty();
     private double jitterEstimate;
-    private long adaptiveDelayMillis;
+    private AudioUnit adaptiveDelay;
 
     /**
      * @param timeSupplier      clock used for both arrival timestamps and playback scheduling; must be consistent
@@ -42,8 +44,8 @@ public final class AdaptiveJitterBuffer {
      */
     public AdaptiveJitterBuffer(LongSupplier timeSupplier, int packetDelayFrames) {
         this.timeSupplier = timeSupplier;
-        this.packetDelayMillis = packetDelayFrames * FRAME_DURATION_MILLIS;
-        this.adaptiveDelayMillis = packetDelayMillis;
+        this.packetDelay = AudioUnit.frames(packetDelayFrames);
+        this.adaptiveDelay = packetDelay;
         this.queue = new PriorityQueue<>(
             Math.max(2, packetDelayFrames * 2),
             Comparator.comparingLong(entry -> entry.frame.sequenceNumber));
@@ -59,15 +61,16 @@ public final class AdaptiveJitterBuffer {
     }
 
     private long scheduledPlaybackTime(long sequenceNumber, long arrivalTime) {
-        if (lastPacketArrival != null) {
+        lastPacketArrival.ifPresent(lastPacketArrival -> {
             long transit = arrivalTime - lastPacketArrival;
             // We don't carry the sender's send timestamp, so assume packets are sent at a steady 20ms rate and
             // treat any deviation in observed transit time as jitter.
-            double delta = Math.abs(transit - FRAME_DURATION_MILLIS);
+            double delta = Math.abs(transit - AudioUnit.FRAME_DURATION_MILLIS);
             jitterEstimate += (delta - jitterEstimate) / 16.0;
-            adaptiveDelayMillis = Math.round(jitterEstimate / 20.0) * 20L;
-        }
-        lastPacketArrival = arrivalTime;
+            adaptiveDelay = AudioUnit.frames(Math.round(jitterEstimate / AudioUnit.FRAME_DURATION_MILLIS));
+        });
+
+        lastPacketArrival = OptionalLong.of(arrivalTime);
 
         if (firstSequenceNumber == null) {
             firstPacketArrival = arrivalTime;
@@ -78,47 +81,18 @@ public final class AdaptiveJitterBuffer {
     }
 
     /**
-     * Anchor-relative scheduled playback time for a sequence number, computed with saturating arithmetic. The
-     * sequence number is a remote-influenced wire value: a pathological jump (e.g. {@code Long.MAX_VALUE})
-     * would otherwise overflow {@code offset * FRAME_DURATION_MILLIS} and wrap a far-future slot into the past,
-     * so the frame reads as overdue, gets emitted, and pins the consumer's {@code lastEmittedSequence} to that
-     * value - permanently deafening the listener to that speaker. Saturation clamps such a slot to the far
-     * future ({@link Long#MAX_VALUE}) instead, so it simply never comes due. Overflow only occurs for offsets
-     * around 4.6e17 frames from the anchor - astronomically beyond any real stream - so genuine packet loss and
-     * reordering compute exactly as before.
+     * Anchor-relative scheduled playback time for a sequence number. Sequence numbers are remote-influenced
+     * wire values (an untrusted server chooses every one, the anchor included), so the whole chain rides on
+     * {@link AudioUnit}'s saturating ops: a pathological jump (e.g. {@code Long.MAX_VALUE}) that would otherwise
+     * wrap into the past - reading as overdue, getting emitted, and pinning the consumer's
+     * {@code lastEmittedSequence} to it, permanently deafening the listener to that speaker - clamps to the far
+     * future instead and simply never comes due. Legitimate offsets compute exactly.
      */
     private long slotScheduledTime(long sequenceNumber) {
-        long sequenceOffset = saturatingSubtract(sequenceNumber, firstSequenceNumber);
-        long slotOffset = saturatingScaleByFrame(sequenceOffset);
-        return saturatingAdd(firstPacketArrival + packetDelayMillis, slotOffset);
-    }
-
-    /**
-     * {@code sequenceNumber - firstSequenceNumber} with saturation. Both operands are remote-influenceable
-     * wire values (an untrusted server chooses every sequence number, the anchor included), so the raw subtraction
-     * itself can overflow: anchor near {@link Long#MIN_VALUE} and a malformed frame near {@link Long#MAX_VALUE} wrap
-     * to a small negative offset, which would scale to a PAST slot and make the frame read as due. Clamping the
-     * difference keeps such a frame in the far future. Real anchors and sequence numbers sit close together, so
-     * this returns exactly {@code a - b} for every legitimate frame.
-     */
-    private static long saturatingSubtract(long a, long b) {
-        long diff = a - b;
-        boolean overflow = ((a ^ b) & (a ^ diff)) < 0;
-        if (!overflow) return diff;
-        return a >= 0 ? Long.MAX_VALUE : Long.MIN_VALUE;
-    }
-
-    private static long saturatingScaleByFrame(long offset) {
-        if (offset > Long.MAX_VALUE / FRAME_DURATION_MILLIS) return Long.MAX_VALUE;
-        if (offset < Long.MIN_VALUE / FRAME_DURATION_MILLIS) return Long.MIN_VALUE;
-        return offset * FRAME_DURATION_MILLIS;
-    }
-
-    private static long saturatingAdd(long a, long b) {
-        long sum = a + b;
-        boolean overflow = ((a ^ sum) & (b ^ sum)) < 0;
-        if (!overflow) return sum;
-        return b >= 0 ? Long.MAX_VALUE : Long.MIN_VALUE;
+        return AudioUnit.frames(sequenceNumber)
+            .sub(AudioUnit.frames(firstSequenceNumber))
+            .add(packetDelay)
+            .asTimestamp(firstPacketArrival);
     }
 
     /**
@@ -130,7 +104,7 @@ public final class AdaptiveJitterBuffer {
         Entry next = queue.peek();
         if (next == null) return null;
 
-        if (timeSupplier.getAsLong() >= saturatingAdd(next.scheduledPlaybackTime, adaptiveDelayMillis)) {
+        if (timeSupplier.getAsLong() >= adaptiveDelay.asTimestamp(next.scheduledPlaybackTime)) {
             return queue.poll().frame;
         }
 
@@ -166,7 +140,7 @@ public final class AdaptiveJitterBuffer {
     public synchronized boolean isSequenceOverdue(long sequenceNumber) {
         if (firstSequenceNumber == null) return false;
 
-        long scheduled = saturatingAdd(slotScheduledTime(sequenceNumber), adaptiveDelayMillis);
+        long scheduled = adaptiveDelay.asTimestamp(slotScheduledTime(sequenceNumber));
         return timeSupplier.getAsLong() >= scheduled;
     }
 
@@ -180,7 +154,7 @@ public final class AdaptiveJitterBuffer {
 
     /** Current pre-buffer target: the configured base delay plus the adaptive component learned from jitter. */
     public synchronized long currentTargetDelayMillis() {
-        return packetDelayMillis + adaptiveDelayMillis;
+        return packetDelay.add(adaptiveDelay).asMillis();
     }
 
     /**
@@ -194,7 +168,7 @@ public final class AdaptiveJitterBuffer {
         queue.clear();
         firstSequenceNumber = null;
         firstPacketArrival = null;
-        lastPacketArrival = null;
+        lastPacketArrival = OptionalLong.empty();
         notifyAll(); // wake a consumer blocked in awaitNextEvent so it re-evaluates (e.g. a pending decoder reset)
     }
 
@@ -218,9 +192,9 @@ public final class AdaptiveJitterBuffer {
             return;
         }
 
-        long deadline = saturatingAdd(head.scheduledPlaybackTime, adaptiveDelayMillis);
+        long deadline = adaptiveDelay.asTimestamp(head.scheduledPlaybackTime);
         if (concealSequence >= 0 && firstSequenceNumber != null) {
-            long concealDeadline = saturatingAdd(slotScheduledTime(concealSequence), adaptiveDelayMillis);
+            long concealDeadline = adaptiveDelay.asTimestamp(slotScheduledTime(concealSequence));
             deadline = Math.min(deadline, concealDeadline);
         }
 
