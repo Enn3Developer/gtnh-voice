@@ -1,4 +1,4 @@
-package com.enn3developer.gtnhvoice.exploit;
+package com.enn3developer.gtnhvoice.security;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -11,8 +11,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import com.enn3developer.gtnhvoice.core.api.encryption.Encryption;
 import com.enn3developer.gtnhvoice.core.encryption.aes.AesEncryption;
-import com.enn3developer.gtnhvoice.exploit.ExploitClient.LoginHandler;
-import com.enn3developer.gtnhvoice.exploit.ExploitClient.VoiceHandshake;
+import com.enn3developer.gtnhvoice.security.ExploitClient.LoginHandler;
+import com.enn3developer.gtnhvoice.security.ExploitClient.VoiceHandshake;
 import com.enn3developer.gtnhvoice.network.HelloCodec;
 import com.enn3developer.gtnhvoice.network.VoiceProtocol;
 

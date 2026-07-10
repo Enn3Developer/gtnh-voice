@@ -1,4 +1,4 @@
-package com.enn3developer.gtnhvoice.exploit;
+package com.enn3developer.gtnhvoice.security;
 
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;

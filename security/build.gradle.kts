@@ -19,7 +19,7 @@ repositories {
 // need). Same source -> same class the honest victim runs.
 sourceSets["main"].java {
     srcDir("${rootProject.projectDir}/src/main/java")
-    include("com/enn3developer/gtnhvoice/exploit/**")
+    include("com/enn3developer/gtnhvoice/security/**")
     include("com/enn3developer/gtnhvoice/core/audio/codec/opus/JavaOpusDecoder.java")
     include("com/enn3developer/gtnhvoice/core/audio/codec/opus/BaseOpusDecoder.java")
     // Finding #5 fix verification (OpusPoisonFixVerify): encoder side, only to synthesize a genuinely valid
@@ -67,40 +67,40 @@ java {
 application {
     // Voice session negotiation (login + FML + ClientHello/ServerHello + a server-accepted UDP
     // packet). The earlier login-only spike is still runnable via -PspikeMain or its class directly.
-    mainClass.set("com.enn3developer.gtnhvoice.exploit.EvilClient")
+    mainClass.set("com.enn3developer.gtnhvoice.security.EvilClient")
 }
 
 // Finding #9: ClientHello flood -> unbounded pendingSends growth. Temporary, do-not-commit harness.
 tasks.register<JavaExec>("flood9") {
-    group = "exploit"
+    group = "security"
     classpath = sourceSets["main"].runtimeClasspath
-    mainClass.set("com.enn3developer.gtnhvoice.exploit.DosProof")
+    mainClass.set("com.enn3developer.gtnhvoice.security.DosProof")
     args = (project.findProperty("floodArgs") as String? ?: "").split(" ").filter { it.isNotEmpty() }
 }
 
 // Security review: unbounded pre-rate-limit allocation in the gtnhvoice control-channel decode.
 tasks.register<JavaExec>("allocDos") {
-    group = "exploit"
+    group = "security"
     classpath = sourceSets["main"].runtimeClasspath
-    mainClass.set("com.enn3developer.gtnhvoice.exploit.HelloAllocDos")
+    mainClass.set("com.enn3developer.gtnhvoice.security.HelloAllocDos")
     args = (project.findProperty("allocArgs") as String? ?: "").split(" ").filter { it.isNotEmpty() }
 }
 
 // Security review: serverbound UDP audio path has no rate limit -> server relays one client's audio
 // flood to every nearby honest player at an arbitrary rate (victim-client DoS + server egress amp).
 tasks.register<JavaExec>("relayFlood") {
-    group = "exploit"
+    group = "security"
     classpath = sourceSets["main"].runtimeClasspath
-    mainClass.set("com.enn3developer.gtnhvoice.exploit.AudioRelayFlood")
+    mainClass.set("com.enn3developer.gtnhvoice.security.AudioRelayFlood")
     args = (project.findProperty("relayArgs") as String? ?: "").split(" ").filter { it.isNotEmpty() }
 }
 
 // Security review: per-hello entry log fires before the HelloRateLimiter, logging attacker's 8KB
 // modVersion per hello -> log/disk I/O amplification the finding-#9 gate was meant to prevent.
 tasks.register<JavaExec>("helloLogFlood") {
-    group = "exploit"
+    group = "security"
     classpath = sourceSets["main"].runtimeClasspath
-    mainClass.set("com.enn3developer.gtnhvoice.exploit.HelloLogFlood")
+    mainClass.set("com.enn3developer.gtnhvoice.security.HelloLogFlood")
     args = (project.findProperty("helloArgs") as String? ?: "").split(" ").filter { it.isNotEmpty() }
 }
 
@@ -108,9 +108,9 @@ tasks.register<JavaExec>("helloLogFlood") {
 // and runs on the event-loop thread before the audio rate limiter -> one authenticated client rotating
 // its UDP source port with monotonic timestamps floods the server log 1 line/packet (disk + event-loop DoS).
 tasks.register<JavaExec>("relearnLogFlood") {
-    group = "exploit"
+    group = "security"
     classpath = sourceSets["main"].runtimeClasspath
-    mainClass.set("com.enn3developer.gtnhvoice.exploit.AddressRelearnLogFlood")
+    mainClass.set("com.enn3developer.gtnhvoice.security.AddressRelearnLogFlood")
     args = (project.findProperty("relearnArgs") as String? ?: "").split(" ").filter { it.isNotEmpty() }
 }
 
@@ -118,41 +118,41 @@ tasks.register<JavaExec>("relearnLogFlood") {
 // (Mallory's relayed SourceAudioPacket.data) and detect any throwable that escapes the caller's
 // CodecException-only guard -> kills the victim's jitterbuffer poller thread (permanent per-speaker deafness).
 tasks.register<JavaExec>("opusFuzz") {
-    group = "exploit"
+    group = "security"
     classpath = sourceSets["main"].runtimeClasspath
-    mainClass.set("com.enn3developer.gtnhvoice.exploit.OpusDecodeFuzz")
+    mainClass.set("com.enn3developer.gtnhvoice.security.OpusDecodeFuzz")
     args = (project.findProperty("fuzzArgs") as String? ?: "").split(" ").filter { it.isNotEmpty() }
 }
 
 // Security review (round 3): prove a single crafted frame poisons a FRESH victim decoder (segment-start
 // state) 100% deterministically -> replayable single-shot poller-thread kill.
 tasks.register<JavaExec>("opusPoison") {
-    group = "exploit"
+    group = "security"
     classpath = sourceSets["main"].runtimeClasspath
-    mainClass.set("com.enn3developer.gtnhvoice.exploit.OpusPoisonFrame")
+    mainClass.set("com.enn3developer.gtnhvoice.security.OpusPoisonFrame")
 }
 
 // Security review (round 3): fix verification for finding #5 - asserts the poison frame now throws a catchable
 // CodecException (not AssertionError), nothing escapes across many fresh decoders, and a valid frame still decodes.
 tasks.register<JavaExec>("opusPoisonVerify") {
-    group = "exploit"
+    group = "security"
     classpath = sourceSets["main"].runtimeClasspath
-    mainClass.set("com.enn3developer.gtnhvoice.exploit.OpusPoisonFixVerify")
+    mainClass.set("com.enn3developer.gtnhvoice.security.OpusPoisonFixVerify")
 }
 
 // Security review (round 3): drive the REAL AdaptiveJitterBuffer with attacker-controlled sequence numbers
 // to probe integer-overflow / scheduling corruption in the victim's jitter buffer.
 tasks.register<JavaExec>("jitterFuzz") {
-    group = "exploit"
+    group = "security"
     classpath = sourceSets["main"].runtimeClasspath
-    mainClass.set("com.enn3developer.gtnhvoice.exploit.JitterBufferProbe")
+    mainClass.set("com.enn3developer.gtnhvoice.security.JitterBufferProbe")
     args = (project.findProperty("jitterArgs") as String? ?: "").split(" ").filter { it.isNotEmpty() }
 }
 
 // Security review: control-channel decode-exception probe (send clientbound discriminators serverbound).
 tasks.register<JavaExec>("decodeProbe") {
-    group = "exploit"
+    group = "security"
     classpath = sourceSets["main"].runtimeClasspath
-    mainClass.set("com.enn3developer.gtnhvoice.exploit.ControlDecodeProbe")
+    mainClass.set("com.enn3developer.gtnhvoice.security.ControlDecodeProbe")
     args = (project.findProperty("probeArgs") as String? ?: "").split(" ").filter { it.isNotEmpty() }
 }

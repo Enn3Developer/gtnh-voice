@@ -1,4 +1,4 @@
-package com.enn3developer.gtnhvoice.exploit;
+package com.enn3developer.gtnhvoice.security;
 
 import com.enn3developer.gtnhvoice.network.HelloCodec;
 import com.enn3developer.gtnhvoice.network.VoiceProtocol;

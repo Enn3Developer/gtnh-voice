@@ -1,4 +1,4 @@
-package com.enn3developer.gtnhvoice.exploit;
+package com.enn3developer.gtnhvoice.security;
 
 import java.security.SecureRandom;
 import java.util.Random;

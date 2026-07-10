@@ -1,4 +1,4 @@
-package com.enn3developer.gtnhvoice.exploit;
+package com.enn3developer.gtnhvoice.security;
 
 /**
  * Secondary probe: send discriminators that are registered on the {@code gtnhvoice} channel but whose
