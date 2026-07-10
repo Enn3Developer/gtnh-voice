@@ -94,6 +94,17 @@ public final class VoiceServerManager implements UdpPacketListener {
     private static final long AUDIO_DROP_LOG_THROTTLE_MILLIS = 5000;
     private static final long AUDIO_REPLAY_LOG_THROTTLE_MILLIS = 5000;
 
+    // Per-session inbound-UDP budget, charged for EVERY datagram (audio, ping, anything) BEFORE the
+    // AES-GCM decrypt. A real session is ~50 audio frames/s (20ms cadence) plus the odd keepalive ping,
+    // so a 100/s refill with a 200-frame burst passes honest traffic - audio + pings + jitter/reordering
+    // bursts - untouched, while capping a flood to ~100/s per session. Only PlayerAudioPacket was capped
+    // before, and only AFTER decrypt, so an uncapped Ping flood (authed, or a keyless replay of one
+    // captured Ping) decrypted unbounded on the lone UDP event-loop thread (finding: 268k pings/s pinned
+    // nioEventLoop at ~98% and cost an honest speaker 3-6% frames).
+    private static final int INBOUND_BURST = 200;
+    private static final long INBOUND_REFILL_INTERVAL_MILLIS = 10;
+    private static final long INBOUND_DROP_LOG_THROTTLE_MILLIS = 5000;
+
     private final Map<UUID, VoiceServerSession> sessionsBySessionId = new ConcurrentHashMap<>();
     private final Map<UUID, VoiceServerSession> sessionsByPlayerUuid = new ConcurrentHashMap<>();
     private final Map<UUID, VoiceServerSession> sessionsByPlayerUuidView = Collections
@@ -118,12 +129,18 @@ public final class VoiceServerManager implements UdpPacketListener {
     private final AtomicLong lastHandshakeRejectLogMillis = new AtomicLong();
     private final AtomicLong lastAudioDropLogMillis = new AtomicLong();
     private final AtomicLong lastAudioReplayLogMillis = new AtomicLong();
+    private final AtomicLong lastInboundDropLogMillis = new AtomicLong();
     private final TokenBucketRateLimiter helloRateLimiter = new TokenBucketRateLimiter(
         HELLO_BURST,
         HELLO_REFILL_INTERVAL_MILLIS);
     private final TokenBucketRateLimiter audioRateLimiter = new TokenBucketRateLimiter(
         AUDIO_BURST,
         AUDIO_REFILL_INTERVAL_MILLIS);
+    // Keyed on the cleartext-header sessionId (available pre-decrypt), not the player UUID, so both an
+    // authed session and a pool of keyless replay sockets sharing one captured sessionId are bounded.
+    private final TokenBucketRateLimiter inboundRateLimiter = new TokenBucketRateLimiter(
+        INBOUND_BURST,
+        INBOUND_REFILL_INTERVAL_MILLIS);
 
     public static VoiceServerManager getInstance() {
         return INSTANCE;
@@ -314,7 +331,10 @@ public final class VoiceServerManager implements UdpPacketListener {
             }
 
             VoiceServerSession previous = sessionsByPlayerUuid.put(playerUuid, rebuilt);
-            if (previous != null) sessionsBySessionId.remove(previous.getSessionId());
+            if (previous != null) {
+                sessionsBySessionId.remove(previous.getSessionId());
+                inboundRateLimiter.forget(previous.getSessionId());
+            }
             session = rebuilt;
             sendInitialState = true;
         }
@@ -407,6 +427,22 @@ public final class VoiceServerManager implements UdpPacketListener {
         if (session == null) {
             if (LogThrottle.shouldLog(lastUnknownSessionLogMillis, UNKNOWN_SESSION_LOG_THROTTLE_MILLIS)) {
                 GtnhVoice.LOG.warn("Dropped UDP packet with unknown sessionId from {}", sender);
+            }
+            return;
+        }
+
+        // Per-session inbound cap for EVERY packet type, charged BEFORE the AES-GCM decrypt below.
+        // Decrypt is the expensive per-datagram work on the lone UDP event-loop thread; only audio was
+        // capped, and only AFTER decrypt, so an uncapped Ping flood (authed, or a keyless replay of one
+        // captured Ping) decrypted unbounded and pinned the loop (finding: 268k pings/s -> ~98% CPU,
+        // honest speaker lost 3-6% frames). Key on the cleartext sessionId and drop over-limit datagrams
+        // here so getPacketUntyped never runs on them.
+        if (!inboundRateLimiter.tryAcquire(packetUdp.getSessionId())) {
+            if (LogThrottle.shouldLog(lastInboundDropLogMillis, INBOUND_DROP_LOG_THROTTLE_MILLIS)) {
+                GtnhVoice.LOG.warn(
+                    "Rate-limiting inbound voice UDP from {} (session {}): dropping excess datagram before decrypt (flood or replay)",
+                    sender,
+                    VoiceProtocol.abbreviateSessionId(session.getSessionId()));
             }
             return;
         }
@@ -567,6 +603,7 @@ public final class VoiceServerManager implements UdpPacketListener {
     }
 
     private void endSession(VoiceServerSession session) {
+        inboundRateLimiter.forget(session.getSessionId());
         groupManager.onPlayerRemoved(session.getPlayerUuid());
         broadcastSourceEnd(session);
         pendingSends.add(() -> broadcastRosterUpdate(

@@ -169,6 +169,16 @@ tasks.register<JavaExec>("jitterSeqPoison") {
     mainClass.set("com.enn3developer.gtnhvoice.security.JitterSeqPoison")
 }
 
+// Security review: does Ping bypassing the per-session audio rate limit let a Ping flood drive enough
+// AES-GCM decrypt+touch on the single UDP event-loop thread to degrade honest voice? Built-in control:
+// same-rate UNKNOWN-session flood (dropped before decrypt) vs VALID ping flood (full decrypt).
+tasks.register<JavaExec>("pingFlood") {
+    group = "security"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.enn3developer.gtnhvoice.security.PingFloodProbe")
+    args = (project.findProperty("pingArgs") as String? ?: "").split(" ").filter { it.isNotEmpty() }
+}
+
 // Security review: control-channel decode-exception probe (send clientbound discriminators serverbound).
 tasks.register<JavaExec>("decodeProbe") {
     group = "security"
