@@ -15,9 +15,9 @@ import cpw.mods.fml.common.network.simpleimpl.MessageContext;
  * net.minecraft.entity.player.EntityPlayerMP#getGameProfile()} read, and sending packets/chat is
  * itself thread-safe (it just enqueues onto the player's network channel).
  * <p>
- * Catches everything but deliberately does NOT log the (attacker-controlled) hello on entry: this runs
+ * Catches everything but deliberately does NOT log the (remote-controlled) hello on entry: this runs
  * on the Netty IO thread before {@link VoiceServerManager}'s per-player rate limiter, so a per-hello log
- * here would flood ahead of the gate. {@link VoiceServerManager#handleClientHello} logs the hello only
+ * here would run ahead of the gate. {@link VoiceServerManager#handleClientHello} logs the hello only
  * after the limiter passes. The catch stays because FML's custom-channel pipeline does not reliably
  * surface exceptions thrown from {@link IMessageHandler#onMessage} to the console (unlike the main
  * connection pipeline), so a silent failure here would otherwise vanish without a trace.
@@ -26,8 +26,8 @@ public class ClientHelloServerHandler implements IMessageHandler<ClientHelloPack
 
     @Override
     public IMessage onMessage(ClientHelloPacket message, MessageContext ctx) {
-        // No logging of the attacker-controlled hello here: it runs on the Netty IO thread ahead of the
-        // HelloRateLimiter, so any per-hello log would flood before the gate can drop it (see finding on
+        // No logging of the remote-controlled hello here: it runs on the Netty IO thread ahead of the
+        // HelloRateLimiter, so any per-hello log would pile up before the gate can drop it (see finding on
         // this class). VoiceServerManager logs the hello only after tryAcquire passes. The try/catch
         // stays: FML's custom-channel pipeline swallows exceptions from onMessage, so we surface them.
         try {

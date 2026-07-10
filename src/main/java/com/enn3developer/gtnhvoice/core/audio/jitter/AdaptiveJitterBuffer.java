@@ -79,7 +79,7 @@ public final class AdaptiveJitterBuffer {
 
     /**
      * Anchor-relative scheduled playback time for a sequence number, computed with saturating arithmetic. The
-     * sequence number is an attacker-influenced wire value: a pathological jump (e.g. {@code Long.MAX_VALUE})
+     * sequence number is a remote-influenced wire value: a pathological jump (e.g. {@code Long.MAX_VALUE})
      * would otherwise overflow {@code offset * FRAME_DURATION_MILLIS} and wrap a far-future slot into the past,
      * so the frame reads as overdue, gets emitted, and pins the consumer's {@code lastEmittedSequence} to that
      * value - permanently deafening the listener to that speaker. Saturation clamps such a slot to the far
@@ -94,9 +94,9 @@ public final class AdaptiveJitterBuffer {
     }
 
     /**
-     * {@code sequenceNumber - firstSequenceNumber} with saturation. Both operands are attacker-influenceable
-     * wire values (a hostile server chooses every sequence number, the anchor included), so the raw subtraction
-     * itself can overflow: anchor near {@link Long#MIN_VALUE} and a poison frame near {@link Long#MAX_VALUE} wrap
+     * {@code sequenceNumber - firstSequenceNumber} with saturation. Both operands are remote-influenceable
+     * wire values (an untrusted server chooses every sequence number, the anchor included), so the raw subtraction
+     * itself can overflow: anchor near {@link Long#MIN_VALUE} and a malformed frame near {@link Long#MAX_VALUE} wrap
      * to a small negative offset, which would scale to a PAST slot and make the frame read as due. Clamping the
      * difference keeps such a frame in the far future. Real anchors and sequence numbers sit close together, so
      * this returns exactly {@code a - b} for every legitimate frame.

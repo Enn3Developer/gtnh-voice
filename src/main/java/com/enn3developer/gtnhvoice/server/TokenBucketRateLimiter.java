@@ -6,11 +6,11 @@ import java.util.function.LongSupplier;
 
 /**
  * Per-key token-bucket rate limiter. Each event costs one token; a key starts with a full burst and
- * refills at a slow steady rate, so a legitimate burst passes while a flood is dropped cheaply -
+ * refills at a slow steady rate, so a legitimate burst passes while a sustained overload is dropped cheaply -
  * before any expensive work (ECDH/HKDF and enqueue on the handshake path, or audio fan-out on the
  * UDP path). Two instances gate the voice server: one on the reliable-channel {@code ClientHello}
- * handshake (finding #9 - a flood froze the server ~34s running per-hello ECDH on the IO thread), one
- * on the serverbound UDP audio relay (a flood was amplified out to every in-range player).
+ * handshake (finding #9 - a burst froze the server ~34s running per-hello ECDH on the IO thread), one
+ * on the serverbound UDP audio relay (a burst was amplified out to every in-range player).
  * <p>
  * A single player's events all arrive on that connection's one IO/UDP thread, so per-bucket contention
  * is nil in practice; the {@code synchronized} block only guards the rare cross-thread case and stays a

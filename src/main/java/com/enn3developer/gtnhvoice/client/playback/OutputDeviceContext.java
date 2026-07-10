@@ -236,7 +236,7 @@ final class OutputDeviceContext {
 
     /**
      * Best-effort {@code alGetError} drain after a failed command or listener - {@link IsolatedRunner}'s injected
-     * post-failure hook. The live-context state says a context should be bound, but a hostile/broken task may
+     * post-failure hook. The live-context state says a context should be bound, but an untrusted/broken task may
      * have unbound this thread's AL binding before throwing - then {@code alGetError} itself throws (LWJGL's
      * no-capabilities {@code IllegalStateException}), and that must not escape the isolation catch block and kill
      * the pump loop it exists to protect.

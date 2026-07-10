@@ -8,8 +8,8 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 
 /**
- * A hostile roster snapshot claiming a huge entry count with no entries behind it must be rejected before the
- * decoder tries to allocate a map for it, guarding against an OOM/DoS from a single crafted control packet.
+ * A malformed roster snapshot claiming a huge entry count with no entries behind it must be rejected before the
+ * decoder tries to allocate a map for it, guarding against an OOM/resource exhaustion from a single crafted control packet.
  */
 class VoiceRosterSnapshotPacketTest {
 

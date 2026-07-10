@@ -1,4 +1,4 @@
-package com.enn3developer.gtnhvoice.security;
+package com.enn3developer.gtnhvoice.robustness;
 
 import java.security.SecureRandom;
 import java.util.Random;
@@ -47,7 +47,7 @@ public final class PendingSendsGrowth {
             while (System.nanoTime() < deadline) {
                 try {
                     rng.nextBytes(pubkey);
-                    byte[] body = HelloCodec.encodeClientHello(Client.PROTOCOL_VERSION, "gtnhvoice-exploit", pubkey);
+                    byte[] body = HelloCodec.encodeClientHello(Client.PROTOCOL_VERSION, "gtnhvoice-probe", pubkey);
                     s.sendControl(Client.DISC_CLIENT_HELLO, body);
                     sent++;
                 } catch (Exception e) {

@@ -1,4 +1,4 @@
-package com.enn3developer.gtnhvoice.security;
+package com.enn3developer.gtnhvoice.robustness;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -11,8 +11,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import com.enn3developer.gtnhvoice.core.api.encryption.Encryption;
 import com.enn3developer.gtnhvoice.core.encryption.aes.AesEncryption;
-import com.enn3developer.gtnhvoice.security.ExploitClient.LoginHandler;
-import com.enn3developer.gtnhvoice.security.ExploitClient.VoiceHandshake;
+import com.enn3developer.gtnhvoice.robustness.LoginClient.LoginHandler;
+import com.enn3developer.gtnhvoice.robustness.LoginClient.VoiceHandshake;
 import com.enn3developer.gtnhvoice.network.HelloCodec;
 import com.enn3developer.gtnhvoice.network.VoiceProtocol;
 
@@ -26,7 +26,7 @@ import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
 
 /**
- * Fluent entry point to the voice-session exploit harness. Builds on {@link ExploitClient} (login +
+ * Fluent entry point to the voice-session test harness. Builds on {@link LoginClient} (login +
  * FML|HS + reach PLAY) and negotiates a full voice session:
  * ClientHello -&gt; ServerHello -&gt; ECDH + HKDF -&gt; a server-accepted UDP packet.
  *
@@ -105,7 +105,7 @@ public final class Client {
         boolean handedOff = false;
         try {
             System.out.println("[voice] Phase 1: Server List Ping to " + host + ":" + port);
-            Map<String, String> serverMods = ExploitClient.statusPing(group, host, port);
+            Map<String, String> serverMods = LoginClient.statusPing(group, host, port);
             if (serverMods.isEmpty()) {
                 throw new IllegalStateException("no modinfo - server may be vanilla");
             }
@@ -150,7 +150,7 @@ public final class Client {
                 protected void initChannel(SocketChannel ch) {
                     CountDownLatch reachedPlay = new CountDownLatch(1);
                     ch.pipeline()
-                        .addLast(new ExploitClient.VarIntFrameDecoder());
+                        .addLast(new LoginClient.VarIntFrameDecoder());
                     ch.pipeline()
                         .addLast(new LoginHandler(host, port, username, serverMods, reachedPlay, driver));
                 }
@@ -195,17 +195,17 @@ public final class Client {
         public void onPlayReady(Channel ch) {
             // Announce we speak gtnhvoice, then send ClientHello. (FML normally auto-REGISTERs its
             // NetworkRegistry channels; we do it by hand since we hand-rolled the handshake.)
-            ExploitClient.sendServerboundCustomPayload(ch, "REGISTER", CHANNEL.getBytes(StandardCharsets.UTF_8));
+            LoginClient.sendServerboundCustomPayload(ch, "REGISTER", CHANNEL.getBytes(StandardCharsets.UTF_8));
 
             byte[] rawPublicKey = VoiceProtocol.encodePublicKey(keyPair.getPublic());
-            byte[] body = HelloCodec.encodeClientHello(PROTOCOL_VERSION, "gtnhvoice-exploit", rawPublicKey);
+            byte[] body = HelloCodec.encodeClientHello(PROTOCOL_VERSION, "gtnhvoice-probe", rawPublicKey);
             byte[] payload = new byte[1 + body.length];
             payload[0] = (byte) DISC_CLIENT_HELLO;
             System.arraycopy(body, 0, payload, 1, body.length);
 
             System.out.println("[voice]    -> gtnhvoice ClientHello (protocol=" + PROTOCOL_VERSION + ", pubkey="
                 + rawPublicKey.length + "B)");
-            ExploitClient.sendServerboundCustomPayload(ch, CHANNEL, payload);
+            LoginClient.sendServerboundCustomPayload(ch, CHANNEL, payload);
         }
 
         @Override

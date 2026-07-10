@@ -1,4 +1,4 @@
-package com.enn3developer.gtnhvoice.security;
+package com.enn3developer.gtnhvoice.robustness;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
@@ -29,7 +29,7 @@ import java.util.concurrent.locks.LockSupport;
  * offline player, complete the FML mod-list handshake, and reach PLAY.
  *
  * <p>No voice logic. Every wire primitive is spelled out by hand so this can later become the base for
- * malformed-packet exploits (nothing here enforces correctness of what we send).
+ * malformed-packet inputs (nothing here enforces correctness of what we send).
  *
  * <p>Two phases, two connections:
  * <ol>
@@ -42,7 +42,7 @@ import java.util.concurrent.locks.LockSupport;
  *       phase 1 -> receive S01 Join Game = "reached PLAY".</li>
  * </ol>
  */
-public final class ExploitClient {
+public final class LoginClient {
 
     static final int PROTOCOL_VERSION = 5; // Minecraft 1.7.10 protocol id
     static final byte FML_PROTOCOL = 2; // cpw.mods.fml.common.network.NetworkRegistry.FML_PROTOCOL
@@ -543,6 +543,6 @@ public final class ExploitClient {
         }
     }
 
-    private ExploitClient() {
+    private LoginClient() {
     }
 }

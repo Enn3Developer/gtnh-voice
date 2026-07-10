@@ -96,7 +96,7 @@ class AdaptiveJitterBufferTest {
     }
 
     @Test
-    void floodOfFramesIsCappedAtMaxQueueSize() {
+    void burstOfFramesIsCappedAtMaxQueueSize() {
         // Fixed clock: nothing is ever due, so poll() never drains - every offer either enqueues or is dropped.
         AdaptiveJitterBuffer buffer = new AdaptiveJitterBuffer(() -> 0L, PACKET_DELAY_FRAMES);
 
@@ -105,7 +105,7 @@ class AdaptiveJitterBufferTest {
             assertTrue(buffer.size() <= 512, "queue must never exceed the hard cap, was " + buffer.size());
         }
 
-        assertEquals(512, buffer.size(), "a sustained flood should fill the queue exactly to its hard cap");
+        assertEquals(512, buffer.size(), "a sustained burst should fill the queue exactly to its hard cap");
     }
 
     @Test

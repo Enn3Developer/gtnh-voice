@@ -14,7 +14,7 @@ import java.io.IOException;
 import org.junit.jupiter.api.Test;
 
 /**
- * Pins the CWE-789 fix in {@link HelloCodec#readUtf8String}: an attacker-controlled LEB128 length prefix
+ * Pins the CWE-789 fix in {@link HelloCodec#readUtf8String}: a remote-controlled LEB128 length prefix
  * must be rejected against {@link HelloCodec#MAX_UTF8_STRING_LENGTH} <em>before</em> the {@code new byte[length]}
  * allocation, so a 6-byte hello claiming ~2 GiB can no longer force a giant heap allocation on the server
  * thread. Ordinary tiny strings must still round-trip unchanged.
@@ -38,22 +38,22 @@ class HelloCodecTest {
     void oversizedLengthPrefixIsRejectedBeforeAllocating() {
         // The weapon from Fable's PoC: a length prefix claiming ~1.9 GiB with NO string bytes following.
         // The fix must reject it cheaply on the varint, never reaching new byte[claimedLen].
-        byte[] hostile = craftLengthPrefixOnly(1_900_000_000);
-        IOException ex = assertThrows(IOException.class, () -> HelloCodec.readUtf8String(dataIn(hostile)));
+        byte[] crafted = craftLengthPrefixOnly(1_900_000_000);
+        IOException ex = assertThrows(IOException.class, () -> HelloCodec.readUtf8String(dataIn(crafted)));
         // Sanity: it failed on our range check, not on an EOF from readFully of a monster array.
         assertTrue(ex.getMessage().contains("out of range"), ex.getMessage());
     }
 
     @Test
     void integerMaxLengthPrefixIsRejected() {
-        byte[] hostile = craftLengthPrefixOnly(Integer.MAX_VALUE);
-        assertThrows(IOException.class, () -> HelloCodec.readUtf8String(dataIn(hostile)));
+        byte[] crafted = craftLengthPrefixOnly(Integer.MAX_VALUE);
+        assertThrows(IOException.class, () -> HelloCodec.readUtf8String(dataIn(crafted)));
     }
 
     @Test
     void justOverCapIsRejected() {
-        byte[] hostile = craftLengthPrefixOnly(HelloCodec.MAX_UTF8_STRING_LENGTH + 1);
-        assertThrows(IOException.class, () -> HelloCodec.readUtf8String(dataIn(hostile)));
+        byte[] crafted = craftLengthPrefixOnly(HelloCodec.MAX_UTF8_STRING_LENGTH + 1);
+        assertThrows(IOException.class, () -> HelloCodec.readUtf8String(dataIn(crafted)));
     }
 
     @Test

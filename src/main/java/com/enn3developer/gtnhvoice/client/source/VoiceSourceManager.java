@@ -100,7 +100,7 @@ public final class VoiceSourceManager {
         if (!sources.containsKey(sourceId)) {
             if (!rosterLookup.apply(sourceId)
                 .isPresent()) return; // only create for a roster-present speaker
-            if (sources.size() >= MAX_SOURCES) return; // hard cap against a source flood
+            if (sources.size() >= MAX_SOURCES) return; // hard cap against a source burst
         }
 
         VoiceSource source = sources.computeIfAbsent(sourceId, uuid -> running ? createSource(uuid, distance) : null);

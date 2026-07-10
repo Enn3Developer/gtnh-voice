@@ -89,7 +89,7 @@ public class ServerHelloPacket implements IMessage {
     }
 
     // Body wire format lives in the shared :protocol HelloCodec (single source of truth for the mod and the
-    // exploit harness). SimpleNetworkWrapper hands each IMessage exactly its own payload slice.
+    // test harness). SimpleNetworkWrapper hands each IMessage exactly its own payload slice.
     @Override
     public void fromBytes(ByteBuf buf) {
         byte[] body = new byte[buf.readableBytes()];

@@ -29,7 +29,7 @@ import java.util.List;
  * only chooses which side installs the downstream handler, not which side decodes. So an authenticated
  * client can send a clientbound discriminator (e.g. 1 = ServerHello) to the server; a truncated body
  * throws inside {@code decodeInto} on the main server thread, upstream of every gtnhvoice rate limiter,
- * and FML logs three stack traces per packet - a disk/tick-starvation flood.
+ * and FML logs three stack traces per packet - a disk/tick-starvation burst.
  *
  * <p>Fix: peek the discriminator BEFORE {@code fromBytes} runs and drop it when it belongs to the wrong
  * side. On the server-received channel only the serverbound discriminator ({@link

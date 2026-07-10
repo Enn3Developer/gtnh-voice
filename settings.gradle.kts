@@ -24,5 +24,5 @@ plugins {
 // :exploit harness. Shaded into the mod jar via shadowImplementation.
 include("protocol")
 
-// Throwaway spike: a raw Netty login/FML-handshake harness (see :security). Not part of the mod build.
-include("security")
+// Throwaway spike: a raw Netty login/FML-handshake harness (see :robustness). Not part of the mod build.
+include("robustness")

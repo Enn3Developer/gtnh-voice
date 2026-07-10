@@ -40,7 +40,7 @@ public class ClientHelloPacket implements IMessage {
     }
 
     // The body wire format (incl. the tolerant public-key read) lives in the shared :protocol HelloCodec so
-    // the exploit harness and the mod can never drift. SimpleNetworkWrapper hands each IMessage exactly its
+    // the test harness and the mod can never drift. SimpleNetworkWrapper hands each IMessage exactly its
     // own payload slice, so the whole remaining buffer is this hello's body.
     @Override
     public void fromBytes(ByteBuf buf) {

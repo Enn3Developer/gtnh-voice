@@ -1,4 +1,4 @@
-package com.enn3developer.gtnhvoice.security;
+package com.enn3developer.gtnhvoice.robustness;
 
 import com.enn3developer.gtnhvoice.core.audio.jitter.AdaptiveJitterBuffer;
 

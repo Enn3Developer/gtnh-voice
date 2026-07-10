@@ -28,13 +28,13 @@ public final class VoiceServerSession implements IVoiceSession {
     // VoiceServerManager.onPacket calls for EVERY decryptable datagram BEFORE the audio rate limiter and
     // for any packet type (Ping isn't rate-limited at all). An authenticated client rotating its UDP
     // source port with monotonic timestamps can force one relearn per packet, so without this the log is
-    // 1:1 with attacker uplink (finding: 15000 pkt -> 15000 INFO lines in 5s, disk + event-loop DoS).
+    // 1:1 with client uplink (finding: 15000 pkt -> 15000 INFO lines in 5s, disk + event-loop resource exhaustion).
     // Legitimate NAT rebinds are rare, so a 5s per-session throttle loses nothing operationally.
     private static final long RELEARN_LOG_THROTTLE_MILLIS = 5000;
 
     // Sliding anti-replay window (IPsec-style) over audio sequence numbers. A genuine client stamps a
     // strictly-monotonic sequenceNumber (CaptureSendWorker: sequenceNumber++) inside the AES-GCM
-    // authenticated body, so an attacker can't forge one - only a genuine frame or a byte-for-byte replay
+    // authenticated body, so a remote peer can't forge one - only a genuine frame or a byte-for-byte replay
     // of one carries a valid seq. The window admits any frame ahead of the highest seen and any earlier
     // frame not yet seen within WINDOW slots (tolerating normal UDP reorder), but drops an exact duplicate
     // or a frame older than the window - stopping capture-replay without dropping reordered live audio.
@@ -158,9 +158,9 @@ public final class VoiceServerSession implements IVoiceSession {
      * {@code packetTimestamp} is the sender-stamped send time. The source address is only relearned
      * from a packet strictly newer than the last one accepted for relearning: AES-GCM authenticates
      * a packet but does not stop a <em>replay</em> of a genuine one, so without this an on-path
-     * attacker could resend a captured datagram from their own address and redirect this session's
+     * remote peer could resend a captured datagram from their own address and redirect this session's
      * inbound audio to themselves. A replay carries an old timestamp and is ignored for relearning;
-     * the victim's next real packet (newer timestamp) re-adopts the correct address.
+     * the receiver's next real packet (newer timestamp) re-adopts the correct address.
      */
     public void touch(@NotNull InetSocketAddress address, long packetTimestamp) {
         lastSeenMillis = System.currentTimeMillis();

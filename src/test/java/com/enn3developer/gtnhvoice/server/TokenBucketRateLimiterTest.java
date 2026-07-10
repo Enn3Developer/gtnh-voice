@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Contract for the per-player ClientHello rate limiter (finding #9): a legitimate handshake burst plus
- * its slow retry cadence must pass, while a flood is dropped once the burst is drained and outruns the
+ * its slow retry cadence must pass, while an overload is dropped once the burst is drained and outruns the
  * refill. Uses an injected clock so the token maths is exercised without wall-clock timing.
  */
 class TokenBucketRateLimiterTest {
@@ -81,12 +81,12 @@ class TokenBucketRateLimiterTest {
     @Test
     void tracksEachPlayerIndependently() {
         TokenBucketRateLimiter limiter = limiter();
-        UUID flooder = UUID.randomUUID();
+        UUID sender = UUID.randomUUID();
         UUID bystander = UUID.randomUUID();
 
-        for (int i = 0; i < BURST; i++) limiter.tryAcquire(flooder);
-        assertFalse(limiter.tryAcquire(flooder), "flooder is throttled");
-        assertTrue(limiter.tryAcquire(bystander), "a different player is unaffected by the flooder");
+        for (int i = 0; i < BURST; i++) limiter.tryAcquire(sender);
+        assertFalse(limiter.tryAcquire(sender), "sender is throttled");
+        assertTrue(limiter.tryAcquire(bystander), "a different player is unaffected by the sender");
     }
 
     @Test

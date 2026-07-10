@@ -66,8 +66,8 @@ final class VoiceSource {
     private Thread pollerThread;
     private int distance;
 
-    // Throttles the poller's last-resort "unexpected throwable" log so a poison-frame flood can't turn into a log
-    // flood - see runPoller(). Per-source, since each source has its own poller thread.
+    // Throttles the poller's last-resort "unexpected throwable" log so a malformed-frame burst can't turn into a log
+    // burst - see runPoller(). Per-source, since each source has its own poller thread.
     private final AtomicLong lastPollerFaultLogMillis = new AtomicLong();
 
     // Decode bookkeeping, only ever touched from the poller thread.
@@ -186,7 +186,7 @@ final class VoiceSource {
                 // otherwise the stale lastEmittedSequence would look like a huge "gap" to conceal.
                 emittedSinceReset = false;
                 // Re-arm sequence tracking to the fresh-source state. The jitter buffer re-anchors from the
-                // next segment's first packet, so a stale (possibly attacker-inflated) lastEmittedSequence must
+                // next segment's first packet, so a stale (possibly remote-inflated) lastEmittedSequence must
                 // not survive: otherwise discardThrough(lastEmittedSequence) could keep dropping the whole next
                 // segment. Defense in depth alongside the buffer's saturating schedule arithmetic.
                 lastEmittedSequence = -1;
@@ -195,9 +195,9 @@ final class VoiceSource {
             // The decoder contract (JavaOpusDecoder/NativeOpusDecoder) now converts a malformed frame into a
             // CodecException that emitNextFrame() swallows per-frame. This guard is defense in depth: any other
             // unexpected non-fatal throwable from one frame must drop that frame and keep the thread alive, never
-            // strand this per-speaker poller (which would make the victim permanently deaf to this speaker). Fatal
-            // Errors (OOM, etc.) are left to propagate. The log is throttled so a poison-frame flood can't become a
-            // log flood.
+            // strand this per-speaker poller (which would make the receiver permanently deaf to this speaker). Fatal
+            // Errors (OOM, etc.) are left to propagate. The log is throttled so a malformed-frame burst can't become a
+            // log burst.
             boolean emitted;
             try {
                 emitted = emitNextFrame();

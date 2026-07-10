@@ -18,7 +18,7 @@ import java.util.UUID;
  * This is deliberately netty-free (plain {@code byte[]}/{@link DataInput}/{@link DataOutput}) so it can live in the
  * shared {@code :protocol} module and be consumed both by the mod (whose {@code ClientHelloPacket}/
  * {@code ServerHelloPacket} implement FML's {@code IMessage} but delegate their body encode/decode here) and by the
- * out-of-tree exploit harness. A protocol change made here therefore breaks the harness at compile time instead of
+ * out-of-tree test harness. A protocol change made here therefore breaks the harness at compile time instead of
  * silently desyncing it at runtime.
  * <p>
  * <b>String framing.</b> {@link #writeUtf8String}/{@link #readUtf8String} reproduce FML's
@@ -34,7 +34,7 @@ public final class HelloCodec {
     /**
      * Upper bound on the decoded byte-length of any UTF-8 string in a hello body. The real strings are
      * tiny (a mod version string, an empty {@code udpHost}), so an 8 KiB cap is generous while making the
-     * unbounded {@code new byte[length]} allocation DoS (a 6-byte hello claiming ~2 GiB) impossible:
+     * unbounded {@code new byte[length]} allocation blowup (a 6-byte hello claiming ~2 GiB) impossible:
      * {@link #readUtf8String} rejects the length prefix before allocating. Mirrors the {@code max} bound
      * {@link com.enn3developer.gtnhvoice.core.proto.packets.PacketUtil#readBytes} already applies on the
      * UDP path.
@@ -189,7 +189,7 @@ public final class HelloCodec {
     /** Reproduces {@code ByteBufUtils.readUTF8String}: LEB128 VarInt byte-length prefix + UTF-8 bytes. */
     public static String readUtf8String(DataInput in) throws IOException {
         int length = readVarInt(in);
-        // Validate the attacker-controlled length prefix BEFORE allocating: readVarInt permits ~2 GiB, so
+        // Validate the remote-controlled length prefix BEFORE allocating: readVarInt permits ~2 GiB, so
         // a 6-byte hello would otherwise force a giant heap allocation on the server thread (CWE-789), long
         // before the per-player HelloRateLimiter ever sees the packet.
         if (length < 0 || length > MAX_UTF8_STRING_LENGTH) {

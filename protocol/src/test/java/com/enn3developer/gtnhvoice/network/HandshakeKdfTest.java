@@ -168,7 +168,7 @@ class HandshakeKdfTest {
     @Test
     void lowOrderPublicKeyIsRejected() {
         // The all-zero u-coordinate is a low-order point: X25519 agreement against it produces an
-        // all-zero (attacker-predictable) shared secret, which computeSharedSecret must refuse rather
+        // all-zero (remote-predictable) shared secret, which computeSharedSecret must refuse rather
         // than derive a key from.
         KeyPair pair = VoiceProtocol.generateEphemeralKeyPair();
         PublicKey lowOrder = VoiceProtocol.decodePublicKey(new byte[VoiceProtocol.X25519_PUBLIC_KEY_LENGTH]);

@@ -1,4 +1,4 @@
-package com.enn3developer.gtnhvoice.security;
+package com.enn3developer.gtnhvoice.robustness;
 
 import java.io.IOException;
 import java.net.DatagramPacket;
@@ -26,7 +26,7 @@ import io.netty.channel.nio.NioEventLoopGroup;
  * #close()}, so a caller only has to {@code try (VoiceSession s = ...)} and never touches Netty
  * plumbing directly.
  *
- * <p>This is exploit infrastructure, so the send/receive primitives are intentionally raw/permissive.
+ * <p>This is test infrastructure, so the send/receive primitives are intentionally raw/permissive.
  * The senders are chainable (they return {@code this}); the getters and encoders are not:
  * <ul>
  *   <li>{@link #sendControl(int, byte[])} - send an <b>arbitrary</b> body on the {@code gtnhvoice}
@@ -107,7 +107,7 @@ public final class VoiceSession implements AutoCloseable {
         byte[] data = new byte[1 + body.length];
         data[0] = (byte) discriminator;
         System.arraycopy(body, 0, data, 1, body.length);
-        ExploitClient.sendServerboundCustomPayload(tcpChannel, Client.CHANNEL, data);
+        LoginClient.sendServerboundCustomPayload(tcpChannel, Client.CHANNEL, data);
         return this;
     }
 

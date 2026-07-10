@@ -33,7 +33,7 @@ import javax.crypto.spec.SecretKeySpec;
  * <b>Security scope / known limit.</b> This is <em>unauthenticated</em> ECDH. It defeats passive
  * eavesdropping on both the TCP (FML/control) and UDP legs and gives forward secrecy (ephemeral
  * keys, discarded after the session), but it does <b>not</b> stop an active man-in-the-middle who
- * can rewrite the control channel - such an attacker could substitute its own public keys and
+ * can rewrite the control channel - such a remote peer could substitute its own public keys and
  * establish two half-sessions. Authenticating the exchange (e.g. a persistent server EC identity
  * key that signs the ephemeral pubkey, plus client trust-on-first-use/pinning) would close that
  * gap. TODO: add server identity signing + client TOFU pinning.
@@ -131,7 +131,7 @@ public final class VoiceProtocol {
 
             // RFC 7748 s6.1: an all-zero output means the peer offered a low-order public key (a
             // small-subgroup / contributory-behaviour attack) that forces a predictable shared
-            // secret. Reject it instead of deriving a key from attacker-chosen material.
+            // secret. Reject it instead of deriving a key from remote-chosen material.
             if (isAllZero(sharedSecret)) {
                 throw new IllegalStateException("X25519 shared secret is all-zero (low-order public key)");
             }

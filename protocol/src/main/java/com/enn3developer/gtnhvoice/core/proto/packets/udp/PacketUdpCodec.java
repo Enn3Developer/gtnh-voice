@@ -56,7 +56,7 @@ public class PacketUdpCodec {
 
         // The send timestamp goes INSIDE the encrypted body (prepended before the packet fields), not
         // in the cleartext header, so AES-GCM authenticates it. The server's anti-replay address guard
-        // trusts this timestamp; if it lived in the cleartext header an attacker could replay a genuine
+        // trusts this timestamp; if it lived in the cleartext header a remote peer could replay a genuine
         // body while forging a newer timestamp to defeat the guard (GCM authenticates only the body).
         ByteArrayDataOutput body = ByteStreams.newDataOutput();
         body.writeLong(System.currentTimeMillis());

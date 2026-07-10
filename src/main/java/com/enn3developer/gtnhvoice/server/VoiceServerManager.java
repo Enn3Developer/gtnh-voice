@@ -80,14 +80,14 @@ public final class VoiceServerManager implements UdpPacketListener {
 
     // Per-player ClientHello budget. A legitimate client retries at most once/sec for 10 attempts (see
     // VoiceClientManager.HANDSHAKE_RETRY_INTERVAL_MILLIS), so a 5-hello burst refilling at 2/sec passes
-    // a real handshake untouched while dropping a flood (finding #9: 172k hellos froze the server ~34s
+    // a real handshake untouched while dropping a burst (finding #9: 172k hellos froze the server ~34s
     // running per-hello ECDH on the IO thread) at the door, before any ECDH/enqueue/log.
     private static final int HELLO_BURST = 5;
     private static final long HELLO_REFILL_INTERVAL_MILLIS = 500;
 
     // Per-player serverbound-audio budget. A real speaker emits ~50 frames/s (one 20ms frame each), so a
     // 50/s refill keeps honest speech always above water while a 100-frame burst absorbs network jitter.
-    // A flood (finding: AudioRelayFlood pushed 5000/s, relayed 1:1 to every in-range player) is capped at
+    // A burst (finding: AudioRelayFlood pushed 5000/s, relayed 1:1 to every in-range player) is capped at
     // ~50/s and dropped here, before the group fan-out amplifies it to honest third parties.
     private static final int AUDIO_BURST = 100;
     private static final long AUDIO_REFILL_INTERVAL_MILLIS = 20;
@@ -97,8 +97,8 @@ public final class VoiceServerManager implements UdpPacketListener {
     // Per-session inbound-UDP budget, charged for EVERY datagram (audio, ping, anything) BEFORE the
     // AES-GCM decrypt. A real session is ~50 audio frames/s (20ms cadence) plus the odd keepalive ping,
     // so a 100/s refill with a 200-frame burst passes honest traffic - audio + pings + jitter/reordering
-    // bursts - untouched, while capping a flood to ~100/s per session. Only PlayerAudioPacket was capped
-    // before, and only AFTER decrypt, so an uncapped Ping flood (authed, or a keyless replay of one
+    // bursts - untouched, while capping a burst to ~100/s per session. Only PlayerAudioPacket was capped
+    // before, and only AFTER decrypt, so an uncapped Ping burst (authed, or a keyless replay of one
     // captured Ping) decrypted unbounded on the lone UDP event-loop thread (finding: 268k pings/s pinned
     // nioEventLoop at ~98% and cost an honest speaker 3-6% frames).
     private static final int INBOUND_BURST = 200;
@@ -222,18 +222,18 @@ public final class VoiceServerManager implements UdpPacketListener {
         UUID playerUuid = player.getGameProfile()
             .getId();
 
-        // Per-player rate limit FIRST, before any ECDH/HKDF, pendingSends enqueue, or log - a flood
+        // Per-player rate limit FIRST, before any ECDH/HKDF, pendingSends enqueue, or log - a burst
         // (finding #9) must cost nothing past this point. runs on the Netty IO thread.
         if (!helloRateLimiter.tryAcquire(playerUuid)) {
             if (LogThrottle.shouldLog(lastHelloDropLogMillis, HANDSHAKE_LOG_THROTTLE_MILLIS)) {
                 GtnhVoice.LOG.warn(
-                    "Rate-limiting voice handshakes from {}: dropping excess ClientHello (flood or misbehaving client)",
+                    "Rate-limiting voice handshakes from {}: dropping excess ClientHello (burst or misbehaving client)",
                     player.getCommandSenderName());
             }
             return;
         }
 
-        // Only log the (attacker-controlled) modVersion for hellos that passed the gate above - a flood
+        // Only log the (remote-controlled) modVersion for hellos that passed the gate above - a burst
         // is dropped before it can print anything (finding: HelloLogFlood wrote the modVersion per hello,
         // ahead of this limiter in ClientHelloServerHandler, growing the log ~155 MiB in under a second).
         GtnhVoice.LOG.info(
@@ -268,7 +268,7 @@ public final class VoiceServerManager implements UdpPacketListener {
         byte[] clientPublicKey = packet.getPublicKey();
         if (clientPublicKey == null || clientPublicKey.length != VoiceProtocol.X25519_PUBLIC_KEY_LENGTH) {
             // Protocol version matched but the ClientHello had no usable X25519 public key - a broken
-            // or hostile client. Reject cleanly so it stops retrying rather than silently dropping it.
+            // or misbehaving client. Reject cleanly so it stops retrying rather than silently dropping it.
             pendingSends.add(() -> {
                 NetworkHandler.WRAPPER.sendTo(
                     new ServerRejectPacket(VoiceProtocol.PROTOCOL_VERSION, VoiceProtocol.REASON_HANDSHAKE_FAILED),
@@ -433,14 +433,14 @@ public final class VoiceServerManager implements UdpPacketListener {
 
         // Per-session inbound cap for EVERY packet type, charged BEFORE the AES-GCM decrypt below.
         // Decrypt is the expensive per-datagram work on the lone UDP event-loop thread; only audio was
-        // capped, and only AFTER decrypt, so an uncapped Ping flood (authed, or a keyless replay of one
+        // capped, and only AFTER decrypt, so an uncapped Ping burst (authed, or a keyless replay of one
         // captured Ping) decrypted unbounded and pinned the loop (finding: 268k pings/s -> ~98% CPU,
         // honest speaker lost 3-6% frames). Key on the cleartext sessionId and drop over-limit datagrams
         // here so getPacketUntyped never runs on them.
         if (!inboundRateLimiter.tryAcquire(packetUdp.getSessionId())) {
             if (LogThrottle.shouldLog(lastInboundDropLogMillis, INBOUND_DROP_LOG_THROTTLE_MILLIS)) {
                 GtnhVoice.LOG.warn(
-                    "Rate-limiting inbound voice UDP from {} (session {}): dropping excess datagram before decrypt (flood or replay)",
+                    "Rate-limiting inbound voice UDP from {} (session {}): dropping excess datagram before decrypt (burst or replay)",
                     sender,
                     VoiceProtocol.abbreviateSessionId(session.getSessionId()));
             }
@@ -472,15 +472,15 @@ public final class VoiceServerManager implements UdpPacketListener {
 
     /**
      * Per-speaker rate gate in front of {@link #routeAudio}. A real client is bounded to ~50 frames/s by
-     * its 20ms frame cadence; a flooder is bounded only by its uplink. Charge one token per frame and
+     * its 20ms frame cadence; a sender is bounded only by its uplink. Charge one token per frame and
      * drop the overflow HERE, before the group fan-out amplifies it out to every in-range player (finding:
-     * AudioRelayFlood at 5000/s was relayed 1:1 to an honest victim). Runs on the UDP/Netty thread.
+     * AudioRelayFlood at 5000/s was relayed 1:1 to a legitimate receiver). Runs on the UDP/Netty thread.
      */
     private void handleAudio(@NotNull VoiceServerSession speakerSession, @NotNull PlayerAudioPacket audio) {
         // Anti-replay FIRST, before the rate limiter and the fan-out. AES-GCM authenticates a datagram but
-        // does not stop a REPLAY of a genuine one; without this a keyless on-path attacker could resend one
+        // does not stop a REPLAY of a genuine one; without this a keyless on-path remote peer could resend one
         // captured PlayerAudioPacket and have it re-routed to every in-range player each time (finding:
-        // 1 frame replayed 200x -> victim got 200 SourceAudioPackets). The sliding window drops exact
+        // 1 frame replayed 200x -> receiver got 200 SourceAudioPackets). The sliding window drops exact
         // duplicates and stale frames while still admitting reordered live audio.
         if (!speakerSession.acceptAudioSequence(audio.getSequenceNumber())) {
             if (LogThrottle.shouldLog(lastAudioReplayLogMillis, AUDIO_REPLAY_LOG_THROTTLE_MILLIS)) {
@@ -495,7 +495,7 @@ public final class VoiceServerManager implements UdpPacketListener {
         if (!audioRateLimiter.tryAcquire(speakerSession.getPlayerUuid())) {
             if (LogThrottle.shouldLog(lastAudioDropLogMillis, AUDIO_DROP_LOG_THROTTLE_MILLIS)) {
                 GtnhVoice.LOG.warn(
-                    "Rate-limiting audio from {}: dropping excess PlayerAudioPacket (flood or misbehaving client)",
+                    "Rate-limiting audio from {}: dropping excess PlayerAudioPacket (burst or misbehaving client)",
                     speakerSession.getPlayerName());
             }
             return;
