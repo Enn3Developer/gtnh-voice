@@ -85,6 +85,14 @@ public final class VoiceServerManager implements UdpPacketListener {
     private static final int HELLO_BURST = 5;
     private static final long HELLO_REFILL_INTERVAL_MILLIS = 500;
 
+    // Per-player serverbound-audio budget. A real speaker emits ~50 frames/s (one 20ms frame each), so a
+    // 50/s refill keeps honest speech always above water while a 100-frame burst absorbs network jitter.
+    // A flood (finding: AudioRelayFlood pushed 5000/s, relayed 1:1 to every in-range player) is capped at
+    // ~50/s and dropped here, before the group fan-out amplifies it to honest third parties.
+    private static final int AUDIO_BURST = 100;
+    private static final long AUDIO_REFILL_INTERVAL_MILLIS = 20;
+    private static final long AUDIO_DROP_LOG_THROTTLE_MILLIS = 5000;
+
     private final Map<UUID, VoiceServerSession> sessionsBySessionId = new ConcurrentHashMap<>();
     private final Map<UUID, VoiceServerSession> sessionsByPlayerUuid = new ConcurrentHashMap<>();
     private final Map<UUID, VoiceServerSession> sessionsByPlayerUuidView = Collections
@@ -107,7 +115,13 @@ public final class VoiceServerManager implements UdpPacketListener {
     private final AtomicLong lastHelloDropLogMillis = new AtomicLong();
     private final AtomicLong lastHandshakeAcceptLogMillis = new AtomicLong();
     private final AtomicLong lastHandshakeRejectLogMillis = new AtomicLong();
-    private final HelloRateLimiter helloRateLimiter = new HelloRateLimiter(HELLO_BURST, HELLO_REFILL_INTERVAL_MILLIS);
+    private final AtomicLong lastAudioDropLogMillis = new AtomicLong();
+    private final TokenBucketRateLimiter helloRateLimiter = new TokenBucketRateLimiter(
+        HELLO_BURST,
+        HELLO_REFILL_INTERVAL_MILLIS);
+    private final TokenBucketRateLimiter audioRateLimiter = new TokenBucketRateLimiter(
+        AUDIO_BURST,
+        AUDIO_REFILL_INTERVAL_MILLIS);
 
     public static VoiceServerManager getInstance() {
         return INSTANCE;
@@ -199,6 +213,14 @@ public final class VoiceServerManager implements UdpPacketListener {
             }
             return;
         }
+
+        // Only log the (attacker-controlled) modVersion for hellos that passed the gate above - a flood
+        // is dropped before it can print anything (finding: HelloLogFlood wrote the modVersion per hello,
+        // ahead of this limiter in ClientHelloServerHandler, growing the log ~155 MiB in under a second).
+        GtnhVoice.LOG.info(
+            "Received ClientHelloPacket (protocolVersion={}, modVersion={})",
+            packet.getProtocolVersion(),
+            packet.getModVersion());
 
         if (packet.getProtocolVersion() != VoiceProtocol.PROTOCOL_VERSION) {
             pendingSends.add(() -> {
@@ -397,7 +419,7 @@ public final class VoiceServerManager implements UdpPacketListener {
             if (packet instanceof PingPacket) {
                 // Liveness/NAT keepalive only for now - last-seen is already updated by touch() above.
             } else if (packet instanceof PlayerAudioPacket) {
-                routeAudio(session, (PlayerAudioPacket) packet);
+                handleAudio(session, (PlayerAudioPacket) packet);
             }
         } catch (Exception e) {
             if (LogThrottle.shouldLog(lastReadFailureLogMillis, READ_FAILURE_LOG_THROTTLE_MILLIS)) {
@@ -408,6 +430,25 @@ public final class VoiceServerManager implements UdpPacketListener {
                     e);
             }
         }
+    }
+
+    /**
+     * Per-speaker rate gate in front of {@link #routeAudio}. A real client is bounded to ~50 frames/s by
+     * its 20ms frame cadence; a flooder is bounded only by its uplink. Charge one token per frame and
+     * drop the overflow HERE, before the group fan-out amplifies it out to every in-range player (finding:
+     * AudioRelayFlood at 5000/s was relayed 1:1 to an honest victim). Runs on the UDP/Netty thread.
+     */
+    private void handleAudio(@NotNull VoiceServerSession speakerSession, @NotNull PlayerAudioPacket audio) {
+        if (!audioRateLimiter.tryAcquire(speakerSession.getPlayerUuid())) {
+            if (LogThrottle.shouldLog(lastAudioDropLogMillis, AUDIO_DROP_LOG_THROTTLE_MILLIS)) {
+                GtnhVoice.LOG.warn(
+                    "Rate-limiting audio from {}: dropping excess PlayerAudioPacket (flood or misbehaving client)",
+                    speakerSession.getPlayerName());
+            }
+            return;
+        }
+
+        routeAudio(speakerSession, audio);
     }
 
     /**
@@ -480,9 +521,10 @@ public final class VoiceServerManager implements UdpPacketListener {
     public void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
         UUID playerUuid = event.player.getGameProfile()
             .getId();
-        // Drop the handshake rate-limit bucket regardless of voice state, so the map tracks online
-        // players only and does not accumulate churned-through UUIDs.
+        // Drop the rate-limit buckets regardless of voice state, so the maps track online players only
+        // and do not accumulate churned-through UUIDs.
         helloRateLimiter.forget(playerUuid);
+        audioRateLimiter.forget(playerUuid);
 
         VoiceServerSession session = sessionsByPlayerUuid.get(playerUuid);
         if (session == null) return;

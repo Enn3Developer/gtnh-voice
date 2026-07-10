@@ -5,48 +5,48 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongSupplier;
 
 /**
- * Per-player token-bucket rate limiter for the reliable-channel voice handshake. Each {@code
- * ClientHello} costs one token; a player starts with a full burst and refills at a slow steady rate,
- * so a legitimate handshake-retry burst passes while a flood is dropped cheaply - before any
- * ECDH/HKDF, {@code pendingSends} enqueue, or log on the Netty IO thread (see
- * {@link VoiceServerManager#handleClientHello}). Finding #9's flood froze the server ~34s because
- * every hello ran ECDH on the IO thread; this gate stops the flood at the door.
+ * Per-key token-bucket rate limiter. Each event costs one token; a key starts with a full burst and
+ * refills at a slow steady rate, so a legitimate burst passes while a flood is dropped cheaply -
+ * before any expensive work (ECDH/HKDF and enqueue on the handshake path, or audio fan-out on the
+ * UDP path). Two instances gate the voice server: one on the reliable-channel {@code ClientHello}
+ * handshake (finding #9 - a flood froze the server ~34s running per-hello ECDH on the IO thread), one
+ * on the serverbound UDP audio relay (a flood was amplified out to every in-range player).
  * <p>
- * A single player's hellos all arrive on that connection's one IO thread, so per-bucket contention is
- * nil in practice; the {@code synchronized} block only guards the rare cross-thread case and stays a
+ * A single player's events all arrive on that connection's one IO/UDP thread, so per-bucket contention
+ * is nil in practice; the {@code synchronized} block only guards the rare cross-thread case and stays a
  * cheap uncontended lock on the hot path. MC-free by design so it is unit-testable with an injected
  * clock.
  */
-final class HelloRateLimiter {
+final class TokenBucketRateLimiter {
 
     private final int capacity;
     private final double tokensPerMilli;
     private final LongSupplier clock;
     private final ConcurrentHashMap<UUID, Bucket> buckets = new ConcurrentHashMap<>();
 
-    HelloRateLimiter(int capacity, long refillIntervalMillis) {
+    TokenBucketRateLimiter(int capacity, long refillIntervalMillis) {
         this(capacity, refillIntervalMillis, System::currentTimeMillis);
     }
 
-    HelloRateLimiter(int capacity, long refillIntervalMillis, LongSupplier clock) {
+    TokenBucketRateLimiter(int capacity, long refillIntervalMillis, LongSupplier clock) {
         this.capacity = capacity;
         this.tokensPerMilli = 1.0 / refillIntervalMillis;
         this.clock = clock;
     }
 
     /**
-     * Charges one token for {@code player}. Returns {@code true} if a token was available (allow the
-     * hello), {@code false} once the player has drained their burst and outrun the refill (drop it).
+     * Charges one token for {@code key}. Returns {@code true} if a token was available (allow the
+     * event), {@code false} once the key has drained its burst and outrun the refill (drop it).
      */
-    boolean tryAcquire(UUID player) {
+    boolean tryAcquire(UUID key) {
         long now = clock.getAsLong();
-        Bucket bucket = buckets.computeIfAbsent(player, key -> new Bucket(capacity, now));
+        Bucket bucket = buckets.computeIfAbsent(key, k -> new Bucket(capacity, now));
         return bucket.tryAcquire(now, capacity, tokensPerMilli);
     }
 
-    /** Drops a player's bucket on logout so the map does not grow with churned-through UUIDs. */
-    void forget(UUID player) {
-        buckets.remove(player);
+    /** Drops a key's bucket on logout so the map does not grow with churned-through UUIDs. */
+    void forget(UUID key) {
+        buckets.remove(key);
     }
 
     private static final class Bucket {

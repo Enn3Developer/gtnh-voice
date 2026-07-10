@@ -13,20 +13,20 @@ import org.junit.jupiter.api.Test;
  * its slow retry cadence must pass, while a flood is dropped once the burst is drained and outruns the
  * refill. Uses an injected clock so the token maths is exercised without wall-clock timing.
  */
-class HelloRateLimiterTest {
+class TokenBucketRateLimiterTest {
 
     private static final int BURST = 5;
     private static final long REFILL_INTERVAL_MILLIS = 500; // one token every 500ms => 2/sec
 
     private final AtomicLong clock = new AtomicLong();
 
-    private HelloRateLimiter limiter() {
-        return new HelloRateLimiter(BURST, REFILL_INTERVAL_MILLIS, clock::get);
+    private TokenBucketRateLimiter limiter() {
+        return new TokenBucketRateLimiter(BURST, REFILL_INTERVAL_MILLIS, clock::get);
     }
 
     @Test
     void allowsTheFullInitialBurstThenDropsTheOverflow() {
-        HelloRateLimiter limiter = limiter();
+        TokenBucketRateLimiter limiter = limiter();
         UUID player = UUID.randomUUID();
 
         for (int i = 0; i < BURST; i++) {
@@ -37,7 +37,7 @@ class HelloRateLimiterTest {
 
     @Test
     void refillsOneTokenPerInterval() {
-        HelloRateLimiter limiter = limiter();
+        TokenBucketRateLimiter limiter = limiter();
         UUID player = UUID.randomUUID();
 
         for (int i = 0; i < BURST; i++) limiter.tryAcquire(player);
@@ -55,7 +55,7 @@ class HelloRateLimiterTest {
 
     @Test
     void doesNotRefillBeyondTheBurstCapacity() {
-        HelloRateLimiter limiter = limiter();
+        TokenBucketRateLimiter limiter = limiter();
         UUID player = UUID.randomUUID();
 
         // Idle a long time - tokens must cap at BURST, not accumulate unbounded.
@@ -68,7 +68,7 @@ class HelloRateLimiterTest {
 
     @Test
     void aLegitimateOncePerSecondRetryNeverDrops() {
-        HelloRateLimiter limiter = limiter();
+        TokenBucketRateLimiter limiter = limiter();
         UUID player = UUID.randomUUID();
 
         // The real client retries at most once/sec for 10 attempts; 2/sec refill keeps it always above water.
@@ -80,7 +80,7 @@ class HelloRateLimiterTest {
 
     @Test
     void tracksEachPlayerIndependently() {
-        HelloRateLimiter limiter = limiter();
+        TokenBucketRateLimiter limiter = limiter();
         UUID flooder = UUID.randomUUID();
         UUID bystander = UUID.randomUUID();
 
@@ -91,7 +91,7 @@ class HelloRateLimiterTest {
 
     @Test
     void forgottenPlayerStartsWithAFreshBurst() {
-        HelloRateLimiter limiter = limiter();
+        TokenBucketRateLimiter limiter = limiter();
         UUID player = UUID.randomUUID();
 
         for (int i = 0; i < BURST; i++) limiter.tryAcquire(player);
