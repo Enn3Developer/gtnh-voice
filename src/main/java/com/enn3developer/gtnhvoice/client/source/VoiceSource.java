@@ -38,10 +38,8 @@ final class VoiceSource {
 
     private static final int SAMPLE_RATE = 48_000;
     private static final int FRAME_SIZE = 960; // 20ms @ 48kHz mono
-    // Starting value of the adaptive delay before the jitter estimate warms up; the permanent floor lives in
-    // AdaptiveJitterBuffer. Values >= 2 are not needed for reordering since the jitter buffer always
-    // priority-orders by sequence number.
-    private static final int JITTER_INITIAL_DELAY_FRAMES = 1;
+    // Starting value of the adaptive delay before the jitter estimate warms up
+    private static final int JITTER_INITIAL_DELAY_FRAMES = 4;
     private static final long LOG_INTERVAL_MILLIS = 2_000L;
     // Upper bound on back-to-back synthesized (PLC) frames (~100ms, roughly WebRTC's expand limit): a safety
     // net against fabricating audio indefinitely if sequence numbers ever jump pathologically. In practice the
