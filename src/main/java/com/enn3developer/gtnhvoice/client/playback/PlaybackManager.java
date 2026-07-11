@@ -32,6 +32,13 @@ import com.enn3developer.gtnhvoice.core.api.util.LogThrottle;
  */
 public class PlaybackManager {
 
+    /**
+     * Reserved source id for the settings GUI's mic monitor - the local player's own processed mic audio played
+     * back through the ordinary per-source pipeline (created non-positional, full gain). Version-0 UUID, so it
+     * can never collide with a real player's id, and the server never sends audio for it.
+     */
+    public static final UUID MIC_MONITOR_SOURCE_ID = new UUID(0L, 0L);
+
     private static final int QUEUE_CAPACITY = 50; // ~1s of 20ms frames
     private static final int FRAME_SAMPLES = 960; // 20ms @ 48kHz mono
     private static final long FILTER_ERROR_LOG_INTERVAL_MILLIS = 1_000L;
@@ -56,6 +63,22 @@ public class PlaybackManager {
     // session-transition/addon threads publish it. 0 = OpenAL Soft's default (no attribute requested).
     private volatile int requestedAuxiliarySends;
 
+    // Master volume for all incoming voice, as an AL listener gain multiplier - it scales everything the user
+    // hears in the voice context, mic monitor included. Volatile: written by the client thread (settings
+    // slider), read by the playback thread every pump iteration. Seeded from Config in start().
+    private volatile float masterVolume = 1f;
+
+    // Minecraft's own master sound volume, published every client tick by VoiceListenerTickHandler (the audio
+    // thread never reads live GameSettings state directly, mirroring the listener-snapshot discipline) and
+    // multiplied into the effective listener gain - so voice follows the game's sound slider like any other
+    // sound. Defaults to full until the first tick publishes the real value.
+    private volatile float minecraftMasterVolume = 1f;
+
+    // While true, every source except the mic monitor is gated to zero gain - the settings GUI's Input tab
+    // silencing other speakers so the user hears only their own mic. Volatile: client thread writes, and
+    // createSource/setGain read it when computing the gain they post to the playback thread.
+    private volatile boolean micMonitorMuting;
+
     private volatile ListenerSnapshot listenerSnapshot = ListenerSnapshot.ORIGIN;
     // Volatile because the AudioThreadExecutor seam reads it from arbitrary (future addon) threads while the
     // client thread swaps it in start()/stop() - a stale read would silently reject or misroute commands.
@@ -73,6 +96,8 @@ public class PlaybackManager {
         gains.clear();
         positionalModes.clear();
         listenerSnapshot = ListenerSnapshot.ORIGIN;
+        masterVolume = Config.outputVolume / 100f;
+        micMonitorMuting = false;
         playbackThread = new PlaybackThread(this, deviceName, hrtfMode);
         playbackThread.start();
         GtnhVoice.LOG
@@ -114,7 +139,7 @@ public class PlaybackManager {
         positionalModes.putIfAbsent(sourceId, Boolean.TRUE);
 
         playbackThread
-            .enqueueCommand(() -> playbackThread.createSourceChannel(sourceId, queue, distance, gains.get(sourceId)));
+            .enqueueCommand(() -> playbackThread.createSourceChannel(sourceId, queue, distance, effectiveGain(sourceId)));
     }
 
     /**
@@ -142,7 +167,53 @@ public class PlaybackManager {
 
         gains.put(sourceId, gain);
         if (!isPlaying()) return;
-        playbackThread.enqueueCommand(() -> playbackThread.applyGain(sourceId, gain));
+        float effective = effectiveGain(sourceId);
+        playbackThread.enqueueCommand(() -> playbackThread.applyGain(sourceId, effective));
+    }
+
+    /**
+     * The effective AL listener gain (0..1): Minecraft's master sound volume times the voice-chat master
+     * volume, so voice respects both sliders. Read by the playback thread every pump iteration, so a change to
+     * either factor is audible within one poll interval and survives context rebuilds with no re-apply
+     * bookkeeping.
+     */
+    public float masterVolume() {
+        return minecraftMasterVolume * masterVolume;
+    }
+
+    /** Live voice-chat master-volume hotswap from the settings GUI; {@code volume} is a 0..1 multiplier. */
+    public void setMasterVolume(float volume) {
+        masterVolume = volume;
+    }
+
+    /** Per-tick publish of Minecraft's master sound volume (0..1) - see {@link #masterVolume()}. */
+    public void setMinecraftMasterVolume(float volume) {
+        minecraftMasterVolume = volume;
+    }
+
+    /**
+     * Gates every source except {@link #MIC_MONITOR_SOURCE_ID} to zero gain (true) or restores their stored
+     * gains (false) - the settings GUI's mic-monitor mode, where the user should hear only their own mic. The
+     * stored per-player gains are never touched, only the values posted to the AL sources, so leaving monitor
+     * mode restores exactly the volumes the user had. New sources created while muting is active are created
+     * silent via {@link #effectiveGain}.
+     */
+    public void setMicMonitorMuting(boolean active) {
+        micMonitorMuting = active;
+        if (!isPlaying()) return;
+
+        for (UUID sourceId : gains.keySet()) {
+            if (MIC_MONITOR_SOURCE_ID.equals(sourceId)) continue;
+            float effective = effectiveGain(sourceId);
+            playbackThread.enqueueCommand(() -> playbackThread.applyGain(sourceId, effective));
+        }
+    }
+
+    /** The gain to actually post to AL for {@code sourceId}: the stored gain, or zero while monitor-muted. */
+    private float effectiveGain(UUID sourceId) {
+        Float stored = gains.get(sourceId);
+        float gain = stored == null ? 1f : stored;
+        return micMonitorMuting && !MIC_MONITOR_SOURCE_ID.equals(sourceId) ? 0f : gain;
     }
 
     /**

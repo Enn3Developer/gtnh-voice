@@ -2,7 +2,10 @@ package com.enn3developer.gtnhvoice.client;
 
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 
+import com.enn3developer.gtnhvoice.Config;
 import com.enn3developer.gtnhvoice.GtnhVoice;
 import com.enn3developer.gtnhvoice.core.api.audio.codec.AudioEncoder;
 import com.enn3developer.gtnhvoice.core.api.audio.codec.CodecException;
@@ -18,16 +21,24 @@ import com.enn3developer.gtnhvoice.core.transport.UdpTransportClient;
  * alongside this worker for the lifetime of the session (see {@link VoiceClientManager}) and runs
  * continuously regardless of the activation gate below.
  * <p>
- * Every polled frame is first denoised via {@link NoiseSuppressionFilter} if one is bound (a
+ * Every polled frame first gets the user's mic gain ({@link Config#micGain}, read live so the
+ * settings slider takes effect on the next frame), is then denoised via
+ * {@link NoiseSuppressionFilter} if one is bound and {@link Config#denoiseEnabled} is on - both the
+ * gain and the denoise toggle are read live, per frame, so the settings GUI applies mid-session (a
  * cleaner signal makes the activation gate's RMS threshold more accurate), then run through the
- * session-independent {@link CapturePcmFilterChain} (addon DSP; owned by {@link VoiceClientManager},
- * so registrations survive this worker's per-session lifetime), then passed through the
- * {@link ActivationGate}: frames are only encoded+sent while the gate is open (VA above threshold,
- * or PTT key held). Frames while the gate is closed are dropped here - the capture device itself
- * keeps running regardless. The denoise -&gt; chain -&gt; gate ordering is deliberate: filters receive
- * clean speech rather than raw mic noise, and the gate measures what will actually be transmitted -
- * a filter that quiets or mutes the signal correctly closes the gate instead of transmitting shaped
- * noise.
+ * session-independent {@link CapturePcmFilterChain}
+ * (addon DSP; owned by {@link VoiceClientManager}, so registrations survive this worker's
+ * per-session lifetime), then passed through the {@link ActivationGate}: frames are only
+ * encoded+sent while the gate is open (VA above threshold, or PTT key held). Frames while the gate
+ * is closed are dropped here - the capture device itself keeps running regardless. The gain -&gt;
+ * denoise -&gt; chain -&gt; gate ordering is deliberate: the whole pipeline sees the amplified mic
+ * level, filters receive clean speech rather than raw mic noise, and the gate measures what will
+ * actually be transmitted - a filter that quiets or mutes the signal correctly closes the gate
+ * instead of transmitting shaped noise.
+ * <p>
+ * When the mic monitor is active (settings GUI Input tab), every fully processed frame is also
+ * handed to the monitor sink BEFORE the gate - deliberately ungated, so the user always hears
+ * themselves while tuning the VA threshold, exactly as the frame would be transmitted.
  */
 final class CaptureSendWorker extends Thread {
 
@@ -43,6 +54,8 @@ final class CaptureSendWorker extends Thread {
     private final Encryption encryption;
     private final UUID activationId;
     private final ActivationGate activationGate;
+    private final BooleanSupplier micMonitorActive;
+    private final Consumer<short[]> micMonitorSink;
 
     private volatile boolean running = true;
 
@@ -53,7 +66,8 @@ final class CaptureSendWorker extends Thread {
 
     CaptureSendWorker(BlockingQueue<short[]> captureFrameQueue, AudioEncoder encoder,
         NoiseSuppressionFilter noiseSuppressionFilter, CapturePcmFilterChain pcmFilterChain, UdpTransportClient client,
-        UUID sessionId, Encryption encryption, UUID activationId, ActivationGate activationGate) {
+        UUID sessionId, Encryption encryption, UUID activationId, ActivationGate activationGate,
+        BooleanSupplier micMonitorActive, Consumer<short[]> micMonitorSink) {
         super("gtnhvoice-capture-send");
         this.captureFrameQueue = captureFrameQueue;
         this.encoder = encoder;
@@ -64,6 +78,8 @@ final class CaptureSendWorker extends Thread {
         this.encryption = encryption;
         this.activationId = activationId;
         this.activationGate = activationGate;
+        this.micMonitorActive = micMonitorActive;
+        this.micMonitorSink = micMonitorSink;
         setDaemon(true);
     }
 
@@ -85,8 +101,13 @@ final class CaptureSendWorker extends Thread {
                 break;
             }
 
+            frame = applyMicGain(frame);
             frame = denoise(frame);
             frame = pcmFilterChain.apply(frame);
+
+            // Ungated on purpose - see the class javadoc. Nothing downstream mutates the frame, so the
+            // monitor queue and the encoder can safely share the same array.
+            if (micMonitorActive.getAsBoolean()) micMonitorSink.accept(frame);
 
             boolean transmitting = activationGate.shouldTransmit(frame);
             if (transmitting) {
@@ -105,8 +126,27 @@ final class CaptureSendWorker extends Thread {
         }
     }
 
+    /**
+     * Scales the frame by {@link Config#micGain} (percent, 100 = untouched), saturating at the 16-bit limits
+     * rather than wrapping. Returns the input array untouched at 100% - the common case costs one comparison.
+     */
+    private static short[] applyMicGain(short[] frame) {
+        int gainPercent = Config.micGain;
+        if (gainPercent == 100) return frame;
+
+        float multiplier = gainPercent / 100f;
+        short[] scaled = new short[frame.length];
+        for (int i = 0; i < frame.length; i++) {
+            int sample = Math.round(frame[i] * multiplier);
+            scaled[i] = (short) Math.max(Short.MIN_VALUE, Math.min(Short.MAX_VALUE, sample));
+        }
+        return scaled;
+    }
+
     private short[] denoise(short[] frame) {
-        if (noiseSuppressionFilter == null) return frame;
+        // The toggle is read per frame so the GUI's Denoise switch applies live (audible immediately in the
+        // mic monitor); the filter instance stays bound either way - skipping process() is the off state.
+        if (noiseSuppressionFilter == null || !Config.denoiseEnabled) return frame;
 
         try {
             return noiseSuppressionFilter.process(frame);

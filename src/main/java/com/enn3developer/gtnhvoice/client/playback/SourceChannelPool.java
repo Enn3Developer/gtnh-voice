@@ -31,6 +31,8 @@ final class SourceChannelPool {
     static final int BUFFER_POOL_SIZE = 6;
     private static final float REFERENCE_DISTANCE = 1.0f;
     private static final float ROLLOFF_FACTOR = 1.0f;
+    // Matches the per-player volume slider's 200% ceiling.
+    private static final float MAX_GAIN = 2.0f;
 
     // Prime-and-hysteresis tuning for AL source start, see pumpSourceChannel(). 2 is the floor: one buffer
     // playing plus one queued as cushion against decode-poller scheduling slop - the poller's frame cadence is
@@ -81,6 +83,9 @@ final class SourceChannelPool {
         AL10.alSourcef(source, AL10.AL_REFERENCE_DISTANCE, REFERENCE_DISTANCE);
         AL10.alSourcef(source, AL10.AL_MAX_DISTANCE, distance);
         AL10.alSourcef(source, AL10.AL_ROLLOFF_FACTOR, ROLLOFF_FACTOR);
+        // AL clamps the effective source gain at AL_MAX_GAIN (default 1.0) at mix time; raised so the
+        // per-player volume slider's 100-200% boost half actually boosts.
+        AL10.alSourcef(source, AL10.AL_MAX_GAIN, MAX_GAIN);
         AL10.alSourcef(source, AL10.AL_GAIN, gain);
 
         int[] bufferIds = new int[BUFFER_POOL_SIZE];

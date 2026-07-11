@@ -1,6 +1,8 @@
 package com.enn3developer.gtnhvoice.client.api;
 
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -209,6 +211,16 @@ public final class ClientApiBackend {
             max = Math.max(max, bundle.auxiliarySends());
         }
         return max;
+    }
+
+    /**
+     * Detached name-sorted snapshot of every registered addon - what the settings GUI's read-only Addons tab
+     * renders (name + description straight off the handles).
+     */
+    public List<IVoiceAddon> addonsView() {
+        List<IVoiceAddon> view = new ArrayList<>(addons.values());
+        view.sort(Comparator.comparing(IVoiceAddon::name, String.CASE_INSENSITIVE_ORDER));
+        return view;
     }
 
     /**

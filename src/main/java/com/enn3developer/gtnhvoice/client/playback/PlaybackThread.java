@@ -349,6 +349,9 @@ public class PlaybackThread extends Thread {
 
     private void applyListenerSnapshot() {
         ListenerSnapshot snapshot = manager.currentListenerSnapshot();
+        // Unconditionally every iteration (a single trivial AL call), so a master-volume change is audible
+        // within one poll and a rebuilt context picks the current value up with no re-apply bookkeeping.
+        AL10.alListenerf(AL10.AL_GAIN, manager.masterVolume());
         AL10.alListener3f(AL10.AL_POSITION, (float) snapshot.x(), (float) snapshot.y(), (float) snapshot.z());
         listenerOrientation[0] = snapshot.lookX();
         listenerOrientation[1] = snapshot.lookY();

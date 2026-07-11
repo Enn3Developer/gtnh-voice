@@ -23,6 +23,7 @@ import com.enn3developer.gtnhvoice.GtnhVoice;
 import com.enn3developer.gtnhvoice.Tags;
 import com.enn3developer.gtnhvoice.api.client.ICapturePcmFilter;
 import com.enn3developer.gtnhvoice.client.capture.CaptureManager;
+import com.enn3developer.gtnhvoice.client.playback.PlaybackManager;
 import com.enn3developer.gtnhvoice.client.source.VoiceSourceManager;
 import com.enn3developer.gtnhvoice.core.api.audio.codec.AudioEncoder;
 import com.enn3developer.gtnhvoice.core.api.audio.codec.CodecException;
@@ -94,6 +95,10 @@ public final class VoiceClientManager {
     private AudioEncoder captureEncoder;
     private NoiseSuppressionFilter noiseSuppressionFilter;
     private CaptureSendWorker captureSendWorker;
+    // Whether the settings GUI's Input tab wants the mic monitor. Volatile: written by the client thread
+    // (tab changes), read by the capture-send worker per frame. Survives session transitions on purpose -
+    // the tab can be open while a session starts (see handleServerHello) or dies.
+    private volatile boolean micMonitorActive;
     private volatile VoiceSourceManager voiceSourceManager;
 
     /**
@@ -193,6 +198,61 @@ public final class VoiceClientManager {
      */
     public @Nullable VoiceSourceManager getVoiceSourceManager() {
         return voiceSourceManager;
+    }
+
+    /** Whether a voice session is currently up - what the settings GUI's inactive-session warning checks. */
+    public boolean isSessionActive() {
+        return voiceSourceManager != null;
+    }
+
+    /**
+     * Live master-volume apply from the settings GUI's Volume slider: pushes the current
+     * {@link Config#outputVolume} onto the running session's playback (no-op when disconnected - the next
+     * session seeds itself from Config on start).
+     */
+    public void applyOutputVolume() {
+        VoiceSourceManager sourceManager = voiceSourceManager;
+        if (sourceManager == null) return;
+        sourceManager.getPlaybackManager()
+            .setMasterVolume(Config.outputVolume / 100f);
+    }
+
+    /**
+     * Turns the settings GUI's mic monitor on or off: while active, the local player's fully processed mic
+     * frames (see {@link CaptureSendWorker}) play back on the reserved
+     * {@link PlaybackManager#MIC_MONITOR_SOURCE_ID} source (non-positional, full gain) and every other voice
+     * source is muted, so the user hears exactly - and only - their own mic. Idempotent; a no-op beyond flag
+     * bookkeeping when no session is up (the flag is re-applied by {@code handleServerHello} if a session
+     * starts while the Input tab is open). Client thread only, like the rest of the GUI-facing surface.
+     */
+    public void setMicMonitorActive(boolean active) {
+        micMonitorActive = active;
+        VoiceSourceManager sourceManager = voiceSourceManager;
+        if (sourceManager == null) return;
+        applyMicMonitor(sourceManager.getPlaybackManager(), active);
+    }
+
+    private static void applyMicMonitor(PlaybackManager playback, boolean active) {
+        if (active) {
+            playback.createSource(PlaybackManager.MIC_MONITOR_SOURCE_ID, 0, 1f);
+            playback.setPositional(PlaybackManager.MIC_MONITOR_SOURCE_ID, false);
+            playback.setMicMonitorMuting(true);
+        } else {
+            playback.setMicMonitorMuting(false);
+            playback.destroySource(PlaybackManager.MIC_MONITOR_SOURCE_ID);
+        }
+    }
+
+    /**
+     * The capture worker's monitor sink: routes a processed mic frame onto the reserved monitor source of the
+     * live session's playback. Runs on the capture-send thread; the null check makes session teardown races
+     * harmless (the frame is simply dropped).
+     */
+    private void submitMicMonitorFrame(short[] frame) {
+        VoiceSourceManager sourceManager = voiceSourceManager;
+        if (sourceManager == null) return;
+        sourceManager.getPlaybackManager()
+            .submit(PlaybackManager.MIC_MONITOR_SOURCE_ID, frame);
     }
 
     /**
@@ -420,6 +480,11 @@ public final class VoiceClientManager {
 
             voiceSourceManager = new VoiceSourceManager(this::resolveName);
             voiceSourceManager.start();
+            // User already sitting on the settings GUI's Input tab when the session came up: wire the monitor
+            // onto the fresh playback so "mic is always live on that tab" holds across session starts too.
+            if (micMonitorActive) applyMicMonitor(
+                voiceSourceManager.getPlaybackManager(),
+                true);
 
             startPinging(sessionId, encryption);
 
@@ -649,7 +714,9 @@ public final class VoiceClientManager {
 
         try {
             captureEncoder = OpusCodecSupplier.createEncoder(sampleRate, false, opusMode, OPUS_MTU_SIZE);
-            noiseSuppressionFilter = NoiseSuppressionFilterSupplier.create(Config.denoiseEnabled)
+            // Always bind the native filter when it loads; whether it RUNS is Config.denoiseEnabled, read
+            // per frame in CaptureSendWorker - that's what makes the GUI's Denoise toggle live mid-session.
+            noiseSuppressionFilter = NoiseSuppressionFilterSupplier.create(true)
                 .orElse(null);
 
             captureSendWorker = new CaptureSendWorker(
@@ -661,7 +728,9 @@ public final class VoiceClientManager {
                 sessionId,
                 encryption,
                 UUID.randomUUID(),
-                gate);
+                gate,
+                () -> micMonitorActive,
+                this::submitMicMonitorFrame);
             captureSendWorker.start();
         } catch (CodecException e) {
             GtnhVoice.LOG.error("Failed to open capture encoder, mic audio will not be sent", e);

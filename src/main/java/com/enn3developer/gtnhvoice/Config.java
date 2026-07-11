@@ -60,6 +60,12 @@ public class Config {
     public static String outputDevice = "";
     public static String hrtfMode = HrtfMode.AUTO.name();
 
+    // Client-side voice loudness controls, both live-tunable from the settings GUI: outputVolume scales every
+    // incoming voice source at once (OpenAL listener gain, 0-100%), micGain scales the captured mic signal
+    // before denoise/filters/VA so the whole pipeline sees the amplified level (0-200%, 100 = untouched).
+    public static int outputVolume = 100;
+    public static int micGain = 100;
+
     // Client-side per-player volume/mute overrides of OTHER players, set via the in-game Players screen.
     // Runtime source of truth lives in PlayerVoiceSettings (a concurrent map/set, not a static field here like
     // everything else in this class) since it's read from the UDP receive path and written from the GUI far more
@@ -145,6 +151,20 @@ public class Config {
             CATEGORY_VOICE,
             hrtfMode,
             "HRTF mode for 3D-positioned voice playback: AUTO (driver default), ON, or OFF. Set via in-game audio controls; applied at voice-session startup and hot-swappable while connected.");
+        outputVolume = configuration.getInt(
+            "outputVolume",
+            CATEGORY_VOICE,
+            outputVolume,
+            0,
+            100,
+            "Master volume for all incoming voice audio, in percent (0=muted, 100=full). Set via the in-game settings GUI; applied live.");
+        micGain = configuration.getInt(
+            "micGain",
+            CATEGORY_VOICE,
+            micGain,
+            0,
+            200,
+            "Gain applied to captured mic audio before denoising and transmission, in percent (100=untouched, 200=doubled). Set via the in-game settings GUI; applied live.");
         String[] playerOverrides = configuration.getStringList(
             PROPERTY_PLAYER_OVERRIDES,
             CATEGORY_VOICE,
@@ -190,6 +210,10 @@ public class Config {
             .set(outputDevice);
         configuration.get(CATEGORY_VOICE, "hrtfMode", HrtfMode.AUTO.name())
             .set(hrtfMode);
+        configuration.get(CATEGORY_VOICE, "outputVolume", 100)
+            .set(outputVolume);
+        configuration.get(CATEGORY_VOICE, "micGain", 100)
+            .set(micGain);
         configuration.get(CATEGORY_VOICE, PROPERTY_PLAYER_OVERRIDES, new String[0])
             .set(
                 PlayerVoiceSettings.getInstance()

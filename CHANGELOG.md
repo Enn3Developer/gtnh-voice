@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Per-player volume above 100% now actually boosts (OpenAL clamped it to 100% before)
 - Native crash (double-free) when a voice source is torn down
 - Voice sessions no longer linger as ghosts after a player times out
 
@@ -31,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Lower CPU cost per voice frame (cached AES cipher)
 - Fine-tuned adaptive jitter buffer parameters
 - **Breaking**: client addons now register themselves first — `GtnhVoiceClient.addon("Name").description("...").register()` returns the handle that opens audio/capture bundles; addon names are unique
+- Voice volume now follows Minecraft's master sound slider (effective volume = master × voice)
+- Per-player volume/mute moved from its own screen into the settings screen's Output tab
+- Denoise toggle now applies live mid-session (previously next voice connection)
 
 ### Removed
 
@@ -38,6 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Tabbed voice settings screen (Output / Input / Addons) with a session-inactive warning
+- Master voice volume (0-100%) and mic gain (0-200%) sliders
+- Mic monitor on the Input tab: hear your own processed mic while other voices are muted
+- Addons tab listing registered client addons (name + description)
 - Fluent PCM filter chains for client addons (`chain(...)`/`playbackChain(...)`)
 - Runtime filter enable/disable on `IRegistration` (`setFilterEnabled`), seedable via `initiallyEnabled(...)`
 
