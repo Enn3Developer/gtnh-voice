@@ -24,9 +24,14 @@ import java.util.function.LongSupplier;
 public final class AdaptiveJitterBuffer {
 
     private static final int MAX_QUEUE_SIZE = 512;
+    /**
+     * Fixed lower bound on the pre-buffer, baked into every frame's schedule: the total delay never drops below
+     * this even on a perfectly clean network. Deliberately decoupled from the initial adaptive delay passed to
+     * the constructor, so starting conservative doesn't mean staying conservative.
+     */
+    private static final AudioUnit FLOOR_DELAY = AudioUnit.frames(1);
 
     private final LongSupplier timeSupplier;
-    private final AudioUnit packetDelay;
     private final Queue<Entry> queue;
 
     private Long firstPacketArrival;
@@ -36,17 +41,17 @@ public final class AdaptiveJitterBuffer {
     private AudioUnit adaptiveDelay;
 
     /**
-     * @param timeSupplier      clock used for both arrival timestamps and playback scheduling; must be consistent
-     *                          between
-     *                          the two so scheduled times are comparable to "now"
-     * @param packetDelayFrames initial pre-buffer depth in 20ms frames before the adaptive delay estimate kicks in
+     * @param timeSupplier       clock used for both arrival timestamps and playback scheduling; must be consistent
+     *                           between
+     *                           the two so scheduled times are comparable to "now"
+     * @param initialDelayFrames starting value of the adaptive delay in 20ms frames, used until the jitter
+     *                           estimate takes over on the second packet; sits on top of {@link #FLOOR_DELAY}
      */
-    public AdaptiveJitterBuffer(LongSupplier timeSupplier, int packetDelayFrames) {
+    public AdaptiveJitterBuffer(LongSupplier timeSupplier, int initialDelayFrames) {
         this.timeSupplier = timeSupplier;
-        this.packetDelay = AudioUnit.frames(packetDelayFrames);
-        this.adaptiveDelay = packetDelay;
+        this.adaptiveDelay = AudioUnit.frames(initialDelayFrames);
         this.queue = new PriorityQueue<>(
-            Math.max(2, packetDelayFrames * 2),
+            Math.max(2, initialDelayFrames * 2),
             Comparator.comparingLong(entry -> entry.frame.sequenceNumber));
     }
 
@@ -90,7 +95,7 @@ public final class AdaptiveJitterBuffer {
     private long slotScheduledTime(long sequenceNumber) {
         return AudioUnit.frames(sequenceNumber)
             .sub(AudioUnit.frames(firstSequenceNumber))
-            .add(packetDelay)
+            .add(FLOOR_DELAY)
             .asTimestamp(firstPacketArrival);
     }
 
@@ -151,9 +156,9 @@ public final class AdaptiveJitterBuffer {
         return queue.size();
     }
 
-    /** Current pre-buffer target: the configured base delay plus the adaptive component learned from jitter. */
+    /** Current pre-buffer target: the fixed floor plus the adaptive component learned from jitter. */
     public synchronized long currentTargetDelayMillis() {
-        return packetDelay.add(adaptiveDelay).asMillis();
+        return FLOOR_DELAY.add(adaptiveDelay).asMillis();
     }
 
     /**

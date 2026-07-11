@@ -19,13 +19,15 @@ import org.junit.jupiter.api.Test;
  */
 class AdaptiveJitterBufferTest {
 
-    private static final int PACKET_DELAY_FRAMES = 3;
+    private static final int INITIAL_DELAY_FRAMES = 3;
+    // Mirrors AdaptiveJitterBuffer.FLOOR_DELAY, which is private by design.
+    private static final int FLOOR_FRAMES = 1;
     private static final long FRAME_MILLIS = 20L;
 
     @Test
     void steadyArrivalEmitsFramesInOrderWithMinimalAdaptiveDelay() {
         FakeClock clock = new FakeClock();
-        AdaptiveJitterBuffer buffer = new AdaptiveJitterBuffer(clock, PACKET_DELAY_FRAMES);
+        AdaptiveJitterBuffer buffer = new AdaptiveJitterBuffer(clock, INITIAL_DELAY_FRAMES);
 
         int frameCount = 50;
         List<Long> emitted = new ArrayList<>();
@@ -36,21 +38,21 @@ class AdaptiveJitterBufferTest {
             drain(buffer, clock, emitted);
         }
         // let the tail drain past the pre-buffer delay
-        clock.advance(PACKET_DELAY_FRAMES * FRAME_MILLIS + 200L);
+        clock.advance(INITIAL_DELAY_FRAMES * FRAME_MILLIS + 200L);
         drain(buffer, clock, emitted);
 
         assertEquals(frameCount, emitted.size(), "every steadily-arriving frame should eventually be emitted");
         assertInStrictlyIncreasingOrder(emitted);
         assertEquals(
-            0L,
-            buffer.currentTargetDelayMillis() - PACKET_DELAY_FRAMES * FRAME_MILLIS,
-            "perfectly steady arrival should not add any adaptive delay on top of the base pre-buffer");
+            FLOOR_FRAMES * FRAME_MILLIS,
+            buffer.currentTargetDelayMillis(),
+            "perfectly steady arrival should collapse the adaptive delay to zero, leaving only the floor");
     }
 
     @Test
     void jitteryOutOfOrderArrivalIsHandledSafelyAndIncreasesAdaptiveDelay() {
         FakeClock clock = new FakeClock();
-        AdaptiveJitterBuffer buffer = new AdaptiveJitterBuffer(clock, PACKET_DELAY_FRAMES);
+        AdaptiveJitterBuffer buffer = new AdaptiveJitterBuffer(clock, INITIAL_DELAY_FRAMES);
 
         // Arrival schedule (sequence -> arrival time offset in ms) deliberately: swaps order, adds a duplicate,
         // skips a sequence number (gap), and jitters transit time around the nominal 20ms cadence.
@@ -81,7 +83,7 @@ class AdaptiveJitterBufferTest {
                 buffer.offer(delivery[0], payloadFor(delivery[0]));
                 drain(buffer, clock, emitted);
             }
-            clock.advance(PACKET_DELAY_FRAMES * FRAME_MILLIS + 2_000L);
+            clock.advance(INITIAL_DELAY_FRAMES * FRAME_MILLIS + 2_000L);
             drain(buffer, clock, emitted);
         });
 
@@ -91,14 +93,14 @@ class AdaptiveJitterBufferTest {
 
         long jitteryDelay = buffer.currentTargetDelayMillis();
         assertTrue(
-            jitteryDelay > PACKET_DELAY_FRAMES * FRAME_MILLIS,
-            "adaptive delay should grow above the base pre-buffer under sustained jitter, was " + jitteryDelay);
+            jitteryDelay > FLOOR_FRAMES * FRAME_MILLIS,
+            "adaptive delay should grow above the floor under sustained jitter, was " + jitteryDelay);
     }
 
     @Test
     void burstOfFramesIsCappedAtMaxQueueSize() {
         // Fixed clock: nothing is ever due, so poll() never drains - every offer either enqueues or is dropped.
-        AdaptiveJitterBuffer buffer = new AdaptiveJitterBuffer(() -> 0L, PACKET_DELAY_FRAMES);
+        AdaptiveJitterBuffer buffer = new AdaptiveJitterBuffer(() -> 0L, INITIAL_DELAY_FRAMES);
 
         for (int i = 0; i < 100_000; i++) {
             buffer.offer(i * 1_000L, payloadFor(i));
@@ -111,7 +113,7 @@ class AdaptiveJitterBufferTest {
     @Test
     void discardThroughDropsLateFramesAndPeekTracksTheHead() {
         FakeClock clock = new FakeClock();
-        AdaptiveJitterBuffer buffer = new AdaptiveJitterBuffer(clock, PACKET_DELAY_FRAMES);
+        AdaptiveJitterBuffer buffer = new AdaptiveJitterBuffer(clock, INITIAL_DELAY_FRAMES);
 
         buffer.offer(3, payloadFor(3));
         buffer.offer(5, payloadFor(5));
@@ -137,15 +139,15 @@ class AdaptiveJitterBufferTest {
     @Test
     void overdueQueryTracksTheScheduleEvenForSequencesThatNeverArrived() {
         FakeClock clock = new FakeClock();
-        AdaptiveJitterBuffer buffer = new AdaptiveJitterBuffer(clock, PACKET_DELAY_FRAMES);
+        AdaptiveJitterBuffer buffer = new AdaptiveJitterBuffer(clock, INITIAL_DELAY_FRAMES);
 
         assertFalse(buffer.isSequenceOverdue(0), "nothing can be overdue before the buffer is anchored");
 
         clock.set(0);
         buffer.offer(0, payloadFor(0));
-        // The adaptive delay is initialized to the base pre-buffer before the estimator warms up, so slot 0
-        // becomes overdue at 2x the base delay.
-        long slot0Overdue = 2L * PACKET_DELAY_FRAMES * FRAME_MILLIS;
+        // Before the estimator warms up, the adaptive delay is the configured initial value, so slot 0 becomes
+        // overdue at floor + initial delay.
+        long slot0Overdue = (FLOOR_FRAMES + INITIAL_DELAY_FRAMES) * FRAME_MILLIS;
 
         clock.set(slot0Overdue - 1);
         assertFalse(buffer.isSequenceOverdue(0));
