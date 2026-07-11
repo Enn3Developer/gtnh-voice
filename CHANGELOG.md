@@ -46,6 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Master voice volume (0-100%) and mic gain (0-200%) sliders
 - Mic monitor on the Input tab: hear your own processed mic while other voices are muted
 - Addons tab listing registered client addons (name + description)
+- HUD dims while fresh chat messages are visible and fades out while another screen is open
+- HUD: live audio-level bars with a gentle speaking pulse for yourself and every speaker; self row adds smooth mic-state color fades and a mute/unmute morph
+- HUD rows animate in/out and arc between slots; a stopped speaker's row lingers 5s before leaving
 - Fluent PCM filter chains for client addons (`chain(...)`/`playbackChain(...)`)
 - Runtime filter enable/disable on `IRegistration` (`setFilterEnabled`), seedable via `initiallyEnabled(...)`
 

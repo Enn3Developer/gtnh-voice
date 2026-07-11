@@ -16,6 +16,7 @@ import com.enn3developer.gtnhvoice.GtnhVoice;
 import com.enn3developer.gtnhvoice.api.client.IAudioLifecycleListener;
 import com.enn3developer.gtnhvoice.api.client.IPlaybackPcmFilter;
 import com.enn3developer.gtnhvoice.api.client.ISourceMetadata;
+import com.enn3developer.gtnhvoice.core.api.util.AudioUtil;
 import com.enn3developer.gtnhvoice.core.api.util.LogThrottle;
 
 /**
@@ -47,6 +48,13 @@ public class PlaybackManager {
     private final Map<UUID, double[]> positions = new ConcurrentHashMap<>();
     private final Map<UUID, Float> gains = new ConcurrentHashMap<>();
     private final Map<UUID, Boolean> positionalModes = new ConcurrentHashMap<>();
+    // Last decoded frame's audio level per source, for the HUD's per-speaker meter. Written on the receive
+    // path in submit(), read at render rate; staleness stands in for silence, like the capture-side meter.
+    private final Map<UUID, LevelSample> sourceLevels = new ConcurrentHashMap<>();
+
+    private record LevelSample(float level, long atMillis) {}
+
+    private static final long SOURCE_LEVEL_STALE_MS = 250L;
 
     // Lives on the manager (not the thread) so registrations survive start()/stop() cycles and rebuilds; the
     // current PlaybackThread reads it through its manager reference at every fire site. CopyOnWrite so the
@@ -95,6 +103,7 @@ public class PlaybackManager {
         positions.clear();
         gains.clear();
         positionalModes.clear();
+        sourceLevels.clear();
         listenerSnapshot = ListenerSnapshot.ORIGIN;
         masterVolume = Config.outputVolume / 100f;
         micMonitorMuting = false;
@@ -119,6 +128,7 @@ public class PlaybackManager {
         positions.clear();
         gains.clear();
         positionalModes.clear();
+        sourceLevels.clear();
         GtnhVoice.LOG.info("[Playback] Stopped");
     }
 
@@ -151,6 +161,7 @@ public class PlaybackManager {
         positions.remove(sourceId);
         gains.remove(sourceId);
         positionalModes.remove(sourceId);
+        sourceLevels.remove(sourceId);
 
         if (!isPlaying()) return;
         playbackThread.enqueueCommand(() -> playbackThread.destroySourceChannel(sourceId));
@@ -240,10 +251,28 @@ public class PlaybackManager {
         if (queue == null) return;
 
         frame = applyPcmFilters(sourceId, frame);
+
+        // Same -60..0 dB -> 0..1 normalization as the capture-side mic meter, measured post-filter (what
+        // will actually be heard). One RMS pass per 20ms frame per speaking source - negligible.
+        double levelDb = AudioUtil.calculateAudioLevel(frame, 0, frame.length);
+        float normalized = Math.max(0f, Math.min(1f, (float) ((levelDb + 60.0) / 60.0)));
+        sourceLevels.put(sourceId, new LevelSample(normalized, System.currentTimeMillis()));
+
         if (!queue.offer(frame)) {
             queue.poll();
             queue.offer(frame);
         }
+    }
+
+    /**
+     * The last decoded frame's audio level for {@code sourceId}, 0..1, or 0 when no frame arrived recently
+     * (stopped talking, torn down) - staleness doubles as the meter falling silent. Callable from the render
+     * thread every frame.
+     */
+    public float sourceLevel(UUID sourceId) {
+        LevelSample sample = sourceLevels.get(sourceId);
+        if (sample == null) return 0f;
+        return System.currentTimeMillis() - sample.atMillis() > SOURCE_LEVEL_STALE_MS ? 0f : sample.level();
     }
 
     /**

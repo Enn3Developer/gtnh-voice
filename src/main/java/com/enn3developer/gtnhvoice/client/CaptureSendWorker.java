@@ -4,9 +4,11 @@ import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.DoubleConsumer;
 
 import com.enn3developer.gtnhvoice.Config;
 import com.enn3developer.gtnhvoice.GtnhVoice;
+import com.enn3developer.gtnhvoice.core.api.util.AudioUtil;
 import com.enn3developer.gtnhvoice.core.api.audio.codec.AudioEncoder;
 import com.enn3developer.gtnhvoice.core.api.audio.codec.CodecException;
 import com.enn3developer.gtnhvoice.core.api.encryption.Encryption;
@@ -58,6 +60,7 @@ final class CaptureSendWorker extends Thread {
     private final ActivationGate activationGate;
     private final BooleanSupplier micMonitorActive;
     private final Consumer<short[]> micMonitorSink;
+    private final DoubleConsumer micLevelSink;
 
     private volatile boolean running = true;
 
@@ -69,7 +72,7 @@ final class CaptureSendWorker extends Thread {
     CaptureSendWorker(BlockingQueue<short[]> captureFrameQueue, AudioEncoder encoder,
         NoiseSuppressionFilter noiseSuppressionFilter, CapturePcmFilterChain pcmFilterChain, UdpTransportClient client,
         UUID sessionId, Encryption encryption, UUID activationId, ActivationGate activationGate,
-        BooleanSupplier micMonitorActive, Consumer<short[]> micMonitorSink) {
+        BooleanSupplier micMonitorActive, Consumer<short[]> micMonitorSink, DoubleConsumer micLevelSink) {
         super("gtnhvoice-capture-send");
         this.captureFrameQueue = captureFrameQueue;
         this.encoder = encoder;
@@ -82,6 +85,7 @@ final class CaptureSendWorker extends Thread {
         this.activationGate = activationGate;
         this.micMonitorActive = micMonitorActive;
         this.micMonitorSink = micMonitorSink;
+        this.micLevelSink = micLevelSink;
         setDaemon(true);
     }
 
@@ -106,6 +110,9 @@ final class CaptureSendWorker extends Thread {
             frame = applyMicGain(frame);
             frame = denoise(frame);
             frame = pcmFilterChain.apply(frame);
+
+            // Publish the processed frame's level (dB) for the HUD's mic meter - same signal the gate measures.
+            micLevelSink.accept(AudioUtil.calculateAudioLevel(frame, 0, frame.length));
 
             boolean transmitting = activationGate.shouldTransmit(frame);
 

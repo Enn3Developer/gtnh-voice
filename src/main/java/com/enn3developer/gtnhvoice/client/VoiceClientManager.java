@@ -94,11 +94,16 @@ public final class VoiceClientManager {
     private volatile ActivationGate activationGate;
     private AudioEncoder captureEncoder;
     private NoiseSuppressionFilter noiseSuppressionFilter;
+    private static final long MIC_LEVEL_STALE_MS = 250L;
+
     private CaptureSendWorker captureSendWorker;
     // Whether the settings GUI's Input tab wants the mic monitor. Volatile: written by the client thread
     // (tab changes), read by the capture-send worker per frame. Survives session transitions on purpose -
     // the tab can be open while a session starts (see handleServerHello) or dies.
     private volatile boolean micMonitorActive;
+    // Live mic level for the HUD meter: written per frame by the capture-send worker, read at render rate.
+    private volatile float micLevel;
+    private volatile long micLevelAtMillis;
     private volatile VoiceSourceManager voiceSourceManager;
 
     /**
@@ -241,6 +246,25 @@ public final class VoiceClientManager {
             playback.setMicMonitorMuting(false);
             playback.destroySource(PlaybackManager.MIC_MONITOR_SOURCE_ID);
         }
+    }
+
+    /**
+     * The capture worker's per-frame level publish (capture-send thread): normalizes the frame's dB level
+     * (-60..0) to a 0..1 meter value for the HUD. Plain volatile writes; the HUD reads at render rate.
+     */
+    private void publishMicLevel(double levelDb) {
+        float normalized = (float) ((levelDb + 60.0) / 60.0);
+        micLevel = Math.max(0f, Math.min(1f, normalized));
+        micLevelAtMillis = System.currentTimeMillis();
+    }
+
+    /**
+     * Live mic input level for the HUD meter, 0..1, or 0 when no fresh capture frame arrived recently (muted,
+     * disconnected, capture stalled) - staleness doubles as the "meter falls silent" behavior with no extra
+     * state. Callable from the render thread every frame.
+     */
+    public float getMicLevel() {
+        return System.currentTimeMillis() - micLevelAtMillis > MIC_LEVEL_STALE_MS ? 0f : micLevel;
     }
 
     /**
@@ -730,7 +754,8 @@ public final class VoiceClientManager {
                 UUID.randomUUID(),
                 gate,
                 () -> micMonitorActive,
-                this::submitMicMonitorFrame);
+                this::submitMicMonitorFrame,
+                this::publishMicLevel);
             captureSendWorker.start();
         } catch (CodecException e) {
             GtnhVoice.LOG.error("Failed to open capture encoder, mic audio will not be sent", e);

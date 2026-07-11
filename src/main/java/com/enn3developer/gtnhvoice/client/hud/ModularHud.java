@@ -76,8 +76,10 @@ public class ModularHud {
         if (event.type != RenderGameOverlayEvent.ElementType.ALL) return;
         Minecraft mc = Minecraft.getMinecraft();
         if (mc.theWorld == null || mc.thePlayer == null) return;
-        // Optional: hide while another GUI is open (it would draw underneath it anyway)
-        if (mc.currentScreen != null) return;
+        // Deliberately NOT skipped while a GUI screen is open: the HUD keeps rendering (underneath the GUI)
+        // so its widgets can animate a fade-out/in on screen open/close - once fully faded they draw nothing.
+        // Our animators are parented (see HudAnimations), so MUI2's AnimatorManager ticking during an open
+        // GUI never double-advances them.
 
         // 1. Advance HUD-driven animators by real elapsed time
         HudAnimations.advanceAll();
