@@ -36,9 +36,11 @@ import com.enn3developer.gtnhvoice.core.transport.UdpTransportClient;
  * actually be transmitted - a filter that quiets or mutes the signal correctly closes the gate
  * instead of transmitting shaped noise.
  * <p>
- * When the mic monitor is active (settings GUI Input tab), every fully processed frame is also
- * handed to the monitor sink BEFORE the gate - deliberately ungated, so the user always hears
- * themselves while tuning the VA threshold, exactly as the frame would be transmitted.
+ * When the mic monitor is active (settings GUI Input tab), fully processed frames are also handed
+ * to the monitor sink. In VOICE_ACTIVATION mode the monitor follows the gate (hangover included),
+ * so the user hears themselves exactly when they would transmit - that is how the threshold gets
+ * tuned by ear. In PUSH_TO_TALK mode the monitor is ungated, so the mic test works without holding
+ * the key.
  */
 final class CaptureSendWorker extends Thread {
 
@@ -105,11 +107,16 @@ final class CaptureSendWorker extends Thread {
             frame = denoise(frame);
             frame = pcmFilterChain.apply(frame);
 
-            // Ungated on purpose - see the class javadoc. Nothing downstream mutates the frame, so the
-            // monitor queue and the encoder can safely share the same array.
-            if (micMonitorActive.getAsBoolean()) micMonitorSink.accept(frame);
-
             boolean transmitting = activationGate.shouldTransmit(frame);
+
+            // In VA mode the monitor follows the gate - you hear yourself exactly when you'd transmit, which
+            // is how the threshold gets tuned by ear. In PTT mode it stays ungated, so the mic test works
+            // without holding the key. Nothing downstream mutates the frame, so the monitor queue and the
+            // encoder can safely share the same array.
+            if (micMonitorActive.getAsBoolean() && (transmitting || !isVoiceActivation())) {
+                micMonitorSink.accept(frame);
+            }
+
             if (transmitting) {
                 encodeAndSend(frame);
             }
@@ -124,6 +131,10 @@ final class CaptureSendWorker extends Thread {
                 lastLogTime = now;
             }
         }
+    }
+
+    private static boolean isVoiceActivation() {
+        return Config.getActivationMode() == Config.ActivationMode.VOICE_ACTIVATION;
     }
 
     /**

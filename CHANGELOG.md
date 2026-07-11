@@ -42,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Tabbed voice settings screen (Output / Input / Addons) with a session-inactive warning
+- Tabbed voice settings screen (Output / Input / Addons) with a voice session status line
 - Master voice volume (0-100%) and mic gain (0-200%) sliders
 - Mic monitor on the Input tab: hear your own processed mic while other voices are muted
 - Addons tab listing registered client addons (name + description)

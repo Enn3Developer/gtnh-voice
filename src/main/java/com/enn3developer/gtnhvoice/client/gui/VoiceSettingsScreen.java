@@ -10,6 +10,7 @@ import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.util.EnumChatFormatting;
 
 import org.jetbrains.annotations.NotNull;
 
@@ -28,7 +29,6 @@ import com.cleanroommc.modularui.widgets.ButtonWidget;
 import com.cleanroommc.modularui.widgets.ListWidget;
 import com.cleanroommc.modularui.widgets.PageButton;
 import com.cleanroommc.modularui.widgets.PagedWidget;
-import com.cleanroommc.modularui.widgets.ScrollingTextWidget;
 import com.cleanroommc.modularui.widgets.TextWidget;
 import com.cleanroommc.modularui.widgets.ToggleButton;
 import com.cleanroommc.modularui.widgets.layout.Flow;
@@ -47,11 +47,12 @@ import com.enn3developer.gtnhvoice.client.audio.AudioDeviceController;
  * <li><b>Output</b> (default): master volume, output device, HRTF, and the per-player volume/mute rows.</li>
  * <li><b>Input</b>: activation mode, mic gain, VA threshold, denoise, input device. While this tab is active
  * the mic monitor runs (see {@link VoiceClientManager#setMicMonitorActive}): every other voice source is muted
- * and the user's own processed mic plays back, ungated, so thresholds and gain can be tuned by ear.</li>
+ * and the user's own processed mic plays back - gated behind VA in VOICE_ACTIVATION mode (hear yourself exactly
+ * when you'd transmit), ungated in PUSH_TO_TALK - so thresholds and gain can be tuned by ear.</li>
  * <li><b>Addons</b>: read-only list of registered client addons (name + description).</li>
  * </ul>
- * A red warning line above the tabs appears whenever no voice session is up - the live controls and the mic
- * monitor need one. Every control reads its current value from {@link Config}/{@link AudioDeviceController}
+ * A status line above the tabs always shows whether a voice session is up (green) or not (red) - the live
+ * controls and the mic monitor need one. Every control reads its current value from {@link Config}/{@link AudioDeviceController}
  * through dynamic value bindings and applies changes immediately - device/HRTF changes go through
  * {@link AudioDeviceController} (which already hotswaps live and persists), toggles/cycles set the
  * {@link Config} field and call {@link Config#save()} on click, sliders update the field live on every drag
@@ -67,9 +68,8 @@ public class VoiceSettingsScreen extends CustomModularScreen {
     private static final int HEAD_SIZE = 12;
     private static final int NAME_WIDTH = 80;
     private static final int MUTE_WIDTH = 50;
-    private static final int ADDON_NAME_WIDTH = 100;
-    private static final int WARNING_COLOR = 0xFFFF5555;
-    private static final int DESCRIPTION_COLOR = 0xFFAAAAAA;
+    private static final int STATUS_OK_COLOR = 0xFF55FF55;
+    private static final int STATUS_BAD_COLOR = 0xFFFF5555;
 
     private static final int OUTPUT_TAB = 0;
     private static final int INPUT_TAB = 1;
@@ -98,9 +98,9 @@ public class VoiceSettingsScreen extends CustomModularScreen {
                     .childPadding(5)
                     .crossAxisAlignment(Alignment.CrossAxis.CENTER)
                     .child(
-                        new TextWidget<>(IKey.dynamic(VoiceSettingsScreen::sessionWarning)).widthRel(1f)
+                        new TextWidget<>(IKey.dynamic(VoiceSettingsScreen::sessionStatus)).widthRel(1f)
                             .height(10)
-                            .color(WARNING_COLOR)
+                            .color(() -> sessionActive() ? STATUS_OK_COLOR : STATUS_BAD_COLOR)
                             .textAlign(Alignment.Center))
                     .child(
                         Flow.row()
@@ -130,9 +130,13 @@ public class VoiceSettingsScreen extends CustomModularScreen {
                             })));
     }
 
-    private static String sessionWarning() {
+    private static String sessionStatus() {
+        return sessionActive() ? "Voice session is active" : "Voice session is inactive";
+    }
+
+    private static boolean sessionActive() {
         return VoiceClientManager.getInstance()
-            .isSessionActive() ? "" : "WARNING: Voice session is inactive";
+            .isSessionActive();
     }
 
     private static IWidget tabButton(int index, String label, PagedWidget.Controller tabController) {
@@ -141,30 +145,34 @@ public class VoiceSettingsScreen extends CustomModularScreen {
             .overlay(IKey.str(label));
     }
 
-    /** The Output tab: everything the player hears - master volume, device, HRTF, per-player rows. */
+    /**
+     * The Output tab: everything the player hears - master volume, device, HRTF, per-player rows. One flat
+     * scrollable list, the player rows inline rather than in a nested scroll area, so however long the roster
+     * gets the page scrolls as a whole and the pinned Done button below is never painted over.
+     */
     private static IWidget outputPage(AudioDeviceController controller, List<String> outputDevices) {
-        return Flow.column()
-            .sizeRel(1f)
-            .childPadding(5)
-            .child(sliderRow("Volume", 0, 100, () -> Config.outputVolume, value -> {
-                Config.outputVolume = (int) Math.round(value);
-                VoiceClientManager.getInstance()
-                    .applyOutputVolume();
-            }, () -> Config.outputVolume + "%"))
-            .child(
-                buttonRow(
-                    () -> "Output Device: " + deviceDisplayName(controller.getOutputDevice()),
-                    () -> controller.setOutputDevice(nextOption(outputDevices, controller.getOutputDevice()))))
-            .child(buttonRow(() -> "HRTF: " + controller.getHrtfMode(), () -> {
-                Config.HrtfMode[] modes = Config.HrtfMode.values();
-                controller.setHrtfMode(
-                    modes[(controller.getHrtfMode()
-                        .ordinal() + 1) % modes.length]);
-            }))
-            .child(
-                new TextWidget<>(IKey.str("Players")).widthRel(1f)
-                    .textAlign(Alignment.Center))
-            .child(playerList());
+        ListWidget<IWidget, ?> list = GuiWidgets.spacedList();
+        list.child(sliderRow("Volume", 0, 100, () -> Config.outputVolume, value -> {
+            Config.outputVolume = (int) Math.round(value);
+            VoiceClientManager.getInstance()
+                .applyOutputVolume();
+        }, () -> Config.outputVolume + "%"));
+        list.child(
+            buttonRow(
+                () -> "Output Device: " + deviceDisplayName(controller.getOutputDevice()),
+                () -> controller.setOutputDevice(nextOption(outputDevices, controller.getOutputDevice()))));
+        list.child(buttonRow(() -> "HRTF: " + controller.getHrtfMode(), () -> {
+            Config.HrtfMode[] modes = Config.HrtfMode.values();
+            controller.setHrtfMode(
+                modes[(controller.getHrtfMode()
+                    .ordinal() + 1) % modes.length]);
+        }));
+        list.child(
+            new TextWidget<>(IKey.str("Players")).widthRel(1f)
+                .height(ROW_HEIGHT)
+                .textAlign(Alignment.Center));
+        appendPlayerRows(list);
+        return list.sizeRel(1f);
     }
 
     /**
@@ -172,35 +180,34 @@ public class VoiceSettingsScreen extends CustomModularScreen {
      * the page itself carries no monitor controls, {@code onPageChange} drives it.
      */
     private static IWidget inputPage(AudioDeviceController controller, List<String> inputDevices) {
-        return Flow.column()
-            .sizeRel(1f)
-            .childPadding(5)
-            .child(buttonRow(VoiceSettingsScreen::activationModeLabel, VoiceSettingsScreen::cycleActivationMode))
-            .child(
-                sliderRow(
-                    "Mic Gain",
-                    0,
-                    200,
-                    () -> Config.micGain,
-                    value -> Config.micGain = (int) Math.round(value),
-                    () -> Config.micGain + "%"))
-            .child(
-                sliderRow(
-                    "VA Threshold",
-                    -60,
-                    0,
-                    () -> Config.vaThresholdDb,
-                    value -> Config.vaThresholdDb = value,
-                    () -> Math.round(Config.vaThresholdDb) + " dB"))
-            .child(toggleRow("Denoise", () -> Config.denoiseEnabled, enabled -> {
-                Config.denoiseEnabled = enabled;
-                Config.save();
-                GtnhVoice.LOG.info("[VoiceSettings] Denoise enabled set to {}", enabled);
-            }))
-            .child(
-                buttonRow(
-                    () -> "Input Device: " + deviceDisplayName(controller.getInputDevice()),
-                    () -> controller.setInputDevice(nextOption(inputDevices, controller.getInputDevice()))));
+        ListWidget<IWidget, ?> list = GuiWidgets.spacedList();
+        list.child(buttonRow(VoiceSettingsScreen::activationModeLabel, VoiceSettingsScreen::cycleActivationMode));
+        list.child(
+            sliderRow(
+                "Mic Gain",
+                0,
+                200,
+                () -> Config.micGain,
+                value -> Config.micGain = (int) Math.round(value),
+                () -> Config.micGain + "%"));
+        list.child(
+            sliderRow(
+                "VA Threshold",
+                -60,
+                0,
+                () -> Config.vaThresholdDb,
+                value -> Config.vaThresholdDb = value,
+                () -> Math.round(Config.vaThresholdDb) + " dB"));
+        list.child(toggleRow("Denoise", () -> Config.denoiseEnabled, enabled -> {
+            Config.denoiseEnabled = enabled;
+            Config.save();
+            GtnhVoice.LOG.info("[VoiceSettings] Denoise enabled set to {}", enabled);
+        }));
+        list.child(
+            buttonRow(
+                () -> "Input Device: " + deviceDisplayName(controller.getInputDevice()),
+                () -> controller.setInputDevice(nextOption(inputDevices, controller.getInputDevice()))));
+        return list.sizeRel(1f);
     }
 
     /** The Addons tab: read-only name + description rows off the registered addon handles. */
@@ -212,32 +219,37 @@ public class VoiceSettingsScreen extends CustomModularScreen {
                 .textAlign(Alignment.Center);
         }
 
-        ListWidget<IWidget, ?> list = new ListWidget<>();
+        ListWidget<IWidget, ?> list = GuiWidgets.spacedList();
         for (IVoiceAddon addon : addons) {
             list.child(addonRow(addon));
         }
         return list.sizeRel(1f);
     }
 
+    /**
+     * Name line plus the full description wrapped below it - the row grows to fit
+     * ({@code coverChildrenHeight}), so everything is readable at all times with no scrolling or hover tricks.
+     */
     private static IWidget addonRow(IVoiceAddon addon) {
-        return Flow.row()
+        Flow row = Flow.column()
             .widthRel(1f)
-            .height(ROW_HEIGHT)
-            .childPadding(4)
-            .crossAxisAlignment(Alignment.CrossAxis.CENTER)
+            .coverChildrenHeight()
+            .childPadding(2)
+            .crossAxisAlignment(Alignment.CrossAxis.START)
             .child(
-                new TextWidget<>(IKey.str(addon.name())).width(ADDON_NAME_WIDTH)
-                    .textAlign(Alignment.CenterLeft))
-            .child(
-                new ScrollingTextWidget(
-                    IKey.str(
-                        addon.description()
-                            .orElse(""))).expanded()
-                                .color(DESCRIPTION_COLOR));
+                new TextWidget<>(IKey.str(addon.name())).widthRel(1f)
+                    .style(EnumChatFormatting.BOLD)
+                    .textAlign(Alignment.CenterLeft));
+        addon.description()
+            .ifPresent(
+                description -> row.child(
+                    new TextWidget<>(IKey.str(description)).widthRel(1f)
+                        .textAlign(Alignment.TopLeft)));
+        return row;
     }
 
-    /** The per-player volume/mute rows off the current roster snapshot (excluding self), name-sorted. */
-    private static IWidget playerList() {
+    /** Appends the per-player volume/mute rows off the current roster snapshot (excluding self), name-sorted. */
+    private static void appendPlayerRows(ListWidget<IWidget, ?> list) {
         UUID selfUuid = Minecraft.getMinecraft().thePlayer.getGameProfile()
             .getId();
         List<Map.Entry<UUID, String>> online = new ArrayList<>(
@@ -250,17 +262,16 @@ public class VoiceSettingsScreen extends CustomModularScreen {
         online.sort((a, b) -> String.CASE_INSENSITIVE_ORDER.compare(a.getValue(), b.getValue()));
 
         if (online.isEmpty()) {
-            return new TextWidget<>(IKey.str("No other players in voice chat")).widthRel(1f)
-                .expanded()
-                .textAlign(Alignment.Center);
+            list.child(
+                new TextWidget<>(IKey.str("No other players in voice chat")).widthRel(1f)
+                    .height(ROW_HEIGHT)
+                    .textAlign(Alignment.Center));
+            return;
         }
 
-        ListWidget<IWidget, ?> list = new ListWidget<>();
         for (Map.Entry<UUID, String> entry : online) {
             list.child(playerRow(entry.getKey(), entry.getValue()));
         }
-        return list.widthRel(1f)
-            .expanded();
     }
 
     /**
@@ -275,7 +286,14 @@ public class VoiceSettingsScreen extends CustomModularScreen {
             .childPadding(4)
             .crossAxisAlignment(Alignment.CrossAxis.CENTER)
             .child(new PlayerHeadWidget(uuid, name).size(HEAD_SIZE))
-            .child(new ScrollingTextWidget(IKey.str(name)).width(NAME_WIDTH))
+            .child(
+                // Pre-truncated to the column width - no scrolling, no hover behavior; MC names cap at 16
+                // chars, so the cut only ever hits the longest few.
+                new TextWidget<>(
+                    IKey.str(
+                        Minecraft.getMinecraft().fontRenderer.trimStringToWidth(name, NAME_WIDTH - 2)))
+                            .width(NAME_WIDTH)
+                            .textAlign(Alignment.CenterLeft))
             .child(
                 GuiWidgets.flatSlider()
                     .value(
