@@ -4,7 +4,7 @@ import java.util.UUID;
 
 /**
  * Per-frame PCM hook on incoming voice (radio effects, custom DSP on what other players say). Registered
- * exclusively through an {@link IClientAudioApi#register} bundle's {@code playbackFilter(...)}. Filters run on
+ * exclusively through an {@link IVoiceAddon#audio()} bundle's {@code playbackFilter(...)}. Filters run on
  * the receive path, before the frame is queued for the audio thread - deliberately NOT on the audio thread, so
  * addon DSP can never eat into the audio pump's time budget.
  * <p>

@@ -109,6 +109,7 @@ class AddonSessionBridgeTest {
     }
 
     private final ClientApiBackend backend = new ClientApiBackend();
+    private final TestAddons addons = new TestAddons(backend);
     private final RecordingPlaybackTarget playback = new RecordingPlaybackTarget();
     private final RecordingCaptureTarget capture = new RecordingCaptureTarget();
     private final AddonSessionBridge bridge = new AddonSessionBridge(backend, capture);
@@ -122,13 +123,11 @@ class AddonSessionBridgeTest {
 
     @Test
     void sessionStartedWiresEveryStoredBundle() {
-        backend.audio()
-            .register("addon-a")
+        addons.audio("addon-a")
             .lifecycle(LISTENER)
             .playbackFilter(FILTER)
             .done();
-        backend.audio()
-            .register("addon-b")
+        addons.audio("addon-b")
             .playbackFilter(FILTER)
             .done();
         assertEquals(0, playback.totalCalls(), "no session yet - registration must touch only storage");
@@ -145,8 +144,7 @@ class AddonSessionBridgeTest {
     @Test
     void filterOnlyBundleAttachesNoListener() {
         bridge.onSessionStarted(playback);
-        backend.audio()
-            .register("addon")
+        addons.audio("addon")
             .playbackFilter(FILTER)
             .done();
 
@@ -158,8 +156,7 @@ class AddonSessionBridgeTest {
     void midSessionRegistrationWiresImmediately() {
         bridge.onSessionStarted(playback);
 
-        backend.audio()
-            .register("addon")
+        addons.audio("addon")
             .lifecycle(LISTENER)
             .done();
 
@@ -170,8 +167,7 @@ class AddonSessionBridgeTest {
     @Test
     void midSessionUnregistrationDetachesExactHandles() {
         bridge.onSessionStarted(playback);
-        IRegistration registration = backend.audio()
-            .register("addon")
+        IRegistration registration = addons.audio("addon")
             .lifecycle(LISTENER)
             .playbackFilter(FILTER)
             .done();
@@ -186,8 +182,7 @@ class AddonSessionBridgeTest {
 
     @Test
     void unregistrationWithoutSessionTouchesOnlyStorage() {
-        IRegistration registration = backend.audio()
-            .register("addon")
+        IRegistration registration = addons.audio("addon")
             .lifecycle(LISTENER)
             .done();
 
@@ -202,8 +197,7 @@ class AddonSessionBridgeTest {
     @Test
     void sessionStoppingClearsWiringWithoutDetachCalls() {
         bridge.onSessionStarted(playback);
-        IRegistration registration = backend.audio()
-            .register("addon")
+        IRegistration registration = addons.audio("addon")
             .lifecycle(LISTENER)
             .playbackFilter(FILTER)
             .done();
@@ -219,8 +213,7 @@ class AddonSessionBridgeTest {
 
     @Test
     void reconnectRewiresStoredBundlesOntoTheFreshTarget() {
-        backend.audio()
-            .register("addon")
+        addons.audio("addon")
             .lifecycle(LISTENER)
             .done();
 
@@ -254,8 +247,7 @@ class AddonSessionBridgeTest {
 
     @Test
     void sessionStartedSeedsTheEffectiveAuxiliarySends() {
-        backend.audio()
-            .register("addon")
+        addons.audio("addon")
             .auxiliarySends(4)
             .done();
 
@@ -269,8 +261,7 @@ class AddonSessionBridgeTest {
         bridge.onSessionStarted(playback);
         assertEquals(Integer.valueOf(0), playback.lastAuxiliarySends(), "seed with no requirement is zero");
 
-        backend.audio()
-            .register("addon")
+        addons.audio("addon")
             .lifecycle(LISTENER)
             .auxiliarySends(4)
             .done();
@@ -281,12 +272,10 @@ class AddonSessionBridgeTest {
     @Test
     void unregistrationPublishesTheDroppedAggregate() {
         bridge.onSessionStarted(playback);
-        backend.audio()
-            .register("keep")
+        addons.audio("keep")
             .auxiliarySends(2)
             .done();
-        IRegistration top = backend.audio()
-            .register("drop")
+        IRegistration top = addons.audio("drop")
             .auxiliarySends(6)
             .done();
         assertEquals(Integer.valueOf(6), playback.lastAuxiliarySends());
@@ -298,8 +287,7 @@ class AddonSessionBridgeTest {
 
     @Test
     void captureBundlesWireOnceAtRegistrationWithoutAnySession() {
-        IRegistration registration = backend.capture()
-            .register("addon")
+        IRegistration registration = addons.capture("addon")
             .filter(frame -> frame)
             .done();
 
@@ -320,8 +308,7 @@ class AddonSessionBridgeTest {
     void playbackChainCleanupSurvivesAThrowingAddonListenerPart() {
         // #1: the chain's per-source cleanup is wired as a SEPARATE listener attach, isolated from the addon's
         // own parts, so an addon sourceDestroying that throws can never abort pipeline eviction.
-        backend.audio()
-            .register("addon")
+        addons.audio("addon")
             .onSourceDestroying((id, handle) -> {
                 throw new RuntimeException("boom");
             })

@@ -21,7 +21,6 @@ import com.cleanroommc.modularui.value.BoolValue;
 import com.cleanroommc.modularui.value.DoubleValue;
 import com.cleanroommc.modularui.widgets.ButtonWidget;
 import com.cleanroommc.modularui.widgets.ListWidget;
-import com.cleanroommc.modularui.widgets.SliderWidget;
 import com.cleanroommc.modularui.widgets.TextWidget;
 import com.cleanroommc.modularui.widgets.ToggleButton;
 import com.cleanroommc.modularui.widgets.layout.Flow;
@@ -156,10 +155,10 @@ public class VoiceSettingsScreen extends CustomModularScreen {
                 new TextWidget<>(IKey.str(label)).width(LABEL_WIDTH)
                     .textAlign(Alignment.CenterLeft))
             .child(
-                new SliderWidget().value(new DoubleValue.Dynamic(getter, setter))
+                GuiWidgets.flatSlider()
+                    .value(new DoubleValue.Dynamic(getter, setter))
                     .bounds(min, max)
-                    .expanded()
-                    .height(ROW_HEIGHT))
+                    .expanded())
             .child(
                 new TextWidget<>(IKey.dynamic(valueLabel)).width(VALUE_WIDTH)
                     .textAlign(Alignment.CenterRight));

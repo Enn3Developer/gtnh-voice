@@ -19,13 +19,13 @@ import com.enn3developer.gtnhvoice.api.client.IRegistration;
 class CaptureRegistrationBuilderTest {
 
     private final ClientApiBackend backend = new ClientApiBackend();
+    private final TestAddons addons = new TestAddons(backend);
 
     @Test
     void filtersAccumulateInRegistrationOrder() {
         ICapturePcmFilter first = frame -> frame;
         ICapturePcmFilter second = frame -> frame;
-        backend.capture()
-            .register("addon")
+        addons.capture("addon")
             .filter(first)
             .filter(second)
             .done();
@@ -38,31 +38,23 @@ class CaptureRegistrationBuilderTest {
     }
 
     @Test
-    void registerRejectsNullAndBlankAddonName() {
-        assertThrows(
-            NullPointerException.class,
-            () -> backend.capture()
-                .register(null));
-        assertThrows(
-            IllegalArgumentException.class,
-            () -> backend.capture()
-                .register(""));
+    void addonRegistrationRejectsNullAndBlankName() {
+        assertThrows(NullPointerException.class, () -> backend.newAddonBuilder(null));
+        assertThrows(IllegalArgumentException.class, () -> backend.newAddonBuilder(""));
     }
 
     @Test
     void doneOnAnEmptyBundleThrowsAndStoresNothing() {
         assertThrows(
             IllegalStateException.class,
-            () -> backend.capture()
-                .register("addon")
+            () -> addons.capture("addon")
                 .done());
         assertTrue(backend.captureBundlesView().isEmpty());
     }
 
     @Test
     void builderIsSingleUseSoASecondDoneThrows() {
-        ICaptureRegistrationBuilder builder = backend.capture()
-            .register("addon")
+        ICaptureRegistrationBuilder builder = addons.capture("addon")
             .filter(frame -> frame);
         builder.done();
 
@@ -73,16 +65,14 @@ class CaptureRegistrationBuilderTest {
 
     @Test
     void filterRejectsNull() {
-        ICaptureRegistrationBuilder builder = backend.capture()
-            .register("addon");
+        ICaptureRegistrationBuilder builder = addons.capture("addon");
 
         assertThrows(NullPointerException.class, () -> builder.filter(null));
     }
 
     @Test
     void unregisterRemovesTheBundleAndIsIdempotent() {
-        IRegistration registration = backend.capture()
-            .register("addon")
+        IRegistration registration = addons.capture("addon")
             .filter(frame -> frame)
             .done();
 

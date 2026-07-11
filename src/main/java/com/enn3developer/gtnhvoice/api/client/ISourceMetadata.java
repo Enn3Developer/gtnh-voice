@@ -4,7 +4,7 @@ package com.enn3developer.gtnhvoice.api.client;
  * Point-in-time spatial snapshot of one voice source: the speaker's last known absolute world position and
  * whether the source currently plays positionally (proximity/3D) or flat. A detached value, never a live view -
  * it does not change after being returned and holds no references into playback state. Obtained via
- * {@link IClientAudioApi#sourceMetadata}.
+ * {@link IVoiceAddon#sourceMetadata}.
  * <p>
  * A voice source id IS the speaking player's UUID, so consumers needing the player entity or name resolve it
  * themselves - this query deliberately duplicates no roster data. Fresh-source edge: a source reports position

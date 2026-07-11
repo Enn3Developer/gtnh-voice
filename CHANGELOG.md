@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Lower CPU cost per voice frame (cached AES cipher)
 - Fine-tuned adaptive jitter buffer parameters
+- **Breaking**: client addons now register themselves first — `GtnhVoiceClient.addon("Name").description("...").register()` returns the handle that opens audio/capture bundles; addon names are unique
 
 ### Removed
 

@@ -6,7 +6,7 @@ import java.util.UUID;
  * Addon hook points for the voice output's OpenAL context and per-source lifecycle: create global AL state (EFX
  * effect slots, effects) after a context exists and free it before the context dies, attach per-source AL state
  * (EFX filters, aux sends) to individual voice sources, and drive continuous updates from {@link #audioTick()}.
- * Registered exclusively through an {@link IClientAudioApi#register} bundle - either whole via
+ * Registered exclusively through an {@link IVoiceAddon#audio()} bundle - either whole via
  * {@code lifecycle(...)} or per-event via the {@code on*} builder methods, which assemble into this same
  * contract. All methods are default no-ops so future events can be added without breaking existing implementors.
  * <p>
@@ -30,7 +30,7 @@ import java.util.UUID;
  * <p>
  * Reentrancy: do NOT call any gtnh-voice API method from inside a callback - you are already on the audio
  * thread, inside its dispatch, and direct AL calls are the intended tool here. From every other thread it is the
- * opposite: never call AL directly, marshal through {@link IClientAudioApi#runOnAudioThread}.
+ * opposite: never call AL directly, marshal through {@link IVoiceAddon#runOnAudioThread}.
  * <p>
  * Ownership: {@code AL_GAIN}, {@code AL_POSITION} and the distance-attenuation setup on voice sources belong to
  * gtnh-voice, which rewrites them continuously - addons express themselves through EFX aux sends and direct

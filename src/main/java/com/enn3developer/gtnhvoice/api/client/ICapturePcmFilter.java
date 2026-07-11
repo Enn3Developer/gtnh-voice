@@ -2,7 +2,7 @@ package com.enn3developer.gtnhvoice.api.client;
 
 /**
  * Per-frame PCM hook on outgoing mic audio (voice changers, custom DSP on what you say). Registered exclusively
- * through an {@link IClientCaptureApi#register} bundle's {@code filter(...)}.
+ * through an {@link IVoiceAddon#capture()} bundle's {@code filter(...)}.
  * <p>
  * Chain position: filters run AFTER the built-in noise suppression (a hardcoded first stage outside this chain)
  * and BEFORE the voice-activation gate. That ordering is deliberate: filters receive clean speech rather than

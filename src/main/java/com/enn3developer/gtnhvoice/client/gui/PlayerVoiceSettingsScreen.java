@@ -22,7 +22,6 @@ import com.cleanroommc.modularui.widget.Widget;
 import com.cleanroommc.modularui.widgets.ButtonWidget;
 import com.cleanroommc.modularui.widgets.ListWidget;
 import com.cleanroommc.modularui.widgets.ScrollingTextWidget;
-import com.cleanroommc.modularui.widgets.SliderWidget;
 import com.cleanroommc.modularui.widgets.TextWidget;
 import com.cleanroommc.modularui.widgets.ToggleButton;
 import com.cleanroommc.modularui.widgets.layout.Flow;
@@ -118,14 +117,13 @@ public class PlayerVoiceSettingsScreen extends CustomModularScreen {
             .child(new PlayerHeadWidget(uuid, name).size(HEAD_SIZE))
             .child(new ScrollingTextWidget(IKey.str(name)).width(NAME_WIDTH))
             .child(
-                new SliderWidget()
+                GuiWidgets.flatSlider()
                     .value(
                         new DoubleValue.Dynamic(
                             () -> controller.getVolume(uuid) * 100.0,
                             value -> controller.setVolume(uuid, (float) (value / 100.0))))
                     .bounds(0, 200)
-                    .expanded()
-                    .height(ROW_HEIGHT))
+                    .expanded())
             .child(
                 new TextWidget<>(IKey.dynamic(() -> Math.round(controller.getVolume(uuid) * 100) + "%"))
                     .width(VALUE_WIDTH)

@@ -28,6 +28,7 @@ import com.enn3developer.gtnhvoice.api.client.IRegistration;
 class AudioRegistrationBuilderTest {
 
     private final ClientApiBackend backend = new ClientApiBackend();
+    private final TestAddons addons = new TestAddons(backend);
 
     private AudioRegistrationBundle onlyBundle() {
         List<AudioRegistrationBundle> bundles = backend.audioBundlesView();
@@ -39,8 +40,7 @@ class AudioRegistrationBuilderTest {
     void perEventLambdasAreInvokedByTheAssembledListener() {
         List<String> events = new ArrayList<>();
         UUID id = UUID.randomUUID();
-        backend.audio()
-            .register("addon")
+        addons.audio("addon")
             .onContextCreated(deviceHandle -> events.add("contextCreated:" + deviceHandle))
             .onContextDestroying(() -> events.add("contextDestroying"))
             .onSourceCreated((sourceId, handle) -> events.add("sourceCreated:" + sourceId + ":" + handle))
@@ -75,8 +75,7 @@ class AudioRegistrationBuilderTest {
                 events.add("whole:" + sourceHandle);
             }
         };
-        backend.audio()
-            .register("addon")
+        addons.audio("addon")
             .lifecycle(whole)
             .onSourceCreated((sourceId, handle) -> events.add("lambda:" + handle))
             .done();
@@ -91,8 +90,7 @@ class AudioRegistrationBuilderTest {
     @Test
     void repeatedCallsToTheSameMethodAllAccumulate() {
         List<String> events = new ArrayList<>();
-        backend.audio()
-            .register("addon")
+        addons.audio("addon")
             .onAudioTick(() -> events.add("first"))
             .onAudioTick(() -> events.add("second"))
             .done();
@@ -106,8 +104,7 @@ class AudioRegistrationBuilderTest {
     @Test
     void singleWholeListenerIsStoredUnwrapped() {
         IAudioLifecycleListener whole = new IAudioLifecycleListener() {};
-        backend.audio()
-            .register("addon")
+        addons.audio("addon")
             .lifecycle(whole)
             .done();
 
@@ -118,8 +115,7 @@ class AudioRegistrationBuilderTest {
     void filterOnlyBundleHasNoListenerAndKeepsFilterOrder() {
         IPlaybackPcmFilter first = (sourceId, frame) -> frame;
         IPlaybackPcmFilter second = (sourceId, frame) -> frame;
-        backend.audio()
-            .register("addon")
+        addons.audio("addon")
             .playbackFilter(first)
             .playbackFilter(second)
             .done();
@@ -131,25 +127,17 @@ class AudioRegistrationBuilderTest {
     }
 
     @Test
-    void registerRejectsNullAndBlankAddonName() {
-        assertThrows(
-            NullPointerException.class,
-            () -> backend.audio()
-                .register(null));
-        assertThrows(
-            IllegalArgumentException.class,
-            () -> backend.audio()
-                .register("   "));
+    void addonRegistrationRejectsNullAndBlankName() {
+        assertThrows(NullPointerException.class, () -> backend.newAddonBuilder(null));
+        assertThrows(IllegalArgumentException.class, () -> backend.newAddonBuilder("   "));
     }
 
     @Test
     void addonNameIsAttributionNotIdentitySoTwoBundlesMayShareIt() {
-        backend.audio()
-            .register("addon")
+        addons.audio("addon")
             .onAudioTick(() -> {})
             .done();
-        backend.audio()
-            .register("addon")
+        addons.audio("addon")
             .onAudioTick(() -> {})
             .done();
 
@@ -160,16 +148,14 @@ class AudioRegistrationBuilderTest {
     void doneOnAnEmptyBundleThrowsAndStoresNothing() {
         assertThrows(
             IllegalStateException.class,
-            () -> backend.audio()
-                .register("addon")
+            () -> addons.audio("addon")
                 .done());
         assertTrue(backend.audioBundlesView().isEmpty());
     }
 
     @Test
     void builderIsSingleUseSoASecondDoneThrows() {
-        IAudioRegistrationBuilder builder = backend.audio()
-            .register("addon")
+        IAudioRegistrationBuilder builder = addons.audio("addon")
             .onAudioTick(() -> {});
         builder.done();
 
@@ -180,8 +166,7 @@ class AudioRegistrationBuilderTest {
 
     @Test
     void mutatorAfterDoneThrows() {
-        IAudioRegistrationBuilder builder = backend.audio()
-            .register("addon")
+        IAudioRegistrationBuilder builder = addons.audio("addon")
             .onAudioTick(() -> {});
         builder.done();
 
@@ -190,8 +175,7 @@ class AudioRegistrationBuilderTest {
 
     @Test
     void builderMethodsRejectNullArguments() {
-        IAudioRegistrationBuilder builder = backend.audio()
-            .register("addon");
+        IAudioRegistrationBuilder builder = addons.audio("addon");
 
         assertThrows(NullPointerException.class, () -> builder.lifecycle(null));
         assertThrows(NullPointerException.class, () -> builder.onContextCreated(null));
@@ -204,8 +188,7 @@ class AudioRegistrationBuilderTest {
 
     @Test
     void abandonedBuilderStoresNothing() {
-        backend.audio()
-            .register("addon")
+        addons.audio("addon")
             .onAudioTick(() -> {});
 
         assertTrue(backend.audioBundlesView().isEmpty());
@@ -213,12 +196,10 @@ class AudioRegistrationBuilderTest {
 
     @Test
     void unregisterRemovesExactlyItsOwnBundleAndIsIdempotent() {
-        IRegistration first = backend.audio()
-            .register("first")
+        IRegistration first = addons.audio("first")
             .onAudioTick(() -> {})
             .done();
-        backend.audio()
-            .register("second")
+        addons.audio("second")
             .onAudioTick(() -> {})
             .done();
 
@@ -238,25 +219,21 @@ class AudioRegistrationBuilderTest {
     void auxiliarySendsRejectsValuesOutsideOneToEight() {
         assertThrows(
             IllegalArgumentException.class,
-            () -> backend.audio()
-                .register("addon")
+            () -> addons.audio("addon")
                 .auxiliarySends(0));
         assertThrows(
             IllegalArgumentException.class,
-            () -> backend.audio()
-                .register("addon")
+            () -> addons.audio("addon")
                 .auxiliarySends(9));
         assertThrows(
             IllegalArgumentException.class,
-            () -> backend.audio()
-                .register("addon")
+            () -> addons.audio("addon")
                 .auxiliarySends(-1));
     }
 
     @Test
     void auxiliarySendsAloneMakesTheBundleNonEmpty() {
-        IRegistration registration = backend.audio()
-            .register("addon")
+        IRegistration registration = addons.audio("addon")
             .auxiliarySends(4)
             .done();
 
@@ -270,8 +247,7 @@ class AudioRegistrationBuilderTest {
 
     @Test
     void repeatedAuxiliarySendsKeepsTheLargestNotTheLast() {
-        backend.audio()
-            .register("addon")
+        addons.audio("addon")
             .auxiliarySends(4)
             .auxiliarySends(2)
             .done();
@@ -281,8 +257,7 @@ class AudioRegistrationBuilderTest {
 
     @Test
     void effectiveAuxiliarySendsIsZeroWhenNoBundleAsksForAny() {
-        backend.audio()
-            .register("addon")
+        addons.audio("addon")
             .onAudioTick(() -> {})
             .done();
 
@@ -292,16 +267,13 @@ class AudioRegistrationBuilderTest {
 
     @Test
     void effectiveAuxiliarySendsIsTheMaxAcrossLiveBundles() {
-        backend.audio()
-            .register("a")
+        addons.audio("a")
             .auxiliarySends(2)
             .done();
-        backend.audio()
-            .register("b")
+        addons.audio("b")
             .lifecycle(new IAudioLifecycleListener() {})
             .done();
-        backend.audio()
-            .register("c")
+        addons.audio("c")
             .auxiliarySends(4)
             .done();
 
@@ -310,12 +282,10 @@ class AudioRegistrationBuilderTest {
 
     @Test
     void closingTheTopRegistrationDropsItsContributionFromTheAggregate() {
-        backend.audio()
-            .register("a")
+        addons.audio("a")
             .auxiliarySends(2)
             .done();
-        IRegistration top = backend.audio()
-            .register("b")
+        IRegistration top = addons.audio("b")
             .auxiliarySends(6)
             .done();
         assertEquals(6, backend.effectiveAuxiliarySends());
@@ -326,8 +296,7 @@ class AudioRegistrationBuilderTest {
 
     @Test
     void closeDelegatesToUnregister() {
-        IRegistration registration = backend.audio()
-            .register("addon")
+        IRegistration registration = addons.audio("addon")
             .onAudioTick(() -> {})
             .done();
 

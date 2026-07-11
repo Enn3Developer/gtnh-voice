@@ -8,28 +8,49 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import com.enn3developer.gtnhvoice.api.client.IAudioRegistrationBuilder;
-import com.enn3developer.gtnhvoice.api.client.IClientAudioApi;
+import com.enn3developer.gtnhvoice.api.client.ICaptureRegistrationBuilder;
 import com.enn3developer.gtnhvoice.api.client.ISourceMetadata;
+import com.enn3developer.gtnhvoice.api.client.IVoiceAddon;
 import com.enn3developer.gtnhvoice.client.VoiceClientManager;
 import com.enn3developer.gtnhvoice.client.playback.PlaybackManager;
 import com.enn3developer.gtnhvoice.client.source.VoiceSourceManager;
 
 /**
- * The one {@code IClientAudioApi} implementation: registration hands out builders that store into
- * {@link ClientApiBackend}, while the live queries reach the current session's {@code PlaybackManager} through
- * {@link VoiceClientManager} - a null session manager IS the documented no-session case (false/empty).
+ * The one {@code IVoiceAddon} implementation: {@link #audio()}/{@link #capture()} hand out registration
+ * builders that store into {@link ClientApiBackend} attributed to this addon's name, while the live queries
+ * reach the current session's {@code PlaybackManager} through {@link VoiceClientManager} - a null session
+ * manager IS the documented no-session case (false/empty). Immutable, so trivially thread-safe.
  */
-final class ClientAudioApi implements IClientAudioApi {
+final class VoiceAddon implements IVoiceAddon {
 
     private final ClientApiBackend backend;
+    private final String name;
+    private final @Nullable String description;
 
-    ClientAudioApi(ClientApiBackend backend) {
+    VoiceAddon(ClientApiBackend backend, String name, @Nullable String description) {
         this.backend = backend;
+        this.name = name;
+        this.description = description;
     }
 
     @Override
-    public IAudioRegistrationBuilder register(@NotNull String addonName) {
-        return new AudioRegistrationBuilder(backend, ClientApiBackend.validateAddonName(addonName));
+    public String name() {
+        return name;
+    }
+
+    @Override
+    public Optional<String> description() {
+        return Optional.ofNullable(description);
+    }
+
+    @Override
+    public IAudioRegistrationBuilder audio() {
+        return new AudioRegistrationBuilder(backend, name);
+    }
+
+    @Override
+    public ICaptureRegistrationBuilder capture() {
+        return new CaptureRegistrationBuilder(backend, name);
     }
 
     @Override

@@ -3,28 +3,31 @@ package com.enn3developer.gtnhvoice.client.api;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.jetbrains.annotations.Nullable;
 
+import com.enn3developer.gtnhvoice.api.client.IAddonBuilder;
 import com.enn3developer.gtnhvoice.api.client.IAudioLifecycleListener;
 import com.enn3developer.gtnhvoice.api.client.ICapturePcmFilter;
-import com.enn3developer.gtnhvoice.api.client.IClientAudioApi;
-import com.enn3developer.gtnhvoice.api.client.IClientCaptureApi;
 import com.enn3developer.gtnhvoice.api.client.IPlaybackPcmFilter;
+import com.enn3developer.gtnhvoice.api.client.IVoiceAddon;
 import com.enn3developer.gtnhvoice.client.VoiceClientManager;
 import com.enn3developer.gtnhvoice.client.playback.PlaybackManager;
 import com.enn3developer.gtnhvoice.client.source.VoiceSourceManager;
 
 /**
  * Singleton storage backend for the public client addon API ({@code com.enn3developer.gtnhvoice.api.client}) -
- * the one class {@code GtnhVoiceClientApi} reaches into, mirroring how the server API's entry point reaches
- * {@code VoiceServerManager}. Holds every registered bundle durably for the whole client lifetime: bundles are
- * added by the registration builders' {@code done()}, removed by their {@code IRegistration} handles, and never
- * touched by session transitions - which is exactly what makes registrations survive disconnect/reconnect
- * cycles. CopyOnWrite lists so future hot-path iteration reads stable snapshots while addons register and
- * unregister from arbitrary threads; registration churn is rare.
+ * the one class {@code GtnhVoiceClient} reaches into, mirroring how the server API's entry point reaches
+ * {@code VoiceServerManager}. Holds the registered addons (name is a unique key, claimed for the client
+ * lifetime - {@link #registerAddon}) and every registered bundle, durably for the whole client lifetime:
+ * bundles are added by the registration builders' {@code done()}, removed by their {@code IRegistration}
+ * handles, and never touched by session transitions - which is exactly what makes registrations survive
+ * disconnect/reconnect cycles. CopyOnWrite lists so future hot-path iteration reads stable snapshots while
+ * addons register and unregister from arbitrary threads; registration churn is rare.
  * <p>
  * Bridging: {@link #initSessionBridging()} (called once from {@code ClientProxy.preInit}) hangs an
  * {@link AddonSessionBridge} off {@code VoiceClientManager}'s session-listener registry; the bridge re-wires
@@ -40,8 +43,7 @@ public final class ClientApiBackend {
 
     private final List<AudioRegistrationBundle> audioBundles = new CopyOnWriteArrayList<>();
     private final List<CaptureRegistrationBundle> captureBundles = new CopyOnWriteArrayList<>();
-    private final IClientAudioApi audioApi = new ClientAudioApi(this);
-    private final IClientCaptureApi captureApi = new ClientCaptureApi(this);
+    private final ConcurrentMap<String, IVoiceAddon> addons = new ConcurrentHashMap<>();
 
     private final AtomicBoolean bridgingInitialized = new AtomicBoolean();
     // Null until initSessionBridging (or a test injects a fake-target bridge) - the hooks below skip a null
@@ -55,14 +57,28 @@ public final class ClientApiBackend {
         return INSTANCE;
     }
 
-    /** The playback-side API facade {@code GtnhVoiceClientApi.audio()} hands to addons. */
-    public IClientAudioApi audio() {
-        return audioApi;
+    /**
+     * Opens a single-use addon builder for {@code name} - what {@code GtnhVoiceClient.addon(name)} hands to
+     * addons. Validates the name eagerly (fail at the call site) but claims nothing: the name is only taken
+     * when the builder's {@code register()} lands in {@link #registerAddon}.
+     */
+    public IAddonBuilder newAddonBuilder(String name) {
+        return new AddonBuilder(this, validateAddonName(name));
     }
 
-    /** The capture-side API facade {@code GtnhVoiceClientApi.capture()} hands to addons. */
-    public IClientCaptureApi capture() {
-        return captureApi;
+    /**
+     * Registers the addon under its unique name and returns its durable handle - the terminal step of
+     * {@code IAddonBuilder.register()}. {@code putIfAbsent} makes claim-and-check one atomic step, so two
+     * threads racing on one name cannot both win.
+     *
+     * @throws IllegalStateException if the name is already registered
+     */
+    IVoiceAddon registerAddon(String name, @Nullable String description) {
+        IVoiceAddon addon = new VoiceAddon(this, name, description);
+        if (addons.putIfAbsent(name, addon) != null) {
+            throw new IllegalStateException("addon '" + name + "' is already registered");
+        }
+        return addon;
     }
 
     /**
@@ -196,8 +212,9 @@ public final class ClientApiBackend {
     }
 
     /**
-     * Shared {@code register(addonName)} validation: attribution must exist, but it is not a unique key -
-     * multiple bundles may share a name, so nothing here checks for duplicates.
+     * Shape validation for an addon name (non-null, non-blank), shared by {@link #newAddonBuilder}. Uniqueness
+     * is deliberately NOT checked here - that is {@link #registerAddon}'s atomic claim - so an abandoned
+     * builder never reserves a name.
      */
     static String validateAddonName(String addonName) {
         Objects.requireNonNull(addonName, "addonName");

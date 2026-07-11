@@ -6,7 +6,7 @@ import org.jetbrains.annotations.NotNull;
 
 /**
  * Fluent, single-use assembler for one playback-side registration bundle, created only by
- * {@link IClientAudioApi#register}. Chain any mix of whole listeners, per-event callbacks and playback filters -
+ * {@link IVoiceAddon#audio()}. Chain any mix of whole listeners, per-event callbacks and playback filters -
  * every method returns this builder, every method may be called repeatedly and ALL calls accumulate (two
  * {@code onAudioTick} callbacks both fire, in registration order) - then terminate with {@link #done()}, which
  * activates the bundle and returns the {@link IRegistration} handle that removes it as a whole. The lone
@@ -21,7 +21,7 @@ import org.jetbrains.annotations.NotNull;
  * <p>
  * The whole listeners and per-event callbacks assemble into one listener per bundle, all sharing
  * {@link IAudioLifecycleListener}'s threading, pairing, reentrancy and ownership contract - read it before
- * hooking anything. See {@link IClientAudioApi#register} for the durability and mid-session-replay contract.
+ * hooking anything. See {@link IVoiceAddon#audio()} for the durability and mid-session-replay contract.
  */
 public interface IAudioRegistrationBuilder {
 

@@ -6,7 +6,7 @@ import org.jetbrains.annotations.NotNull;
 
 /**
  * Fluent, single-use assembler for one capture-side registration bundle, created only by
- * {@link IClientCaptureApi#register}. Chain filters - every method returns this builder, every method may be
+ * {@link IVoiceAddon#capture()}. Chain filters - every method returns this builder, every method may be
  * called repeatedly and ALL calls accumulate (two filters both run, in registration order) - then terminate
  * with {@link #done()}, which activates the bundle and returns the {@link IRegistration} handle that removes it
  * as a whole.
@@ -14,7 +14,7 @@ import org.jetbrains.annotations.NotNull;
  * Nothing is registered until {@link #done()}: an abandoned builder leaks nothing. An empty bundle is a caller
  * bug - {@code done()} without at least one filter throws {@link IllegalStateException}. Single use is
  * enforced: any call after {@code done()}, including a second {@code done()}, throws
- * {@link IllegalStateException}. See {@link IClientCaptureApi#register} for the durability contract.
+ * {@link IllegalStateException}. See {@link IVoiceAddon#capture()} for the durability contract.
  */
 public interface ICaptureRegistrationBuilder {
 

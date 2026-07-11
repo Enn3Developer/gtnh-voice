@@ -229,8 +229,9 @@ class PcmChainTest {
     @Test
     void registrationFrontsTheGateAndGoesInertAfterUnregister() {
         ClientApiBackend backend = new ClientApiBackend();
-        IRegistration registration = backend.capture()
-            .register("addon")
+        IRegistration registration = backend.newAddonBuilder("addon")
+            .register()
+            .capture()
             .chain(c -> c.gain(1.5))
             .initiallyEnabled(false)
             .done();
@@ -248,8 +249,9 @@ class PcmChainTest {
     @Test
     void chainCountsAsAFilterForTheEmptyBundleCheck() {
         ClientApiBackend backend = new ClientApiBackend();
-        IRegistration registration = backend.capture()
-            .register("addon")
+        IRegistration registration = backend.newAddonBuilder("addon")
+            .register()
+            .capture()
             .chain(c -> c.mulaw())
             .done();
         assertEquals(
@@ -264,8 +266,9 @@ class PcmChainTest {
         ClientApiBackend backend = new ClientApiBackend();
         assertThrows(
             IllegalArgumentException.class,
-            () -> backend.capture()
-                .register("addon")
+            () -> backend.newAddonBuilder("addon")
+                .register()
+                .capture()
                 .chain(c -> {}));
     }
 
