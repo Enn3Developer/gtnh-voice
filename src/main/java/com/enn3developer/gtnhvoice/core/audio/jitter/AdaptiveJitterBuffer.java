@@ -6,9 +6,7 @@ package com.enn3developer.gtnhvoice.core.audio.jitter;
 
 import com.enn3developer.gtnhvoice.core.audio.AudioUnit;
 
-import javax.annotation.Nullable;
 import java.util.Comparator;
-import java.util.OptionalLong;
 import java.util.PriorityQueue;
 import java.util.Queue;
 import java.util.function.LongSupplier;
@@ -101,7 +99,7 @@ public final class AdaptiveJitterBuffer {
      * otherwise {@code null} - either because the buffer is empty or because the head frame isn't due yet (the
      * buffering phase).
      */
-    public synchronized @Nullable Frame poll() {
+    public synchronized Frame poll() {
         Entry next = queue.peek();
         if (next == null) return null;
 
