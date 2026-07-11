@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Lower CPU cost per voice frame (cached AES cipher)
+- Fine-tuned adaptive jitter buffer parameters
 
 ### Removed
 
