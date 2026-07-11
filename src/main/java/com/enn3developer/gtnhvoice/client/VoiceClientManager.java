@@ -43,6 +43,7 @@ import com.enn3developer.gtnhvoice.network.ClientHelloPacket;
 import com.enn3developer.gtnhvoice.network.NetworkHandler;
 import com.enn3developer.gtnhvoice.network.ServerHelloPacket;
 import com.enn3developer.gtnhvoice.network.ServerRejectPacket;
+import com.enn3developer.gtnhvoice.network.VoiceGroupTablePacket;
 import com.enn3developer.gtnhvoice.network.VoiceGroupUpdatePacket;
 import com.enn3developer.gtnhvoice.network.VoiceProtocol;
 import com.enn3developer.gtnhvoice.network.VoiceRosterSnapshotPacket;
@@ -146,6 +147,9 @@ public final class VoiceClientManager {
      * FML channel handler, read every frame by the HUD.
      */
     private volatile String groupDisplayName = DEFAULT_GROUP_DISPLAY_NAME;
+    // Wire group id -> display name, synced via VoiceGroupTablePacket; read at render rate by the HUD to
+    // attribute per-speaker audio (see groupDisplayNameFor).
+    private final Map<Short, String> groupTable = new ConcurrentHashMap<>();
 
     public static VoiceClientManager getInstance() {
         return INSTANCE;
@@ -377,6 +381,7 @@ public final class VoiceClientManager {
         discardHandshakeKeypair();
         roster.clear();
         groupDisplayName = DEFAULT_GROUP_DISPLAY_NAME;
+        groupTable.clear();
         HeadIconCache.getInstance()
             .clearAll();
     }
@@ -429,6 +434,25 @@ public final class VoiceClientManager {
     public synchronized void handleGroupUpdate(@NotNull VoiceGroupUpdatePacket packet) {
         groupDisplayName = packet.getGroupDisplayName();
         GtnhVoice.LOG.info("Client voice group display name set to '{}'", groupDisplayName);
+    }
+
+    public synchronized void handleGroupTable(@NotNull VoiceGroupTablePacket packet) {
+        groupTable.clear();
+        groupTable.putAll(packet.getGroupTable());
+        GtnhVoice.LOG.info("Client voice group table applied: {}", groupTable);
+    }
+
+    /**
+     * The display name of the group whose routing last won {@code sourceId}'s audio for this client (each
+     * {@code SourceAudioPacket} carries the winning group's wire id; the reliable channel syncs the id table).
+     * Empty when nothing has been heard from the source yet or the table hasn't arrived - UDP can outrun the
+     * reliable channel, same race the roster tolerates. Callable from the render thread every frame.
+     */
+    public String groupDisplayNameFor(@NotNull UUID sourceId) {
+        VoiceSourceManager sourceManager = voiceSourceManager;
+        if (sourceManager == null) return "";
+        String name = groupTable.get(sourceManager.lastGroupIdFor(sourceId));
+        return name == null ? "" : name;
     }
 
     public synchronized void handleServerHello(@NotNull ServerHelloPacket packet) {

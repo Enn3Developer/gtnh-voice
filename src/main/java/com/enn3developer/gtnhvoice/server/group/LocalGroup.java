@@ -30,6 +30,12 @@ public final class LocalGroup implements IGroup {
         return NAME;
     }
 
+    /** The unbeatable floor: local is the implicit everyone-group and always routes last. */
+    @Override
+    public int priority() {
+        return Integer.MIN_VALUE;
+    }
+
     @Override
     public @NotNull String getDisplayName() {
         // Exactly the label the HUD always hardcoded, so the default group renders unchanged.

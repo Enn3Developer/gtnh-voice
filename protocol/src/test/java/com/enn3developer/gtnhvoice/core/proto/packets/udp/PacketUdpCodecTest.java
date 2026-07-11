@@ -42,7 +42,7 @@ class PacketUdpCodecTest {
         List<Packet<?>> packets = Arrays.asList(
             new PingPacket("127.0.0.1", 24454),
             new PlayerAudioPacket(42L, audio, UUID.randomUUID(), (short) 16, false),
-            new SourceAudioPacket(7L, SourceAudioPacket.STATE_POSITIONAL, audio, UUID.randomUUID(), 1.0, 2.0, 3.0),
+            new SourceAudioPacket(7L, SourceAudioPacket.STATE_POSITIONAL, audio, UUID.randomUUID(), 1.0, 2.0, 3.0, (short) 1),
             new SelfAudioInfoPacket(UUID.randomUUID(), 3L, audio, (short) 16),
             new SourceEndPacket(UUID.randomUUID()),
             new CustomPacket("test", custom));

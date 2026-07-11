@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -129,6 +130,60 @@ class RoutingContextTest {
     }
 
     @Test
+    void driverServesEachRecipientOnceAcrossRoutedGroups() {
+        VoiceServerSession speaker = addSession("speaker", true);
+        VoiceServerSession contested = addSession("contested", true);
+        VoiceServerSession lowOnly = addSession("lowOnly", true);
+
+        // High-priority group claims the contested recipient; the lower one's send to the same player must be
+        // dropped while its send to a fresh recipient still goes through.
+        IGroup high = routingGroup(context -> context.sendTo(contested, SourceState.FLAT, 0, 0, 0));
+        IGroup low = routingGroup(context -> {
+            context.sendTo(contested, SourceState.POSITIONAL, 0, 0, 0);
+            context.sendTo(lowOnly, SourceState.POSITIONAL, 0, 0, 0);
+        });
+
+        driver(speaker).route(Arrays.asList(high, low));
+
+        assertEquals(2, sent.size(), "the contested recipient must receive exactly one packet");
+        SourceAudioPacket won = assertInstanceOf(SourceAudioPacket.class, sent.get(0).packet);
+        assertEquals(SourceState.FLAT, won.getSourceState(), "the first (higher-priority) group's state wins");
+        assertEquals(contested.getLastAddress(), sent.get(0).recipient);
+        assertEquals(lowOnly.getLastAddress(), sent.get(1).recipient);
+    }
+
+    @Test
+    void sendToStampsTheRoutedGroupsWireId() {
+        VoiceServerSession speaker = addSession("speaker", true);
+        VoiceServerSession listener = addSession("listener", true);
+        RoutingContext context = context(speaker);
+
+        context.sendTo(listener, SourceState.POSITIONAL, 0, 0, 0);
+
+        SourceAudioPacket forwarded = assertInstanceOf(SourceAudioPacket.class, sent.get(0).packet);
+        assertEquals((short) 0, forwarded.getGroupId(), "the test contexts resolve every group to id 0");
+    }
+
+    @Test
+    void exclusiveCutsTheRestOfTheChain() {
+        VoiceServerSession speaker = addSession("speaker", true);
+        VoiceServerSession listener = addSession("listener", true);
+        List<String> routed = new ArrayList<>();
+
+        IGroup claiming = routingGroup(context -> {
+            routed.add("claiming");
+            context.sendTo(listener, SourceState.FLAT, 0, 0, 0);
+            context.exclusive();
+        });
+        IGroup skipped = routingGroup(context -> routed.add("skipped"));
+
+        driver(speaker).route(Arrays.asList(claiming, skipped));
+
+        assertEquals(Arrays.asList("claiming"), routed, "exclusive() must skip every remaining group");
+        assertEquals(1, sent.size());
+    }
+
+    @Test
     void buildWithMissingFieldThrowsNamingIt() {
         VoiceServerSession speaker = addSession("speaker", true);
 
@@ -138,7 +193,8 @@ class RoutingContextTest {
             .speakerSession(speaker)
             .audio(audio())
             .group(routedGroup)
-            .membershipResolver(playerUuid -> routedGroup);
+            .membershipTest((playerUuid, g) -> true)
+            .groupIdResolver(g -> 0);
         IllegalStateException noSender = assertThrows(IllegalStateException.class, missingSender::build);
         assertTrue(
             noSender.getMessage()
@@ -151,7 +207,8 @@ class RoutingContextTest {
             .sessions(sessions)
             .speakerSession(speaker)
             .group(routedGroup)
-            .membershipResolver(playerUuid -> routedGroup);
+            .membershipTest((playerUuid, g) -> true)
+            .groupIdResolver(g -> 0);
         IllegalStateException noAudio = assertThrows(IllegalStateException.class, missingAudio::build);
         assertTrue(
             noAudio.getMessage()
@@ -160,6 +217,14 @@ class RoutingContextTest {
     }
 
     private RoutingContext context(VoiceServerSession speaker) {
+        return builderFor(speaker).build();
+    }
+
+    private RoutingContext.Driver driver(VoiceServerSession speaker) {
+        return builderFor(speaker).buildDriver();
+    }
+
+    private RoutingContext.Builder builderFor(VoiceServerSession speaker) {
         return RoutingContext.builder()
             .packetSender((packet, secret, encryption, recipient) -> sent.add(new CapturedSend(packet, recipient)))
             .positionSnapshot(new HashMap<UUID, PlayerSnapshot>())
@@ -167,8 +232,29 @@ class RoutingContextTest {
             .speakerSession(speaker)
             .audio(audio())
             .group(routedGroup)
-            .membershipResolver(playerUuid -> routedGroup)
-            .build();
+            .membershipTest((playerUuid, g) -> true)
+            .groupIdResolver(g -> 0);
+    }
+
+    /** A group whose {@code route()} is the given behavior - the stub the driver tests chain together. */
+    private static IGroup routingGroup(java.util.function.Consumer<RoutingContext> behavior) {
+        return new IGroup() {
+
+            @Override
+            public String getName() {
+                return "stub";
+            }
+
+            @Override
+            public String getDisplayName() {
+                return "stub";
+            }
+
+            @Override
+            public void route(RoutingContext context) {
+                behavior.accept(context);
+            }
+        };
     }
 
     private List<InetSocketAddress> sentAddresses() {

@@ -2,10 +2,14 @@ package com.enn3developer.gtnhvoice.api.server.group;
 
 import java.net.InetSocketAddress;
 import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
-import java.util.function.Function;
+import java.util.function.BiPredicate;
 import java.util.function.Predicate;
+import java.util.function.ToIntFunction;
 
 import org.jetbrains.annotations.NotNull;
 
@@ -37,8 +41,16 @@ public final class RoutingContext {
     private final Map<UUID, IVoiceSession> sessionViewByPlayerUuid;
     private final VoiceServerSession speakerSession;
     private final IAudioFrame audio;
-    private final IGroup group;
-    private final Function<UUID, IGroup> membershipResolver;
+    private final BiPredicate<UUID, IGroup> membershipTest;
+    private final ToIntFunction<IGroup> groupIdResolver;
+
+    // Multi-group routing state: the group currently being routed (swapped by the server manager before each
+    // route() call in priority order) and the recipients already served this frame - sendTo claims recipients
+    // first-come, which with priority-ordered routing IS the dedup: one packet per recipient per frame, from
+    // their highest-priority group.
+    private IGroup group;
+    private final Set<UUID> servedRecipients = new HashSet<>();
+    private boolean exclusive;
 
     private RoutingContext(Builder builder) {
         this.transport = builder.require(builder.packetSender, "packetSender");
@@ -48,7 +60,8 @@ public final class RoutingContext {
         this.speakerSession = builder.require(builder.speakerSession, "speakerSession");
         this.audio = builder.require(builder.audio, "audio");
         this.group = builder.require(builder.group, "group");
-        this.membershipResolver = builder.require(builder.membershipResolver, "membershipResolver");
+        this.membershipTest = builder.require(builder.membershipTest, "membershipTest");
+        this.groupIdResolver = builder.require(builder.groupIdResolver, "groupIdResolver");
     }
 
     /** A fresh {@link Builder}; see its javadoc for who builds contexts and when. */
@@ -85,14 +98,58 @@ public final class RoutingContext {
     }
 
     /**
-     * A fresh {@link RecipientSelection} over the sessions whose player currently belongs to the group being
-     * routed (identity comparison via the membership resolver). Works for the local built-in too: unassigned
-     * players resolve to the same shared {@code LocalGroup} instance the manager routes. Single-use, only valid
-     * inside the {@link IGroup#route} call this context was built for.
+     * A fresh {@link RecipientSelection} over the sessions whose player is currently a member of the group
+     * being routed (via the membership test; every player counts as a member of the implicit local built-in).
+     * Single-use, only valid inside the {@link IGroup#route} call this context was built for.
      */
     public RecipientSelection getSessionsForGroup() {
-        return new RecipientSelection(this)
-            .filter(session -> membershipResolver.apply(session.getPlayerUuid()) == group);
+        return new RecipientSelection(this).filter(session -> membershipTest.test(session.getPlayerUuid(), group));
+    }
+
+    /**
+     * Claims the rest of this frame for the group currently routing: every lower-priority group of the speaker
+     * (the implicit local fallthrough included) is skipped once this {@link IGroup#route} call returns. For
+     * groups that must suppress all other routing while active - an isolation cell, a stage-only broadcast, a
+     * radio channel that mutes proximity. Frame-scoped and irreversible for the frame: the next inbound frame
+     * routes the full priority chain again unless the group calls this again.
+     */
+    public void exclusive() {
+        this.exclusive = true;
+    }
+
+    /**
+     * The frame-routing driver: walks a speaker's groups in the given (already priority-sorted) order over the
+     * one shared context, swapping the routed group between calls and honoring {@link RoutingContext#exclusive}
+     * claims. Deliberately NOT part of the group-facing surface - groups receive only the
+     * {@link RoutingContext}, so they can neither re-attribute their sends to another group nor read the
+     * exclusivity state; the driver exists solely for the server manager (and addon tests exercising a full
+     * chain), obtained via {@link Builder#buildDriver()}.
+     */
+    public static final class Driver {
+
+        private final RoutingContext context;
+
+        private Driver(RoutingContext context) {
+            this.context = context;
+        }
+
+        /** The driven context - what tests hand to a single group's {@code route()} directly. */
+        public RoutingContext context() {
+            return context;
+        }
+
+        /**
+         * Routes the frame through {@code groups} in list order (callers pass the pre-sorted membership
+         * snapshot). A group that called {@link RoutingContext#exclusive} cuts the chain: the remaining
+         * groups, local fallthrough included, never route this frame.
+         */
+        public void route(@NotNull List<IGroup> groups) {
+            for (IGroup group : groups) {
+                context.group = group;
+                group.route(context);
+                if (context.exclusive) break;
+            }
+        }
     }
 
     /**
@@ -156,6 +213,11 @@ public final class RoutingContext {
         InetSocketAddress address = session.getLastAddress();
         if (address == null) return;
 
+        // The multi-group dedup: first group to claim a recipient this frame wins - and since the manager
+        // routes groups in priority order, "first" IS "highest priority". Later groups' sends are dropped
+        // silently, so a recipient never hears the same frame twice.
+        if (!servedRecipients.add(recipient.getPlayerUuid())) return;
+
         SourceAudioPacket packet = new SourceAudioPacket(
             audio.getSequenceNumber(),
             sourceState,
@@ -163,7 +225,8 @@ public final class RoutingContext {
             speakerSession.getPlayerUuid(),
             x,
             y,
-            z);
+            z,
+            (short) groupIdResolver.applyAsInt(group));
         transport.send(packet, session.getSessionId(), session.getEncryption(), address);
     }
 
@@ -180,7 +243,8 @@ public final class RoutingContext {
         private VoiceServerSession speakerSession;
         private IAudioFrame audio;
         private IGroup group;
-        private Function<UUID, IGroup> membershipResolver;
+        private BiPredicate<UUID, IGroup> membershipTest;
+        private ToIntFunction<IGroup> groupIdResolver;
 
         private Builder() {}
 
@@ -214,24 +278,46 @@ public final class RoutingContext {
             return this;
         }
 
-        /** The group being routed - the one whose {@link IGroup#route} receives this context. */
+        /**
+         * The group initially considered "being routed" - what {@link RoutingContext#getSessionsForGroup} and
+         * sent packets attribute to until a {@link Driver} swaps in the next one. Single-group addon tests set
+         * the group under test here and call its {@code route()} directly.
+         */
         public Builder group(@NotNull IGroup group) {
             this.group = group;
             return this;
         }
 
         /**
-         * Resolves any player's current group (wired to {@link IGroupManager#groupOf} by the server manager);
-         * must be safe to call from the UDP/Netty thread.
+         * Tests whether a player is currently a member of a group (wired to the group manager's membership
+         * index by the server manager; the implicit local built-in counts everyone as a member); must be safe
+         * to call from the UDP/Netty thread.
          */
-        public Builder membershipResolver(@NotNull Function<UUID, IGroup> membershipResolver) {
-            this.membershipResolver = membershipResolver;
+        public Builder membershipTest(@NotNull BiPredicate<UUID, IGroup> membershipTest) {
+            this.membershipTest = membershipTest;
+            return this;
+        }
+
+        /**
+         * Resolves a group's wire id, stamped into every outgoing audio packet so clients can attribute what
+         * they hear ({@code GroupManager.groupIdOf} in production; return a constant in tests).
+         */
+        public Builder groupIdResolver(@NotNull ToIntFunction<IGroup> groupIdResolver) {
+            this.groupIdResolver = groupIdResolver;
             return this;
         }
 
         /** @throws IllegalStateException naming the first field left unset */
         public RoutingContext build() {
             return new RoutingContext(this);
+        }
+
+        /**
+         * Builds the context wrapped in its {@link Driver} - the multi-group entry point the server manager
+         * uses per frame. @throws IllegalStateException naming the first field left unset
+         */
+        public Driver buildDriver() {
+            return new Driver(build());
         }
 
         private <T> T require(T value, String fieldName) {

@@ -25,6 +25,12 @@ public final class GlobalGroup implements IGroup {
         return NAME;
     }
 
+    /** The unbeatable ceiling, mirroring local's floor: a global broadcast overrides every registered group. */
+    @Override
+    public int priority() {
+        return Integer.MAX_VALUE;
+    }
+
     @Override
     public @NotNull String getDisplayName() {
         return NAME;

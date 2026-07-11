@@ -32,21 +32,33 @@ class SourceAudioPacketTest {
                 sourceId,
                 1.0,
                 2.0,
-                3.0));
+                3.0,
+                (short) 3));
         assertTrue(positional.isPositional());
         assertEquals(sourceId, positional.getSourceId());
         assertEquals(7L, positional.getSequenceNumber());
+        assertEquals((short) 3, positional.getGroupId());
 
         SourceAudioPacket flat = roundTrip(
-            new SourceAudioPacket(8L, SourceAudioPacket.FLAG_FLAT, new byte[] { 4, 5, 6 }, sourceId, 1.0, 2.0, 3.0));
+            new SourceAudioPacket(
+                8L,
+                SourceAudioPacket.FLAG_FLAT,
+                new byte[] { 4, 5, 6 },
+                sourceId,
+                1.0,
+                2.0,
+                3.0,
+                (short) 0));
         assertFalse(flat.isPositional());
+        assertEquals((short) 0, flat.getGroupId());
     }
 
     @Test
     void legacyZeroSourceStateMeansPositional() {
         assertEquals(0, SourceAudioPacket.STATE_POSITIONAL);
         assertTrue(
-            new SourceAudioPacket(1L, (byte) 0, new byte[] { 1 }, UUID.randomUUID(), 0, 0, 0).isPositional(),
+            new SourceAudioPacket(1L, (byte) 0, new byte[] { 1 }, UUID.randomUUID(), 0, 0, 0, (short) 0)
+                .isPositional(),
             "sourceState=0 is what pre-flag peers send on every packet - it must keep meaning positional");
     }
 

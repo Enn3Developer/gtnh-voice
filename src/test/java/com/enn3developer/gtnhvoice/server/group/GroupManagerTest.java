@@ -18,9 +18,10 @@ import com.enn3developer.gtnhvoice.api.server.group.IGroup;
 import com.enn3developer.gtnhvoice.api.server.group.RoutingContext;
 
 /**
- * Covers {@link GroupManager#byName} resolution of the two built-ins and the assign-global -> assign-local round
- * trip restoring the default (assigning the local built-in must take the same map-entry-clearing path as
- * {@code null}, so byName's returned instance and assign's identity check have to agree), plus the third-party
+ * Covers {@link GroupManager}'s multi-membership model: {@link GroupManager#byName} resolution of the built-ins,
+ * {@link GroupManager#join}/{@link GroupManager#leave} snapshot maintenance (priority-desc order with the
+ * implicit local tail, local join/leave rejection, idempotence), {@link GroupManager#membersOf}, wire-id
+ * assignment and the {@link GroupManager#groupTableView} sync table, plus the third-party
  * {@link GroupManager#registerGroup} registry: name-collision rejection and the lifecycle hooks
  * ({@link GroupManager#clear}, {@link GroupManager#onPlayerRemoved}) reaching registered groups.
  */
@@ -30,11 +31,17 @@ class GroupManagerTest {
     private static final class RecordingGroup implements IGroup {
 
         private final String name;
+        private final int priority;
         private final List<UUID> removedPlayers = new ArrayList<>();
         private boolean cleared;
 
         private RecordingGroup(String name) {
+            this(name, 0);
+        }
+
+        private RecordingGroup(String name, int priority) {
             this.name = name;
+            this.priority = priority;
         }
 
         @Override
@@ -45,6 +52,11 @@ class GroupManagerTest {
         @Override
         public String getDisplayName() {
             return name;
+        }
+
+        @Override
+        public int priority() {
+            return priority;
         }
 
         @Override
@@ -61,32 +73,91 @@ class GroupManagerTest {
         }
     }
 
-    private final List<IGroup> assignments = new ArrayList<>();
-    private final GroupManager manager = new GroupManager((playerUuid, group) -> assignments.add(group));
+    private final List<List<IGroup>> membershipChanges = new ArrayList<>();
+    private int tableChanges;
+    private final GroupManager manager = new GroupManager(
+        (playerUuid, groups) -> membershipChanges.add(groups),
+        () -> tableChanges++);
 
     @Test
     void byNameResolvesOnlyTheBuiltIns() {
         assertInstanceOf(LocalGroup.class, manager.byName("local"));
         assertInstanceOf(GlobalGroup.class, manager.byName("global"));
-        assertSame(manager.byName("local"), manager.groupOf(UUID.randomUUID()));
+        assertEquals(Arrays.asList(manager.byName("local")), manager.groupsOf(UUID.randomUUID()));
         assertNull(manager.byName("proximity"));
         assertNull(manager.byName(""));
     }
 
     @Test
-    void assignGlobalThenLocalRestoresTheDefault() {
+    void joinAndLeaveMaintainThePrioritySortedSnapshotWithLocalLast() {
+        UUID playerUuid = UUID.randomUUID();
+        IGroup local = manager.byName("local");
+        IGroup global = manager.byName("global"); // Integer.MAX_VALUE - overrides every registered group
+        RecordingGroup party = new RecordingGroup("party", 0);
+        RecordingGroup command = new RecordingGroup("command", 20);
+        manager.registerGroup(party);
+        manager.registerGroup(command);
+
+        manager.join(playerUuid, party);
+        manager.join(playerUuid, global);
+        manager.join(playerUuid, command);
+
+        assertEquals(Arrays.asList(global, command, party, local), manager.groupsOf(playerUuid));
+
+        manager.leave(playerUuid, global);
+        assertEquals(Arrays.asList(command, party, local), manager.groupsOf(playerUuid));
+
+        manager.leave(playerUuid, command);
+        manager.leave(playerUuid, party);
+        assertEquals(Arrays.asList(local), manager.groupsOf(playerUuid));
+        assertEquals(manager.groupsOf(UUID.randomUUID()), manager.groupsOf(playerUuid));
+    }
+
+    @Test
+    void joinIsIdempotentAndTracksMembers() {
         UUID playerUuid = UUID.randomUUID();
         IGroup global = manager.byName("global");
+
+        manager.join(playerUuid, global);
+        manager.join(playerUuid, global);
+
+        assertEquals(2, manager.groupsOf(playerUuid).size()); // global + implicit local
+        assertEquals(1, membershipChanges.size(), "the idempotent second join must not re-fire the listener");
+        assertTrue(
+            manager.membersOf(global)
+                .contains(playerUuid));
+
+        manager.leave(playerUuid, global);
+        assertTrue(
+            manager.membersOf(global)
+                .isEmpty());
+    }
+
+    @Test
+    void localIsNotJoinableOrLeavable() {
+        UUID playerUuid = UUID.randomUUID();
         IGroup local = manager.byName("local");
 
-        manager.assign(playerUuid, global);
-        assertSame(global, manager.groupOf(playerUuid));
+        assertThrows(IllegalArgumentException.class, () -> manager.join(playerUuid, local));
+        assertThrows(IllegalArgumentException.class, () -> manager.leave(playerUuid, local));
+    }
 
-        manager.assign(playerUuid, local);
-        assertSame(local, manager.groupOf(playerUuid));
-        assertSame(manager.groupOf(UUID.randomUUID()), manager.groupOf(playerUuid));
+    @Test
+    void wireIdsAreStableAndTheTableCarriesDisplayNames() {
+        RecordingGroup party = new RecordingGroup("party");
+        manager.registerGroup(party);
 
-        assertEquals(Arrays.asList(global, local), assignments);
+        assertEquals(GroupManager.LOCAL_GROUP_ID, manager.groupIdOf(manager.byName("local")));
+        assertEquals(GroupManager.GLOBAL_GROUP_ID, manager.groupIdOf(manager.byName("global")));
+        assertEquals((short) 2, manager.groupIdOf(party));
+        assertEquals(1, tableChanges, "registerGroup must announce the table change");
+
+        assertEquals("party", manager.groupTableView().get((short) 2));
+        assertEquals(
+            manager.byName("local")
+                .getDisplayName(),
+            manager.groupTableView()
+                .get(GroupManager.LOCAL_GROUP_ID));
     }
 
     @Test
@@ -119,25 +190,28 @@ class GroupManagerTest {
     }
 
     @Test
-    void playerAssignedToARegisteredGroupGetsItsOnPlayerRemoved() {
+    void playerJoinedToARegisteredGroupGetsItsOnPlayerRemoved() {
         RecordingGroup party = new RecordingGroup("party");
         manager.registerGroup(party);
         UUID playerUuid = UUID.randomUUID();
-        manager.assign(playerUuid, party);
+        manager.join(playerUuid, party);
 
         manager.onPlayerRemoved(playerUuid);
 
         assertEquals(Arrays.asList(playerUuid), party.removedPlayers);
-        assertSame(manager.byName("local"), manager.groupOf(playerUuid));
+        assertEquals(Arrays.asList(manager.byName("local")), manager.groupsOf(playerUuid));
+        assertTrue(
+            manager.membersOf(party)
+                .isEmpty());
     }
 
     @Test
-    void registeredGroupGetsOnPlayerRemovedEvenAfterReassignment() {
+    void registeredGroupGetsOnPlayerRemovedEvenAfterLeaving() {
         RecordingGroup party = new RecordingGroup("party");
         manager.registerGroup(party);
         UUID playerUuid = UUID.randomUUID();
-        manager.assign(playerUuid, party);
-        manager.assign(playerUuid, null);
+        manager.join(playerUuid, party);
+        manager.leave(playerUuid, party);
 
         manager.onPlayerRemoved(playerUuid);
 

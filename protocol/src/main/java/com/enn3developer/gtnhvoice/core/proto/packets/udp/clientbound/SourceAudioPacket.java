@@ -34,17 +34,19 @@ public final class SourceAudioPacket extends BaseAudioPacket<ClientPacketUdpHand
     private double x;
     private double y;
     private double z;
+    private short groupId;
 
     public SourceAudioPacket() {}
 
     public SourceAudioPacket(long sequenceNumber, byte sourceState, byte[] data, @NotNull UUID sourceId, double x,
-        double y, double z) {
+        double y, double z, short groupId) {
         super(sequenceNumber, data);
         this.sourceId = sourceId;
         this.sourceState = sourceState;
         this.x = x;
         this.y = y;
         this.z = z;
+        this.groupId = groupId;
     }
 
     public UUID getSourceId() {
@@ -76,6 +78,15 @@ public final class SourceAudioPacket extends BaseAudioPacket<ClientPacketUdpHand
         return z;
     }
 
+    /**
+     * Wire id of the group that routed this frame to this recipient (the winning group under the priority
+     * dedup) - resolved to a display name client-side via the synced group table. 0 is always the built-in
+     * local/proximity group, 1 the global one.
+     */
+    public short getGroupId() {
+        return groupId;
+    }
+
     @Override
     public void read(ByteArrayDataInput in) throws IOException {
         super.read(in);
@@ -85,6 +96,7 @@ public final class SourceAudioPacket extends BaseAudioPacket<ClientPacketUdpHand
         this.x = in.readDouble();
         this.y = in.readDouble();
         this.z = in.readDouble();
+        this.groupId = in.readShort();
     }
 
     @Override
@@ -96,6 +108,7 @@ public final class SourceAudioPacket extends BaseAudioPacket<ClientPacketUdpHand
         out.writeDouble(x);
         out.writeDouble(y);
         out.writeDouble(z);
+        out.writeShort(groupId);
     }
 
     @Override

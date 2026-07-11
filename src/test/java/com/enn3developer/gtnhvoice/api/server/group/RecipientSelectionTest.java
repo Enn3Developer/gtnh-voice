@@ -227,7 +227,8 @@ class RecipientSelectionTest {
             .speakerSession(speaker)
             .audio(audio)
             .group(localGroup)
-            .membershipResolver(playerUuid -> memberships.getOrDefault(playerUuid, localGroup))
+            .membershipTest((playerUuid, g) -> memberships.getOrDefault(playerUuid, localGroup) == g)
+            .groupIdResolver(g -> 0)
             .build();
         context.getSessionsForGroup()
             .excludeSelf()
@@ -311,7 +312,8 @@ class RecipientSelectionTest {
             .speakerSession(speaker)
             .audio(audio(7L, new byte[] { 1, 2, 3 }))
             .group(routedGroup)
-            .membershipResolver(playerUuid -> memberships.getOrDefault(playerUuid, routedGroup))
+            .membershipTest((playerUuid, g) -> memberships.getOrDefault(playerUuid, routedGroup) == g)
+            .groupIdResolver(g -> 0)
             .build();
     }
 

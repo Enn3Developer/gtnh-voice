@@ -81,6 +81,12 @@ public class VoiceHudRenderer {
     // Rows return to full opacity at rest, so stationary text stays crisp.
     private static final float ROW_MOTION_ALPHA = 0.85F;
     private static final float MOTION_DIM_TAU_MS = 60.0F;
+
+    // Group-tag change animation: the old group name's letters crumble (fall with gravity, staggered per
+    // char, fading), the new name fades in, and the closing bracket slides to the new width.
+    private static final int GROUP_CHANGE_MS = 600;
+    private static final float GROUP_CRUMBLE_STAGGER = 0.3F; // max per-char start delay, as progress fraction
+    private static final float GROUP_FALL_PX = LINE_HEIGHT * 1.5F;
     // How long a speaker's row lingers (holding its slot, meter draining to silence) after their speech
     // segment ends, before the removal fade starts. Purely presentational - the audio-side inactivity
     // timeout is untouched.
@@ -216,6 +222,10 @@ public class VoiceHudRenderer {
         // Muted morph: 0 = live meter bars, 1 = the solid square every other row shows. The bars sit flush,
         // so all three at full height IS the square - the morph just animates the heights. selfWiden is the
         // unmute struggle's extra square width (0..1 of SELF_WIDEN_PX), only ever non-zero mid-unmute.
+        // The self row's own animated [group] tag - same machinery as the speaking rows', fed from the
+        // reliable-channel self group sync instead of per-packet attribution.
+        private final GroupTagState selfTagState = new GroupTagState();
+
         private float selfSquareness;
         // Height channel of the morph: tracks selfSquareness while muting, but on unmute it holds full height
         // through the pry/snap and only drops during the settle (see unmuteHeightSquareness).
@@ -280,9 +290,10 @@ public class VoiceHudRenderer {
                         row.smoothedLevel,
                         0.0F,
                         0.0F,
-                        0.0F);
+                        0.0F,
+                        row.tagState);
                 } else {
-                    drawRow(mc, row.uuid, row.label, rowX, Math.round(row.y), row.dotColor, rowAlpha);
+                    drawRow(mc, row.uuid, row.label, rowX, Math.round(row.y), row.dotColor, rowAlpha, row.tagState);
                 }
             }
 
@@ -298,11 +309,12 @@ public class VoiceHudRenderer {
 
             smoothedMicLevel = smoothLevel(smoothedMicLevel, clientManager.getMicLevel(), dt);
 
+            selfTagState.retarget(clientManager.getGroupDisplayName());
             drawMeterRow(
                 mc,
                 self.getGameProfile()
                     .getId(),
-                self.getCommandSenderName() + " [" + clientManager.getGroupDisplayName() + "]",
+                self.getCommandSenderName(),
                 MARGIN,
                 selfY,
                 lerpColor(selfColorFrom, selfColorTo, selfColorT),
@@ -311,7 +323,8 @@ public class VoiceHudRenderer {
                 smoothedMicLevel,
                 selfSquareness,
                 selfHeightSquareness,
-                selfWiden);
+                selfWiden,
+                selfTagState);
         }
 
         /** Framerate-independent attack/release easing toward {@code target} - see the tau constants. */
@@ -428,6 +441,7 @@ public class VoiceHudRenderer {
                 }
                 row.label = target.label;
                 row.dotColor = target.dotColor;
+                row.tagState.retarget(target.groupTag);
                 if (Math.round(row.targetY) != target.y) {
                     row.slideTo(target.y);
                 }
@@ -462,7 +476,7 @@ public class VoiceHudRenderer {
             for (Map.Entry<UUID, String> entry : roster.entrySet()) {
                 if (!settings.isMuted(entry.getKey())) continue;
                 mutedIds.add(entry.getKey());
-                muted.add(new TargetRow(entry.getKey(), entry.getValue(), MUTED_DOT_COLOR, 0));
+                muted.add(new TargetRow(entry.getKey(), entry.getValue(), "", MUTED_DOT_COLOR, 0));
             }
             sortByLabel(muted);
 
@@ -493,7 +507,11 @@ public class VoiceHudRenderer {
 
                 String label = clientManager.resolveName(sourceId)
                     .orElseGet(() -> shortId(sourceId));
-                speaking.add(new TargetRow(sourceId, label, SPEAKING_DOT_COLOR, 0));
+                // Attribute the audio: which group's routing is delivering this speaker to us. Empty until
+                // the group table syncs (UDP can outrun the reliable channel) - then no tag, no clutter.
+                // Carried separately from the label so a change can animate (crumble/fade/slide).
+                String groupName = clientManager.groupDisplayNameFor(sourceId);
+                speaking.add(new TargetRow(sourceId, label, groupName, SPEAKING_DOT_COLOR, 0));
             }
             sortByLabel(speaking);
 
@@ -559,6 +577,7 @@ public class VoiceHudRenderer {
             this.selfHeightSquareness = 0.0F;
             this.selfSquarenessTarget = 0.0F;
             this.selfWiden = 0.0F;
+            this.selfTagState.reset();
         }
 
         @Override
@@ -567,7 +586,8 @@ public class VoiceHudRenderer {
             clearRows();
         }
 
-        private static void drawRow(Minecraft mc, UUID uuid, String label, int x, int y, int dotColor, float alpha) {
+        private static void drawRow(Minecraft mc, UUID uuid, String label, int x, int y, int dotColor, float alpha,
+            GroupTagState tagState) {
             int alphaByte = Math.round(alpha * 255.0F);
             // Below ~4 the font renderer treats the color as opaque (it masks 0xFC000000), so skip early.
             if (alphaByte < 8) return;
@@ -580,7 +600,7 @@ public class VoiceHudRenderer {
                 DOT_SIZE,
                 DOT_SIZE,
                 (alphaByte << 24) | (dotColor & 0xFFFFFF));
-            drawHeadAndLabel(mc, uuid, label, x, y, alpha, alphaByte);
+            drawHeadAndLabel(mc, uuid, label, x, y, alpha, alphaByte, tagState);
         }
 
         /**
@@ -593,7 +613,7 @@ public class VoiceHudRenderer {
          * three morph channels are self-row-only - other rows pass zeroes.
          */
         private static void drawMeterRow(Minecraft mc, UUID uuid, String label, int x, int y, int color, float alpha,
-            float pulse, float level, float squareness, float heightSquareness, float widen) {
+            float pulse, float level, float squareness, float heightSquareness, float widen, GroupTagState tagState) {
             int alphaByte = Math.round(alpha * 255.0F);
             if (alphaByte < 8) return;
 
@@ -621,11 +641,11 @@ public class VoiceHudRenderer {
             GuiDraw.drawRect(startX, baseline - side, barW, side, argb);
             GuiDraw.drawRect(startX + stride, baseline - mid, barW, mid, argb);
             GuiDraw.drawRect(startX + stride * 2, baseline - side, barW, side, argb);
-            drawHeadAndLabel(mc, uuid, label, x, y, alpha, alphaByte);
+            drawHeadAndLabel(mc, uuid, label, x, y, alpha, alphaByte, tagState);
         }
 
         private static void drawHeadAndLabel(Minecraft mc, UUID uuid, String label, int x, int y, float alpha,
-            int alphaByte) {
+            int alphaByte, GroupTagState tagState) {
             // GuiDraw.drawRect's setupDrawColor() disables GL_TEXTURE_2D and never restores it - without this,
             // the head icon and font glyphs below render as untextured white rectangles. Go through Platform so
             // MUI2's GlStateManager cache stays coherent.
@@ -634,8 +654,13 @@ public class VoiceHudRenderer {
             int headX = x + INDICATOR_WIDTH + DOT_TEXT_GAP;
             VoiceSkinIcons.draw(mc, uuid, label, headX, y, HEAD_SIZE, alpha);
 
-            mc.fontRenderer
-                .drawStringWithShadow(label, headX + HEAD_SIZE + HEAD_TEXT_GAP, y, (alphaByte << 24) | TEXT_RGB);
+            int textX = headX + HEAD_SIZE + HEAD_TEXT_GAP;
+            mc.fontRenderer.drawStringWithShadow(label, textX, y, (alphaByte << 24) | TEXT_RGB);
+
+            if (tagState != null) {
+                int tagX = textX + mc.fontRenderer.getStringWidth(label + " ");
+                tagState.draw(mc, tagX, y, alpha);
+            }
         }
 
         /** Per-channel RGB lerp between two colors (alpha handled separately by the callers). */
@@ -648,12 +673,110 @@ public class VoiceHudRenderer {
     }
 
     /**
-     * A row's desired state this frame: identity, label, dot color, and target slot y.
+     * A row's desired state this frame: identity, label, group tag (empty = none), dot color, and target slot y.
      */
-    private record TargetRow(UUID uuid, String label, int dotColor, int y) {
+    private record TargetRow(UUID uuid, String label, String groupTag, int dotColor, int y) {
 
         TargetRow atY(int y) {
-            return new TargetRow(uuid, label, dotColor, y);
+            return new TargetRow(uuid, label, groupTag, dotColor, y);
+        }
+    }
+
+    /**
+     * The animated {@code [group]} tag of one row. {@link #retarget} swaps the shown name and starts the
+     * crumble/fade/slide transition; {@link #draw} renders it after the row label. Same draw-pass and
+     * {@link HudAnimations} discipline as every other row animation.
+     */
+    private static final class GroupTagState {
+
+        private String current = "";
+        private String crumbling; // the old tag mid-fall, null when idle
+        private float t = 1.0F;
+        private Animator anim;
+
+        void retarget(String newTag) {
+            if (newTag.equals(current)) return;
+
+            crumbling = current;
+            current = newTag;
+            t = 0.0F;
+            if (anim != null) HudAnimations.unregister(anim);
+            anim = HudAnimations.register(
+                new Animator().duration(GROUP_CHANGE_MS)
+                    .curve(Interpolation.LINEAR)
+                    .bounds(0.0F, 1.0F)
+                    .onUpdate(v -> { this.t = (float) v; })
+                    .onFinish(() -> this.crumbling = null));
+            anim.animate();
+        }
+
+        void dispose() {
+            if (anim != null) HudAnimations.unregister(anim);
+            anim = null;
+        }
+
+        /** Back to the blank idle state - a re-appearing owner re-derives its tag on the first frame. */
+        void reset() {
+            dispose();
+            current = "";
+            crumbling = null;
+            t = 1.0F;
+        }
+
+        /** Renders the tag at {@code x} (left edge of the opening bracket). */
+        void draw(Minecraft mc, int x, int y, float alpha) {
+            boolean transitioning = crumbling != null && t < 1.0F;
+            if (current.isEmpty() && !transitioning) return;
+
+            int oldWidth = transitioning ? mc.fontRenderer.getStringWidth(crumbling) : 0;
+            int newWidth = mc.fontRenderer.getStringWidth(current);
+            float smooth = t * t * (3 - 2 * t);
+            float width = transitioning ? oldWidth + (newWidth - oldWidth) * smooth : newWidth;
+
+            // Brackets: full alpha while a tag lives here; fading out with the transition when the new tag is
+            // empty (the whole construct is disappearing).
+            float bracketAlpha = current.isEmpty() ? alpha * (1.0F - t) : alpha;
+            int bracketArgb = argb(bracketAlpha);
+            if ((bracketArgb >>> 24) >= 8) {
+                mc.fontRenderer.drawStringWithShadow("[", x, y, bracketArgb);
+                int bracketW = mc.fontRenderer.getStringWidth("[");
+                mc.fontRenderer.drawStringWithShadow("]", x + bracketW + Math.round(width), y, bracketArgb);
+            }
+
+            int contentX = x + mc.fontRenderer.getStringWidth("[");
+            if (transitioning) drawCrumbling(mc, contentX, y, alpha);
+
+            // The incoming name fades in over the transition's back half (instant when not transitioning).
+            float inAlpha = transitioning ? alpha * clamp01((t - 0.35F) / 0.5F) : alpha;
+            int inArgb = argb(inAlpha);
+            if (!current.isEmpty() && (inArgb >>> 24) >= 8) {
+                mc.fontRenderer.drawStringWithShadow(current, contentX, y, inArgb);
+            }
+        }
+
+        /** The old tag's glyphs, each falling with gravity on its own staggered clock, fading as it goes. */
+        private void drawCrumbling(Minecraft mc, int x, int y, float alpha) {
+            int charX = x;
+            for (int i = 0; i < crumbling.length(); i++) {
+                String glyph = String.valueOf(crumbling.charAt(i));
+                int glyphWidth = mc.fontRenderer.getStringWidth(glyph);
+                // Pseudo-random per-char start delay so the collapse crumbles instead of dropping as a slab.
+                float delay = ((i * 7919) % 100) / 100.0F * GROUP_CRUMBLE_STAGGER;
+                float tt = clamp01((t - delay) / (1.0F - GROUP_CRUMBLE_STAGGER));
+                int argb = argb(alpha * (1.0F - tt));
+                if ((argb >>> 24) >= 8) {
+                    mc.fontRenderer.drawStringWithShadow(glyph, charX, Math.round(y + GROUP_FALL_PX * tt * tt), argb);
+                }
+                charX += glyphWidth;
+            }
+        }
+
+        private static int argb(float alpha) {
+            return (Math.round(clamp01(alpha) * 255.0F) << 24) | TEXT_RGB;
+        }
+
+        private static float clamp01(float value) {
+            return Math.max(0.0F, Math.min(1.0F, value));
         }
     }
 
@@ -683,6 +806,8 @@ public class VoiceHudRenderer {
         // Motion-blur fake: eases toward ROW_MOTION_ALPHA while the row is positionally animating, back to
         // 1 at rest. Multiplied into the drawn alpha.
         float motionDim = 1.0F;
+        // The animated [group] tag rendered after the label (speaking rows only; empty for muted rows).
+        final GroupTagState tagState = new GroupTagState();
         boolean dying;
         boolean dead;
         private Animator slide;
@@ -771,6 +896,7 @@ public class VoiceHudRenderer {
             this.slide = null;
             this.slideX = null;
             this.fade = null;
+            this.tagState.dispose();
         }
     }
 }

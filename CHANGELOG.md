@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-11
+
 ### Security
 
 - Encrypt voice with an ephemeral X25519 handshake (HKDF-SHA256 key, AES-GCM), replacing the leaked key sent in cleartext
@@ -35,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Voice volume now follows Minecraft's master sound slider (effective volume = master × voice)
 - Per-player volume/mute moved from its own screen into the settings screen's Output tab
 - Denoise toggle now applies live mid-session (previously next voice connection)
+- **Breaking**: server group API moves to multi-membership — `join`/`leave`/`groupsOf` replace `assign`/`groupOf`, groups gain `priority()`; `/voicegroup` becomes `/voicegroup <join|leave> global`
+- Voice UDP protocol bumped to v5 (audio packets carry the routing group id)
 
 ### Removed
 
@@ -42,6 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Multi-group voice membership: players can be in several groups at once; group priorities decide which one delivers audio to each listener (one packet per listener); the built-in global group overrides all others; a group can claim a frame exclusively (`RoutingContext.exclusive()`), skipping all lower-priority groups
+- HUD speaker rows (and the self row) show which group the audio flows through; group changes animate (old name crumbles away, new one fades in)
 - Tabbed voice settings screen (Output / Input / Addons) with a voice session status line
 - Master voice volume (0-100%) and mic gain (0-200%) sliders
 - Mic monitor on the Input tab: hear your own processed mic while other voices are muted

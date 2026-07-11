@@ -37,6 +37,9 @@ public final class VoiceSourceManager {
     private static final int MAX_SOURCES = 64;
 
     private final Map<UUID, VoiceSource> sources = new ConcurrentHashMap<>();
+    // Which group's routing last won each source for this client (wire ids off SourceAudioPacket) - the HUD's
+    // per-speaker group attribution. UDP receive thread writes, render thread reads.
+    private final Map<UUID, Short> lastGroupIdBySource = new ConcurrentHashMap<>();
     private final PlaybackManager playbackManager;
     private final DecoderFactory decoderFactory;
     private final Function<UUID, Optional<String>> rosterLookup;
@@ -88,6 +91,7 @@ public final class VoiceSourceManager {
             source.destroy();
         }
         sources.clear();
+        lastGroupIdBySource.clear();
 
         playbackManager.stop();
         GtnhVoice.LOG.info("[VoiceSource] Manager stopped");
@@ -106,6 +110,7 @@ public final class VoiceSourceManager {
         VoiceSource source = sources.computeIfAbsent(sourceId, uuid -> running ? createSource(uuid, distance) : null);
         if (source == null) return;
 
+        lastGroupIdBySource.put(sourceId, packet.getGroupId());
         source.handleAudio(
             packet.getSequenceNumber(),
             packet.getData(),
@@ -115,7 +120,18 @@ public final class VoiceSourceManager {
             packet.isPositional());
     }
 
+    /**
+     * The wire group id of the last audio frame received from {@code sourceId} - which group's routing won this
+     * recipient (see {@code SourceAudioPacket#getGroupId}) - or the local built-in's 0 before any frame landed.
+     * Read at render rate by the HUD; written per frame on the UDP receive thread.
+     */
+    public short lastGroupIdFor(@NotNull UUID sourceId) {
+        Short groupId = lastGroupIdBySource.get(sourceId);
+        return groupId == null ? 0 : groupId;
+    }
+
     public void removeSource(UUID sourceId) {
+        lastGroupIdBySource.remove(sourceId);
         VoiceSource source = sources.remove(sourceId);
         if (source != null) source.destroy();
     }

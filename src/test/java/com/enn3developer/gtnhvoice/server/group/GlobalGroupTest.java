@@ -122,7 +122,8 @@ class GlobalGroupTest {
             .speakerSession(speaker)
             .audio(audio)
             .group(group)
-            .membershipResolver(playerUuid -> group)
+            .membershipTest((playerUuid, g) -> true)
+            .groupIdResolver(g -> 0)
             .build();
     }
 

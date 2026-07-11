@@ -97,7 +97,8 @@ class VoiceSourceLifecycleTest {
             UUID.randomUUID(),
             1.0,
             2.0,
-            3.0);
+            3.0,
+            (short) 0);
         mgr.onSourceAudio(packet, 16);
 
         assertEquals(0, created.get());
@@ -121,7 +122,8 @@ class VoiceSourceLifecycleTest {
             UUID.randomUUID(),
             1.0,
             2.0,
-            3.0);
+            3.0,
+            (short) 0);
         mgr.onSourceAudio(packet, 16);
 
         assertEquals(0, created.get());
@@ -152,7 +154,8 @@ class VoiceSourceLifecycleTest {
             id,
             1.0,
             2.0,
-            3.0);
+            3.0,
+            (short) 0);
         mgr.onSourceAudio(packet, 16);
         assertEquals(1, created.get());
 
@@ -183,7 +186,8 @@ class VoiceSourceLifecycleTest {
                 id,
                 1.0,
                 2.0,
-                3.0);
+                3.0,
+                (short) 0);
             mgr.onSourceAudio(packet, 16);
         }
 

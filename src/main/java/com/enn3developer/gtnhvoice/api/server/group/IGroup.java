@@ -20,6 +20,18 @@ public interface IGroup {
     String getName();
 
     /**
+     * Routing priority, higher wins: when a player is in several of a speaker's groups (or is otherwise
+     * selected as a recipient by more than one), only the highest-priority group's packet reaches them - see
+     * {@link IGroupManager} for the full dedup contract. Ties order deterministically by {@link #getName}.
+     * Must be constant for the group's lifetime - it is captured when memberships are sorted. The built-ins
+     * bracket the range: local sits at {@link Integer#MIN_VALUE} (unbeatable downward), global at
+     * {@link Integer#MAX_VALUE} (overrides every registered group); the default middle tier is 0.
+     */
+    default int priority() {
+        return 0;
+    }
+
+    /**
      * Display name shown inside the [] of the HUD self row, synced to the member via
      * {@link com.enn3developer.gtnhvoice.network.VoiceGroupUpdatePacket}. Distinct from {@link #getName()},
      * which stays the internal identity. Never {@code null} - it is captured on assignment and written to the

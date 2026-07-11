@@ -42,11 +42,13 @@ import com.enn3developer.gtnhvoice.network.ClientHelloPacket;
 import com.enn3developer.gtnhvoice.network.NetworkHandler;
 import com.enn3developer.gtnhvoice.network.ServerHelloPacket;
 import com.enn3developer.gtnhvoice.network.ServerRejectPacket;
+import com.enn3developer.gtnhvoice.network.VoiceGroupTablePacket;
 import com.enn3developer.gtnhvoice.network.VoiceGroupUpdatePacket;
 import com.enn3developer.gtnhvoice.network.VoiceProtocol;
 import com.enn3developer.gtnhvoice.network.VoiceRosterSnapshotPacket;
 import com.enn3developer.gtnhvoice.network.VoiceRosterUpdatePacket;
 import com.enn3developer.gtnhvoice.server.group.GroupManager;
+import com.enn3developer.gtnhvoice.server.group.LocalGroup;
 
 import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
@@ -110,7 +112,7 @@ public final class VoiceServerManager implements UdpPacketListener {
     private final Map<UUID, VoiceServerSession> sessionsByPlayerUuidView = Collections
         .unmodifiableMap(sessionsByPlayerUuid);
     private final ConcurrentLinkedQueue<Runnable> pendingSends = new ConcurrentLinkedQueue<>();
-    private final GroupManager groupManager = new GroupManager(this::onGroupAssigned);
+    private final GroupManager groupManager = new GroupManager(this::onMembershipChanged, this::onGroupTableChanged);
 
     /**
      * Position/dimension snapshot of every online player, rebuilt wholesale each server tick (see
@@ -349,8 +351,10 @@ public final class VoiceServerManager implements UdpPacketListener {
             pendingSends.add(
                 () -> sendGroupUpdate(
                     playerUuid,
-                    groupManager.groupOf(playerUuid)
+                    groupManager.groupsOf(playerUuid)
+                        .get(0)
                         .getDisplayName()));
+            pendingSends.add(() -> sendGroupTable(playerUuid));
         }
 
         ServerHelloPacket hello = new ServerHelloPacket(
@@ -505,28 +509,37 @@ public final class VoiceServerManager implements UdpPacketListener {
     }
 
     /**
-     * Routes one inbound frame of speaker audio via the speaker's group (the default
-     * {@link com.enn3developer.gtnhvoice.server.group.LocalGroup} unless {@link GroupManager}
-     * assigned them elsewhere). Runs on the UDP/Netty thread - the {@link RoutingContext} carries
-     * the whole routing event (speaker, audio, routed group, membership resolver) but hands the
-     * group only {@link #positionSnapshot} and a read-only session view of live state, so groups
-     * can never touch live world/entity state.
+     * Routes one inbound frame of speaker audio via every group the speaker is in, in priority order (the
+     * implicit {@link com.enn3developer.gtnhvoice.server.group.LocalGroup} always last). All groups share ONE
+     * {@link RoutingContext}, whose served-recipient set makes the priority dedup work: the first (highest
+     * priority) group to send to a recipient claims them, and later groups' sends to the same player are
+     * dropped - one packet per recipient per frame, stamped with the winning group's wire id. Runs on the
+     * UDP/Netty thread - the context hands groups only {@link #positionSnapshot} and a read-only session view
+     * of live state, so groups can never touch live world/entity state.
      */
     private void routeAudio(@NotNull VoiceServerSession speakerSession, @NotNull PlayerAudioPacket audio) {
         UdpTransportServer server = udpServer;
         if (server == null) return;
 
-        IGroup group = groupManager.groupOf(speakerSession.getPlayerUuid());
-        RoutingContext context = RoutingContext.builder()
+        List<IGroup> groups = groupManager.groupsOf(speakerSession.getPlayerUuid());
+        RoutingContext.builder()
             .packetSender(server::send)
             .positionSnapshot(positionSnapshot)
             .sessions(sessionsByPlayerUuidView)
             .speakerSession(speakerSession)
             .audio(audio)
-            .group(group)
-            .membershipResolver(groupManager::groupOf)
-            .build();
-        group.route(context);
+            .group(groups.get(0))
+            .membershipTest(this::isMemberOf)
+            .groupIdResolver(groupManager::groupIdOf)
+            .buildDriver()
+            .route(groups);
+    }
+
+    /** The context's membership test: everyone is in the implicit local group; otherwise ask the indices. */
+    private boolean isMemberOf(@NotNull UUID playerUuid, @NotNull IGroup group) {
+        if (LocalGroup.NAME.equals(group.getName())) return true;
+        return groupManager.membersOf(group)
+            .contains(playerUuid);
     }
 
     @SubscribeEvent
@@ -677,9 +690,44 @@ public final class VoiceServerManager implements UdpPacketListener {
      * the display name is captured here, so the packet reflects the group as assigned even if a
      * later reassignment lands in the same tick's queue behind it).
      */
-    private void onGroupAssigned(@NotNull UUID playerUuid, @NotNull IGroup group) {
-        String displayName = group.getDisplayName();
+    private void onMembershipChanged(@NotNull UUID playerUuid, @NotNull List<IGroup> groups) {
+        // The HUD self-row tag shows the player's top-priority group (the snapshot is pre-sorted, local last).
+        String displayName = groups.get(0)
+            .getDisplayName();
         pendingSends.add(() -> sendGroupUpdate(playerUuid, displayName));
+    }
+
+    /** A group registered (possibly after players connected): resync the id table to every voice session. */
+    private void onGroupTableChanged() {
+        pendingSends.add(() -> {
+            for (UUID playerUuid : sessionsByPlayerUuid.keySet()) {
+                sendGroupTable(playerUuid);
+            }
+        });
+    }
+
+    /**
+     * Sends {@code playerUuid} the full group wire-id table (see {@link VoiceGroupTablePacket}) so their client
+     * can attribute incoming audio frames. Same pendingSends/server-thread discipline as
+     * {@link #sendGroupUpdate}; skips silently if the player logged out or lost their session by flush time.
+     */
+    private void sendGroupTable(@NotNull UUID playerUuid) {
+        if (!sessionsByPlayerUuid.containsKey(playerUuid)) return;
+
+        MinecraftServer server = FMLCommonHandler.instance()
+            .getMinecraftServerInstance();
+        if (server == null) return;
+
+        for (EntityPlayerMP player : server.getConfigurationManager().playerEntityList) {
+            if (!player.getGameProfile()
+                .getId()
+                .equals(playerUuid)) continue;
+
+            NetworkHandler.WRAPPER.sendTo(
+                new VoiceGroupTablePacket(VoiceProtocol.PROTOCOL_VERSION, groupManager.groupTableView()),
+                player);
+            return;
+        }
     }
 
     /**

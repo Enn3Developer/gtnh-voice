@@ -115,7 +115,8 @@ class RoutingContextFiltersTest {
             .speakerSession(speaker)
             .audio(new PlayerAudioPacket(7L, new byte[] { 1, 2, 3 }, UUID.randomUUID(), (short) 48, false))
             .group(routedGroup)
-            .membershipResolver(playerUuid -> routedGroup)
+            .membershipTest((playerUuid, g) -> true)
+            .groupIdResolver(g -> 0)
             .build();
     }
 

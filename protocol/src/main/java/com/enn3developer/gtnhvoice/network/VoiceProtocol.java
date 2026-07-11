@@ -51,7 +51,10 @@ public final class VoiceProtocol {
     // handshake + HKDF-SHA256 key derivation, and the UDP body cipher moves from unauthenticated
     // AES/CBC to AES/GCM. ClientHello and ServerHello now each carry a 32-byte raw X25519 public
     // key, so an older peer must fail the handshake rather than misparse the new body.
-    public static final byte PROTOCOL_VERSION = 4;
+    // v5: SourceAudioPacket grows a trailing short groupId - the wire id of the group that routed
+    // the frame to this recipient (multi-group membership + priority dedup), resolved to a display
+    // name via the group table synced on the reliable channel.
+    public static final byte PROTOCOL_VERSION = 5;
 
     public static final byte REASON_VERSION_MISMATCH = 0;
     /** The protocol versions matched but the peer's ClientHello carried no usable X25519 public key. */
