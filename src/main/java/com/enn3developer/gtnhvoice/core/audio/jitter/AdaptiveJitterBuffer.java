@@ -6,6 +6,7 @@ package com.enn3developer.gtnhvoice.core.audio.jitter;
 
 import com.enn3developer.gtnhvoice.core.audio.AudioUnit;
 
+import javax.annotation.Nullable;
 import java.util.Comparator;
 import java.util.OptionalLong;
 import java.util.PriorityQueue;
@@ -32,7 +33,7 @@ public final class AdaptiveJitterBuffer {
 
     private Long firstPacketArrival;
     private Long firstSequenceNumber;
-    private OptionalLong lastPacketArrival = OptionalLong.empty();
+    private Long lastPacketArrival;
     private double jitterEstimate;
     private AudioUnit adaptiveDelay;
 
@@ -61,16 +62,16 @@ public final class AdaptiveJitterBuffer {
     }
 
     private long scheduledPlaybackTime(long sequenceNumber, long arrivalTime) {
-        lastPacketArrival.ifPresent(lastPacketArrival -> {
+        if (lastPacketArrival != null) {
             long transit = arrivalTime - lastPacketArrival;
             // We don't carry the sender's send timestamp, so assume packets are sent at a steady 20ms rate and
             // treat any deviation in observed transit time as jitter.
             double delta = Math.abs(transit - AudioUnit.FRAME_DURATION_MILLIS);
             jitterEstimate += (delta - jitterEstimate) / 16.0;
             adaptiveDelay = AudioUnit.frames(Math.round(jitterEstimate / AudioUnit.FRAME_DURATION_MILLIS));
-        });
+        }
 
-        lastPacketArrival = OptionalLong.of(arrivalTime);
+        lastPacketArrival = arrivalTime;
 
         if (firstSequenceNumber == null) {
             firstPacketArrival = arrivalTime;
@@ -100,7 +101,7 @@ public final class AdaptiveJitterBuffer {
      * otherwise {@code null} - either because the buffer is empty or because the head frame isn't due yet (the
      * buffering phase).
      */
-    public synchronized Frame poll() {
+    public synchronized @Nullable Frame poll() {
         Entry next = queue.peek();
         if (next == null) return null;
 
@@ -168,7 +169,7 @@ public final class AdaptiveJitterBuffer {
         queue.clear();
         firstSequenceNumber = null;
         firstPacketArrival = null;
-        lastPacketArrival = OptionalLong.empty();
+        lastPacketArrival = null;
         notifyAll(); // wake a consumer blocked in awaitNextEvent so it re-evaluates (e.g. a pending decoder reset)
     }
 
