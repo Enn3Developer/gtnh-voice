@@ -4,6 +4,8 @@ repositories {
     maven {
         name = "JitPack"
         url = uri("https://jitpack.io")
+        // Only what is actually hosted there: anything else resolved from JitPack comes with rewritten metadata.
+        content { includeGroup("com.github.lostromb.concentus") }
     }
 
     // Hosts Plasmo's opus-jni-rust native JNI Opus binding (see OpusCodecSupplier) and

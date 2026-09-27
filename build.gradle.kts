@@ -32,3 +32,11 @@ tasks.jacocoTestReport {
         html.required.set(true)
     }
 }
+
+// JitPack relocates the published group to com.github.Enn3Developer and, in rewriting the Gradle module metadata,
+// drops the `dev` classifier selectors - consumers then resolve the plain unimixins/ModularUI2 jars next to the dev
+// ones GTNH mods bring, and FML refuses to start on the duplicates. JitPack leaves the POM's classifiers intact, so
+// publish POM-only metadata.
+tasks.withType<GenerateModuleMetadata>().configureEach {
+    enabled = false
+}

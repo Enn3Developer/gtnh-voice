@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-27
+
+### Fixed
+
+- Addons depending on this mod through JitPack no longer crash dev environments with duplicate unimixins: JitPack stripped the `dev` classifiers from the published Gradle module metadata, so it is no longer published (the POM keeps them)
+
 ## [0.9.0] - 2026-09-27
 
 ### Added
