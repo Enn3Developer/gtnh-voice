@@ -9,6 +9,7 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 import com.enn3developer.gtnhvoice.Config;
@@ -140,10 +141,19 @@ public class PlaybackManager {
      * cached one). Safe to call repeatedly; only the first call for a given id has any AL effect.
      */
     public void createSource(UUID sourceId, int distance, float gain) {
+        createSource(sourceId, distance, gain, QUEUE_CAPACITY);
+    }
+
+    /**
+     * {@link #createSource(UUID, int, float)} with an explicit frame-queue capacity - the addon-source path, whose
+     * queue depth is the producer's backpressure window rather than a fixed ~1s latency bound. Only the call that
+     * first registers {@code sourceId} decides the capacity.
+     */
+    public void createSource(UUID sourceId, int distance, float gain, int queueCapacity) {
         if (!isPlaying()) return;
 
         BlockingQueue<short[]> queue = frameQueues
-            .computeIfAbsent(sourceId, id -> new ArrayBlockingQueue<>(QUEUE_CAPACITY));
+            .computeIfAbsent(sourceId, id -> new ArrayBlockingQueue<>(queueCapacity));
         positions.putIfAbsent(sourceId, new double[] { 0, 0, 0 });
         gains.putIfAbsent(sourceId, gain);
         positionalModes.putIfAbsent(sourceId, Boolean.TRUE);
@@ -262,6 +272,29 @@ public class PlaybackManager {
             queue.poll();
             queue.offer(frame);
         }
+    }
+
+    /**
+     * Addon-source counterpart of {@link #submit}: queues {@code frame} for {@code sourceId}, waiting up to
+     * {@code timeout} for room instead of dropping the oldest frame - the wait is what paces an addon producer to
+     * the playback rate. Deliberately bypasses the PCM filter chain and the HUD level meter, both of which are
+     * about incoming voice. Returns {@code false} on timeout or when {@code sourceId} isn't registered.
+     */
+    public boolean offerAddonFrame(UUID sourceId, short[] frame, long timeout, TimeUnit unit)
+        throws InterruptedException {
+        BlockingQueue<short[]> queue = frameQueues.get(sourceId);
+        return queue != null && queue.offer(frame, timeout, unit);
+    }
+
+    /** Whether {@code sourceId} is currently registered (created and not since destroyed or cleared by stop). */
+    public boolean hasSource(UUID sourceId) {
+        return frameQueues.containsKey(sourceId);
+    }
+
+    /** Frames queued for {@code sourceId} and not yet handed to AL; {@code 0} when it isn't registered. */
+    public int queuedFrames(UUID sourceId) {
+        BlockingQueue<short[]> queue = frameQueues.get(sourceId);
+        return queue == null ? 0 : queue.size();
     }
 
     /**

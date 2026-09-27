@@ -8,7 +8,8 @@ import org.jetbrains.annotations.NotNull;
 /**
  * The handle a registered addon holds for its whole lifetime, returned once by {@link IAddonBuilder#register()}
  * - the EXCLUSIVE gateway to the client voice pipeline. Everything an addon does flows through it: opening
- * playback/capture registration bundles ({@link #audio()}, {@link #capture()}), audio-thread marshalling
+ * playback/capture registration bundles ({@link #audio()}, {@link #capture()}), addon-owned sources
+ * ({@link #source()}), audio-thread marshalling
  * ({@link #runOnAudioThread}) and live source queries ({@link #sourceMetadata}). There is deliberately no way to
  * reach any of these without registering first.
  * <p>
@@ -56,6 +57,15 @@ public interface IVoiceAddon {
     ICaptureRegistrationBuilder capture();
 
     /**
+     * Opens a single-use builder for an addon-owned playback source - audio this addon produces itself, played
+     * through the mod's OpenAL context like a speaking player. Every call opens a fresh, independent builder; one
+     * addon may hold any number of live sources. See {@link IAddonSource} for the feeding and durability contract.
+     *
+     * @return a single-use builder - see {@link IAddonSourceBuilder}
+     */
+    IAddonSourceBuilder source();
+
+    /**
      * Submits {@code command} to run on the mod's audio thread with its OpenAL context bound and current,
      * serialized with every other AL call that thread makes - the ONLY sanctioned way to touch this mod's AL
      * state from outside a lifecycle callback. Like every audio-thread visitor, the command's class needs
@@ -78,7 +88,7 @@ public interface IVoiceAddon {
      * their source has been torn down) or no voice session is running. Callable from any thread - typically from
      * an audio tick. See {@link ISourceMetadata} for the consistency and freshness contract.
      *
-     * @param sourceId the voice source to query (the speaking player's UUID)
+     * @param sourceId the voice source to query (the speaking player's UUID, or an {@link IAddonSource#id()})
      * @return a detached point-in-time snapshot, or empty
      */
     Optional<ISourceMetadata> sourceMetadata(@NotNull UUID sourceId);

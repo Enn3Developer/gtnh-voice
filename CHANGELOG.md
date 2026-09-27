@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Addon-owned playback sources — `addon.source()...create()` returns an `IAddonSource` that plays addon-produced PCM (radios, jukeboxes) through the voice OpenAL context, positional or flat, paced by a blocking `write`
+
 ## [0.8.0] - 2026-07-11
 
 ### Security

@@ -7,6 +7,7 @@ import java.util.UUID;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import com.enn3developer.gtnhvoice.api.client.IAddonSourceBuilder;
 import com.enn3developer.gtnhvoice.api.client.IAudioRegistrationBuilder;
 import com.enn3developer.gtnhvoice.api.client.ICaptureRegistrationBuilder;
 import com.enn3developer.gtnhvoice.api.client.ISourceMetadata;
@@ -54,6 +55,11 @@ final class VoiceAddon implements IVoiceAddon {
     }
 
     @Override
+    public IAddonSourceBuilder source() {
+        return new AddonSourceBuilder(name);
+    }
+
+    @Override
     public boolean runOnAudioThread(@NotNull Runnable command) {
         // Validate before the no-session check - a null command must fail identically whether or not a
         // session is up, per the interface contract.
@@ -72,7 +78,8 @@ final class VoiceAddon implements IVoiceAddon {
         return playback.sourceMetadataFor(sourceId);
     }
 
-    private static @Nullable PlaybackManager livePlaybackManager() {
+    /** The current session's playback manager, or {@code null} with no session - shared with {@link AddonSource}. */
+    static @Nullable PlaybackManager livePlaybackManager() {
         VoiceSourceManager sourceManager = VoiceClientManager.getInstance()
             .getVoiceSourceManager();
         if (sourceManager == null) return null;
