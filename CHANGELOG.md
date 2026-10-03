@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-10-03
+
+### Fixed
+
+- Open GUI screens (JourneyMap's fullscreen map, MUI2 screens, the voice settings screen) no longer render with a grey tint while the voice HUD is active: the HUD's MUI2 draw pass left `GL_LIGHTING`/item lighting enabled right before Minecraft drew the screen; GL state is now restored after every HUD frame
+
 ## [0.9.1] - 2026-09-27
 
 ### Fixed
