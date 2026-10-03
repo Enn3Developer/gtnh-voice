@@ -1,0 +1,32 @@
+{
+  "lang": "gtnh",
+  "src_globs": ["src/main/**"],
+  "test_globs": ["src/test/**"],
+  "build": "./gradlew compileJava --console=plain",
+  "build_tests": "./gradlew compileTestJava --console=plain",
+  "test": "./gradlew test --console=plain",
+  "test_filtered": "./gradlew test --rerun --console=plain {names}",
+  "test_adapter": "junit-xml",
+  "junit_xml_glob": "build/test-results/test/*.xml",
+  "name_fmt": "--tests '*.{}'",
+  "names_sep": " ",
+  "stub_src_regex": "UnsupportedOperationException\\(\"not yet implemented\"\\)",
+  "stub_fail_regex": "not yet implemented",
+  "test_fn_regex": "void\\s+(\\w+)\\s*\\(",
+  "test_marker_regex": "@(Test|ParameterizedTest|RepeatedTest|Property|Example|TestFactory)\\b",
+  "assert_regex": "\\bassert\\w*\\(|\\bAssertions\\.|\\bassertThat\\(|\\bfail\\(|\\bverify\\(",
+  "banned_regex": [
+    "@Disabled",
+    "\\bassume(True|False|That)\\(",
+    "assertThrows\\(\\s*(Throwable|Exception|RuntimeException|UnsupportedOperationException)\\.class",
+    "assertTrue\\(\\s*true\\s*\\)"
+  ],
+  "checks": ["./gradlew checkstyleMain checkstyleTest --console=plain -q"],
+  "mutate": "./gradlew pitest --console=plain --init-script ~/.claude/gates/gradle/pitest.init.gradle -PpitTargets={classes}",
+  "mutate_adapter": "pitest",
+  "mutation_threshold": 0.75,
+  "flaky_runs": 2,
+  "max_blocks": 3,
+  "cmd_timeout": 3600,
+  "env": {}
+}
