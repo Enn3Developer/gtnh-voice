@@ -48,7 +48,8 @@ public class ModularHud {
 
     public ModularHud(ModularScreen screen) {
         this.screen = screen;
-        // Dummy wrapper — required by the ModularScreen lifecycle, never displayed.
+        // Dummy wrapper — required by the ModularScreen lifecycle, never displayed. constructOverlay only
+        // wraps it; it does not add the screen to MUI2's global OverlayStack (only OverlayStack.onGuiOpen does).
         this.screen.constructOverlay(new GuiScreen() {});
     }
 
@@ -100,11 +101,20 @@ public class ModularHud {
             .updateState(-9999, -9999, event.partialTicks);
         this.screen.onFrameUpdate();
 
-        // 4. Draw the widget tree
-        GL11.glColor4f(1f, 1f, 1f, 1f);
-        GL11.glEnable(GL11.GL_BLEND);
-        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-        this.screen.drawScreen();
-        GL11.glColor4f(1f, 1f, 1f, 1f);
+        // 4. Draw the widget tree, GL-state-neutral. ModularScreen.drawScreen() ends by force-enabling
+        // GL_LIGHTING, standard item lighting (GL_LIGHT0/1, GL_COLOR_MATERIAL), GL_RESCALE_NORMAL and
+        // GL_ALPHA_TEST, and leaves GL_DEPTH_TEST off; widgets may leave GL_TEXTURE_2D off and a faded color.
+        // This pass runs before an open GuiScreen is drawn, so any leak lit/greyed that whole screen.
+        // MUI2's GlStateManager is a plain passthrough (no cache), so raw push/pop keeps it coherent.
+        GL11.glPushAttrib(
+            GL11.GL_ENABLE_BIT | GL11.GL_COLOR_BUFFER_BIT | GL11.GL_CURRENT_BIT | GL11.GL_LIGHTING_BIT);
+        try {
+            GL11.glColor4f(1f, 1f, 1f, 1f);
+            GL11.glEnable(GL11.GL_BLEND);
+            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+            this.screen.drawScreen();
+        } finally {
+            GL11.glPopAttrib();
+        }
     }
 }

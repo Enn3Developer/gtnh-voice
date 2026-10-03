@@ -127,6 +127,6 @@ public final class VoiceSkinIcons {
             SKIN_TEX_WIDTH,
             tileHeight);
 
-        // GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
+        GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
     }
 }
