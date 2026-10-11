@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - JitPack builds work again, broken since 0.9.2: JitPack's image failed to install JDK 25, so `jitpack.yml` now asks for JDK 21, which only launches Gradle 9.3.1; Gradle then runs the build on a JDK 25 daemon it downloads from foojay. That download was broken too - `gradle/gradle-daemon-jvm.properties` required JDK 25 but its URLs fetched JDK 21, which Gradle rejected - and is regenerated, which also fixes building from source on any machine without a JDK 25. 0.9.2 and 0.10.0 stay unbuildable on JitPack; depend on 0.10.1 or later
+- The published POM no longer lists `it.unimi.dsi:fastutil-core` as a runtime dependency: in a consumer's dev environment that also has GregTech it hid the full fastutil GregTech needs, and GregTech crashed in preInit with a `NoSuchMethodError` on `MaterialsIDMap.forEach`. fastutil is now compile-time only; at runtime the full fastutil keeps coming from GTNHLib, which ModularUI2 already requires. The mod jar itself is unchanged
 
 ## [0.10.0] - 2026-10-11
 

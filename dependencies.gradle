@@ -73,9 +73,12 @@ dependencies {
     // classpath alongside FML's ASM transforms.
     compileOnly("io.netty:netty-all:4.0.10.Final")
 
-    // Minecraft 1.7.10 does not ship fastutil (added in later MC versions), but the lifted packet registry
-    // needs it at runtime, so it's pulled in for real via the slimmed-down "core" artifact.
-    implementation("it.unimi.dsi:fastutil-core:8.5.16")
+    // Minecraft 1.7.10 does not ship fastutil (added in later MC versions), but the lifted packet registry needs it.
+    // At runtime the full fastutil (8.5.18) comes from GTNHLib, which ModularUI2 requires: its GTNHExtLib dependency
+    // loader adds it at launch, in the game and in runClient/runServer alike. So compile-time only, and never a
+    // published runtime dependency: fastutil-core ahead of the full fastutil on a consumer's dev classpath hides
+    // classes it lacks, and GregTech crashes in preInit (NoSuchMethodError on MaterialsIDMap.forEach).
+    compileOnly("it.unimi.dsi:fastutil-core:8.5.16")
 
     // Compile-time-only nullability annotations (@NotNull/@Nullable) used throughout the lifted Plasmo Voice
     // code; RetentionPolicy.CLASS, so no runtime jar is required.
@@ -108,7 +111,9 @@ dependencies {
 
     // Guava and Netty are compileOnly above because Minecraft/Forge provide them at real game
     // runtime, but the plain-JVM test task has no MC classpath to fall back on, so the core UDP
-    // transport/codec tests need them explicitly to actually execute (not just compile).
+    // transport/codec tests need them explicitly to actually execute (not just compile). Same for
+    // fastutil: GTNHLib's loader, which provides it in game, never runs in the test JVM.
     testRuntimeOnly("com.google.guava:guava:17.0")
     testRuntimeOnly("io.netty:netty-all:4.0.10.Final")
+    testRuntimeOnly("it.unimi.dsi:fastutil-core:8.5.16")
 }
