@@ -187,8 +187,9 @@ public final class GroupManager implements IGroupManager {
     }
 
     /**
-     * Drops {@code playerUuid}'s memberships and any per-player state their groups held. Called on logout and
-     * from the stale-session reaper, alongside the server manager's own per-player cleanup. EVERY group is
+     * Drops {@code playerUuid}'s memberships and any per-player state their groups held. Called on the server
+     * thread by the session lifecycle when a session ends by logout or timeout, right before its
+     * {@code sessionEnded}. EVERY group is
      * notified - built-ins, registered, and any (possibly unregistered) currently-joined ones - not just the
      * memberships: a group may hold per-player state from before a leave moved the player out, and the hooks
      * are cheap map removals by contract.

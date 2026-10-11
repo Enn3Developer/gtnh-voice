@@ -17,6 +17,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
 
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.server.MinecraftServer;
@@ -27,6 +28,7 @@ import org.jetbrains.annotations.NotNull;
 import com.enn3developer.gtnhvoice.Config;
 import com.enn3developer.gtnhvoice.GtnhVoice;
 import com.enn3developer.gtnhvoice.api.server.PlayerSnapshot;
+import com.enn3developer.gtnhvoice.api.server.SessionEndReason;
 import com.enn3developer.gtnhvoice.api.server.group.IGroup;
 import com.enn3developer.gtnhvoice.api.server.group.RoutingContext;
 import com.enn3developer.gtnhvoice.core.api.util.LogThrottle;
@@ -113,6 +115,12 @@ public final class VoiceServerManager implements UdpPacketListener {
         .unmodifiableMap(sessionsByPlayerUuid);
     private final ConcurrentLinkedQueue<Runnable> pendingSends = new ConcurrentLinkedQueue<>();
     private final GroupManager groupManager = new GroupManager(this::onMembershipChanged, this::onGroupTableChanged);
+    // Durable like the manager itself: session listeners survive stop/start. Delivers through pendingSends and
+    // runs the logout/timeout membership wipe there, on the server thread.
+    private final SessionLifecycle sessionLifecycle = new SessionLifecycle(
+        pendingSends::add,
+        groupManager::onPlayerRemoved);
+    private final Supplier<MinecraftServer> minecraftServer;
 
     /**
      * Position/dimension snapshot of every online player, rebuilt wholesale each server tick (see
@@ -158,7 +166,24 @@ public final class VoiceServerManager implements UdpPacketListener {
         return groupManager;
     }
 
-    private VoiceServerManager() {}
+    private VoiceServerManager() {
+        this(
+            () -> FMLCommonHandler.instance()
+                .getMinecraftServerInstance());
+    }
+
+    /** @param minecraftServer the running game server, or null when there is none - the engine boundary */
+    VoiceServerManager(@NotNull Supplier<MinecraftServer> minecraftServer) {
+        this.minecraftServer = minecraftServer;
+    }
+
+    /**
+     * The addon-facing session lifecycle: session listeners and the live-session queries, reached through
+     * {@link com.enn3developer.gtnhvoice.api.server.GtnhVoiceApi}.
+     */
+    public SessionLifecycle getSessionLifecycle() {
+        return sessionLifecycle;
+    }
 
     public synchronized void start() {
         if (started) return;
@@ -213,11 +238,25 @@ public final class VoiceServerManager implements UdpPacketListener {
             .bus()
             .unregister(this);
 
+        shutDownSessions();
+    }
+
+    /**
+     * The session half of {@link #stop()}, on the server thread: delivers the lifecycle events listeners are still
+     * owed while the group registry stands, drops every session and queued task, clears the group registry, then
+     * ends every session listeners know with {@link SessionEndReason#SERVER_STOPPED} - memberships gone first, as
+     * for every other end. Session listeners stay registered for the next start.
+     */
+    void shutDownSessions() {
+        sessionLifecycle.drain();
+
         sessionsBySessionId.clear();
         sessionsByPlayerUuid.clear();
         pendingSends.clear();
         groupManager.clear();
         positionSnapshot = Collections.emptyMap();
+
+        sessionLifecycle.serverStopped();
     }
 
     public void handleClientHello(@NotNull EntityPlayerMP player, @NotNull ClientHelloPacket packet) {
@@ -332,11 +371,7 @@ public final class VoiceServerManager implements UdpPacketListener {
                 return;
             }
 
-            VoiceServerSession previous = sessionsByPlayerUuid.put(playerUuid, rebuilt);
-            if (previous != null) {
-                sessionsBySessionId.remove(previous.getSessionId());
-                inboundRateLimiter.forget(previous.getSessionId());
-            }
+            installSession(rebuilt);
             session = rebuilt;
             sendInitialState = true;
         }
@@ -414,7 +449,6 @@ public final class VoiceServerManager implements UdpPacketListener {
             serverPublicKey,
             clientPublicKey,
             owner);
-        sessionsBySessionId.put(sessionId, session);
 
         GtnhVoice.LOG.info(
             "Created voice session for {}: sessionId={} keyFingerprint={}",
@@ -423,6 +457,23 @@ public final class VoiceServerManager implements UdpPacketListener {
             VoiceProtocol.fingerprintKey(key));
 
         return session;
+    }
+
+    /**
+     * Makes {@code session} its player's current session, replacing any previous one without ending it in the
+     * logout/timeout sense: the old sessionId stops resolving, but memberships carry over and listeners see the old
+     * session end as {@link SessionEndReason#REPLACED}. The lifecycle hears of the session before it is published,
+     * so nothing can report its end ahead of its start.
+     */
+    void installSession(@NotNull VoiceServerSession session) {
+        sessionLifecycle.started(session);
+
+        sessionsBySessionId.put(session.getSessionId(), session);
+        VoiceServerSession previous = sessionsByPlayerUuid.put(session.getPlayerUuid(), session);
+        if (previous != null) {
+            sessionsBySessionId.remove(previous.getSessionId());
+            inboundRateLimiter.forget(previous.getSessionId());
+        }
     }
 
     @Override
@@ -560,8 +611,7 @@ public final class VoiceServerManager implements UdpPacketListener {
      * state is touched.
      */
     private void refreshPositionSnapshot() {
-        MinecraftServer server = FMLCommonHandler.instance()
-            .getMinecraftServerInstance();
+        MinecraftServer server = minecraftServer.get();
         if (server == null) return;
 
         List<EntityPlayerMP> players = server.getConfigurationManager().playerEntityList;
@@ -592,6 +642,14 @@ public final class VoiceServerManager implements UdpPacketListener {
         helloRateLimiter.forget(playerUuid);
         audioRateLimiter.forget(playerUuid);
 
+        endSessionOnLogout(playerUuid, ((EntityPlayerMP) event.player).playerNetServerHandler);
+    }
+
+    /**
+     * Ends {@code playerUuid}'s session if it belongs to {@code connection} - the logging-out connection's net
+     * handler. Server thread.
+     */
+    void endSessionOnLogout(@NotNull UUID playerUuid, @NotNull Object connection) {
         VoiceServerSession session = sessionsByPlayerUuid.get(playerUuid);
         if (session == null) return;
 
@@ -600,7 +658,7 @@ public final class VoiceServerManager implements UdpPacketListener {
         // - identified by its net handler, which survives respawn/dimension changes and is replaced
         // only on a genuine reconnect - so an old connection's logout can't delete the freshly-rebuilt
         // session of a new one, which would strand the client CONNECTED with no session.
-        if (session.getOwner() != ((EntityPlayerMP) event.player).playerNetServerHandler) {
+        if (session.getOwner() != connection) {
             GtnhVoice.LOG.info(
                 "Ignoring stale voice logout for {} - session belongs to a newer connection",
                 session.getPlayerName());
@@ -612,15 +670,19 @@ public final class VoiceServerManager implements UdpPacketListener {
 
         sessionsBySessionId.remove(session.getSessionId());
         GtnhVoice.LOG.info("Voice session ended for {} (logout)", session.getPlayerName());
-        endSession(session);
+        endSession(session, SessionEndReason.LOGOUT);
     }
 
-    private void endSession(VoiceServerSession session) {
+    /**
+     * Tears down a session already removed from both maps. The membership wipe is not done here: the lifecycle runs
+     * it on the server thread right before the session's {@code sessionEnded}, whichever thread ended it.
+     */
+    private void endSession(VoiceServerSession session, SessionEndReason reason) {
         inboundRateLimiter.forget(session.getSessionId());
-        groupManager.onPlayerRemoved(session.getPlayerUuid());
         broadcastSourceEnd(session);
         pendingSends.add(() -> broadcastRosterUpdate(
             VoiceRosterUpdatePacket.MODE_REMOVE, session.getPlayerUuid(), session.getPlayerName()));
+        sessionLifecycle.ended(session, reason);
     }
 
     /**
@@ -655,8 +717,7 @@ public final class VoiceServerManager implements UdpPacketListener {
      * safe on the server thread, hence always queued through {@link #pendingSends}.
      */
     private void broadcastRosterUpdate(byte mode, @NotNull UUID subjectUuid, @NotNull String subjectName) {
-        MinecraftServer server = FMLCommonHandler.instance()
-            .getMinecraftServerInstance();
+        MinecraftServer server = minecraftServer.get();
         if (server == null) return;
 
         VoiceRosterUpdatePacket packet = new VoiceRosterUpdatePacket(
@@ -714,8 +775,7 @@ public final class VoiceServerManager implements UdpPacketListener {
     private void sendGroupTable(@NotNull UUID playerUuid) {
         if (!sessionsByPlayerUuid.containsKey(playerUuid)) return;
 
-        MinecraftServer server = FMLCommonHandler.instance()
-            .getMinecraftServerInstance();
+        MinecraftServer server = minecraftServer.get();
         if (server == null) return;
 
         for (EntityPlayerMP player : server.getConfigurationManager().playerEntityList) {
@@ -740,8 +800,7 @@ public final class VoiceServerManager implements UdpPacketListener {
     private void sendGroupUpdate(@NotNull UUID playerUuid, @NotNull String groupDisplayName) {
         if (!sessionsByPlayerUuid.containsKey(playerUuid)) return;
 
-        MinecraftServer server = FMLCommonHandler.instance()
-            .getMinecraftServerInstance();
+        MinecraftServer server = minecraftServer.get();
         if (server == null) return;
 
         for (EntityPlayerMP player : server.getConfigurationManager().playerEntityList) {
@@ -784,8 +843,11 @@ public final class VoiceServerManager implements UdpPacketListener {
     }
 
     private void reapStaleSessions() {
-        long now = System.currentTimeMillis();
+        reapStaleSessions(System.currentTimeMillis());
+    }
 
+    /** Ends every session with no traffic for {@link #SESSION_TIMEOUT_MILLIS} as of {@code now}. Reaper thread. */
+    void reapStaleSessions(long now) {
         Iterator<Map.Entry<UUID, VoiceServerSession>> it = sessionsBySessionId.entrySet()
             .iterator();
         while (it.hasNext()) {
@@ -797,7 +859,7 @@ public final class VoiceServerManager implements UdpPacketListener {
             // Value-conditional: if a reconnect rebuilt this player's session under the same
             // playerUuid between the iterator read and here, the remove fails and we must NOT tear
             // the player out of voice - the stale sessionId entry is already gone (it.remove above),
-            // and endSession would wrongly drop the live session from its group and broadcast SourceEnd.
+            // and endSession would wrongly broadcast SourceEnd and wipe the live session's memberships.
             if (!sessionsByPlayerUuid.remove(session.getPlayerUuid(), session)) continue;
 
             GtnhVoice.LOG.info(
@@ -805,7 +867,7 @@ public final class VoiceServerManager implements UdpPacketListener {
                 session.getPlayerName(),
                 VoiceProtocol.abbreviateSessionId(session.getSessionId()),
                 now - session.getLastSeenMillis());
-            endSession(session);
+            endSession(session, SessionEndReason.TIMED_OUT);
         }
     }
 }

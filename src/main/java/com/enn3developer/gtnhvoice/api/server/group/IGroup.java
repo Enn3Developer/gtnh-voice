@@ -53,8 +53,9 @@ public interface IGroup {
     void route(@NotNull RoutingContext context);
 
     /**
-     * Drops any per-player state held for {@code playerUuid}. Called on logout and from the stale-session
-     * reaper, mirroring how the server manager cleans its own per-player maps. The group manager notifies
+     * Drops any per-player state held for {@code playerUuid}. Called on the server thread when the player's voice
+     * session ends by logout or timeout, right before that session's {@code sessionEnded} reaches session
+     * listeners (group API 1.0 called it from the session-reaper thread on timeout). The group manager notifies
      * every group regardless of the player's current assignment (state may predate a reassignment), so
      * implementations must be cheap, non-blocking map removals that tolerate players they never saw.
      */
