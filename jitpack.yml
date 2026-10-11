@@ -2,9 +2,11 @@
 # (notably the -api classifier jar) as a maven dependency with no hosted infrastructure:
 #   repositories { maven { url "https://jitpack.io" } }
 #   dependencies { compileOnly "com.github.Enn3Developer:gtnh-voice:<tag>:api" }
-# JitPack's default JDK is 8; GTNHGradle needs a modern one (matches CI's JDK 25).
+# JitPack's default JDK is 8, and since 0.9.2 its image has failed to install JDK 25, so JDK 21 only launches
+# Gradle 9.3.1: gradle/gradle-daemon-jvm.properties then has Gradle download a JDK 25 daemon from foojay,
+# matching CI's JDK 25.
 jdk:
-  - openjdk25
+  - openjdk21
 before_install:
   - ./gradlew setupCIWorkspace
 install:
