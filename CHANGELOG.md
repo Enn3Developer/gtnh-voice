@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-11
+
 ### Added
 
 - Frame-aware playback filters for client addons: `audio().playbackFrameFilter((frame, pcm) -> ...)` gets an `IPlaybackFrame` per frame (speaker, internal and display name of the group that routed that exact frame, positional flag); the group travels with each frame through the jitter buffer, and concealment frames keep the last real frame's group (client API 2.1)
@@ -16,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Voice protocol bumped to v6 (the group table carries each group's internal name beside its display name)
+- Voice protocol bumped to v6 (the group table carries each group's internal name beside its display name): 0.10.0 clients and servers no longer talk to 0.9.x ones - the voice handshake rejects the version mismatch, so update both sides together
 - A voice source's positional flag and position now apply when its frame plays rather than when the packet arrives, so a group switch no longer re-spatializes audio still in the jitter buffer; `sourceMetadata` follows the audio accordingly
 - The group-membership wipe of a timed-out voice session runs on the server thread instead of the session reaper's thread, and the wipe of a logged-out session moves from the logout event to the end of that server tick, right before `sessionEnded`; `IGroup.onPlayerRemoved` is now always called on the server thread (group API 1.1)
 - Voice volume no longer follows Minecraft's master sound slider (reverting the 0.8.0 coupling): the voice settings' master and per-player volumes alone decide how loud voice, addon sources and the mic monitor play, so turning game sound down or off leaves voice untouched
