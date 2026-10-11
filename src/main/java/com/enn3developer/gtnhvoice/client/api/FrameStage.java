@@ -1,5 +1,9 @@
 package com.enn3developer.gtnhvoice.client.api;
 
+import org.jetbrains.annotations.Nullable;
+
+import com.enn3developer.gtnhvoice.api.client.IPlaybackFrame;
+
 /**
  * One compiled stage of a {@link PcmChainPipeline}: mutates the pipeline's normalized {@code double} working
  * buffer in place. A stateful stage (biquad, sample-and-hold, ...) is a fresh instance per pipeline and is only
@@ -18,4 +22,14 @@ interface FrameStage {
      * @param frame the working buffer, {@code VoiceFormat.FRAME_SAMPLES} samples in {@code [-1, 1]}
      */
     void process(double[] frame);
+
+    /**
+     * The entry point the pipeline actually calls, once per frame: {@code context} is the playback frame's
+     * {@link IPlaybackFrame}, or {@code null} on a capture pipeline. Frame-blind stages keep the default, which
+     * ignores the context; frame-aware ones (custom stages with {@code beginFrame}, {@code when} branches) override
+     * it.
+     */
+    default void process(@Nullable IPlaybackFrame context, double[] frame) {
+        process(frame);
+    }
 }

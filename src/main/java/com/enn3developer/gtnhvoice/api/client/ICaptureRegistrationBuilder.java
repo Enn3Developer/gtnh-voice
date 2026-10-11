@@ -37,8 +37,10 @@ public interface ICaptureRegistrationBuilder {
      *
      * @param spec records the chain's stages onto the supplied {@link IPcmChain}; non-null
      * @throws NullPointerException     if {@code spec} is null
-     * @throws IllegalArgumentException if {@code spec} records no stages, or if any stage's arguments are invalid
-     *                                  (both surface here, at the call site, not later on the audio path)
+     * @throws IllegalArgumentException if {@code spec} records no stages, if any stage's arguments are invalid, or
+     *                                  if it uses a playback-only feature ({@link IPcmChain#when}, a stage
+     *                                  overriding {@link IPcmChain.Stage#beginFrame}) - all surface here, at the
+     *                                  call site, not later on the audio path
      */
     ICaptureRegistrationBuilder chain(@NotNull Consumer<IPcmChain> spec);
 

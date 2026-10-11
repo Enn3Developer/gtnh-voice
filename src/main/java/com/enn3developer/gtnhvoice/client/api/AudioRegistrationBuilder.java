@@ -144,7 +144,7 @@ final class AudioRegistrationBuilder implements IAudioRegistrationBuilder {
     public IAudioRegistrationBuilder playbackChain(@NotNull Consumer<IPcmChain> spec) {
         requireNotConsumed();
         Objects.requireNonNull(spec, "spec");
-        PcmChainRecorder recorder = new PcmChainRecorder();
+        PcmChainRecorder recorder = PcmChainRecorder.forPlayback(addonName);
         spec.accept(recorder);
         // compile() throws IllegalArgumentException on an empty spec - fail fast at the call site.
         ChainPlaybackFilter chainFilter = new ChainPlaybackFilter(recorder.compile());

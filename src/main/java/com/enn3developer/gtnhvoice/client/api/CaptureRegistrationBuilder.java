@@ -47,9 +47,10 @@ final class CaptureRegistrationBuilder implements ICaptureRegistrationBuilder {
     public ICaptureRegistrationBuilder chain(@NotNull Consumer<IPcmChain> spec) {
         requireNotConsumed();
         Objects.requireNonNull(spec, "spec");
-        PcmChainRecorder recorder = new PcmChainRecorder();
+        PcmChainRecorder recorder = PcmChainRecorder.forCapture();
         spec.accept(recorder);
-        // compile() throws IllegalArgumentException on an empty spec - fail fast at the call site.
+        // compile() throws IllegalArgumentException on an empty spec, and the capture recorder on any playback-only
+        // feature - both fail fast at the call site.
         ChainCaptureFilter chainFilter = new ChainCaptureFilter(recorder.compile());
         filters.add(chainFilter);
         // Also recorded typed, so the backend can reset it per capture session directly, without relaying

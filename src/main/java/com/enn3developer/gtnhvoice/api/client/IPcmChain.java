@@ -2,6 +2,7 @@ package com.enn3developer.gtnhvoice.api.client;
 
 import java.util.function.Consumer;
 import java.util.function.DoubleUnaryOperator;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 import org.jetbrains.annotations.NotNull;
@@ -30,6 +31,11 @@ import org.jetbrains.annotations.NotNull;
  * failure-isolation contract: a stage that throws skips the WHOLE chain for that one frame - the frame passes
  * through unchanged - with the same throttled, addon-attributed error log. One broken stage can neither mute
  * voice nor kill the mic. Every recording method returns {@code this} for chaining.
+ * <p>
+ * Playback chains also know each frame's {@link IPlaybackFrame} - speaker, routing group, positional flag - and
+ * offer two frame-aware features on top: {@link #when} branches that run only on matching frames, and
+ * {@link Stage#beginFrame} for custom stages. Captured mic audio has no routing, so a capture chain rejects both
+ * with {@link IllegalArgumentException} at the call site rather than silently ignoring them.
  */
 public interface IPcmChain {
 
@@ -127,11 +133,16 @@ public interface IPcmChain {
      * Records a stateful custom per-sample stage. The {@code perSourceState} supplier is invoked ONCE PER
      * pipeline instance - once per voice source on playback, once per capture session on capture - so each
      * {@link Stage} it hands back owns its state exclusively and is only ever called sequentially. That is how a
-     * hand-rolled biquad or envelope follower gets independent state per speaker for free.
+     * hand-rolled biquad or envelope follower gets independent state per speaker for free. (A stage inside a
+     * {@link #when} branch is additionally rebuilt each time its branch is re-entered.)
+     * <p>
+     * On a capture chain the supplier is also invoked once right here, to check the stage it builds: a stage
+     * that overrides the playback-only {@link Stage#beginFrame} is rejected.
      *
      * @param perSourceState supplies a fresh {@link Stage} per pipeline instance; non-null, and must not return
      *                       null
-     * @throws NullPointerException if {@code perSourceState} is null
+     * @throws NullPointerException     if {@code perSourceState} is null, or returns null on a capture chain
+     * @throws IllegalArgumentException on a capture chain, if the supplied stage overrides {@link Stage#beginFrame}
      */
     IPcmChain stage(@NotNull Supplier<Stage> perSourceState);
 
@@ -159,6 +170,43 @@ public interface IPcmChain {
     IPcmChain frame(@NotNull Consumer<short[]> perFrame);
 
     /**
+     * PLAYBACK ONLY. Records a conditional sub-chain: every frame, {@code condition} is tested against the frame's
+     * {@link IPlaybackFrame} and the stages {@code branch} records run on that frame only when it matches - a
+     * frame that doesn't match passes this position untouched. The branch sits at its position like any stage, so
+     * later stages see its output (or the untouched frame). Each {@code when} is tested on its own; mutually
+     * exclusive conditions make a switch, e.g. radio quality by tier:
+     *
+     * <pre>{@code
+     * addon.audio()
+     *     .playbackChain(c -> c
+     *         .when(f -> tierOf(f) == Tier.LOW, low -> low.bandPass(300, 3400).mulaw().downsampleHold(3).noise(0.04))
+     *         .when(f -> tierOf(f) == Tier.MEDIUM, med -> med.bandPass(200, 5000).noise(0.01)))
+     *     .done();
+     * }</pre>
+     *
+     * State: the branch's stages are instantiated per voice source like the rest of the chain, so every speaker
+     * gets its own delay lines. A branch that skips a frame is RESET on re-entry: the next matching frame rebuilds
+     * its stages from the recipe (stage suppliers run again), so a speaker hopping between tiers restarts each
+     * tier's filters from rest instead of resuming from delay-line state that went stale while the branch was off.
+     * <p>
+     * Threading: {@code condition} runs on the decode thread, once per frame for every branch the frame reaches,
+     * before the branch's stages; it may run concurrently for different sources, so keep it cheap, stateless and
+     * side-effect free. Failure isolation: a {@code condition} that throws counts as a non-match - its branch is
+     * skipped for that frame (and reset when it next matches) with a throttled, addon-attributed error log, while
+     * the rest of the chain and playback carry on. A stage inside the branch that throws behaves like any throwing
+     * stage: the whole chain is skipped for that frame.
+     * <p>
+     * The {@code branch} spec is invoked IMMEDIATELY, like the chain's own spec, and branches may nest.
+     *
+     * @param condition picks the frames the branch runs on; non-null
+     * @param branch    records the branch's stages onto the supplied {@link IPcmChain}; non-null
+     * @throws IllegalArgumentException on a capture chain (whatever the arguments), or if {@code branch} records
+     *                                  no stages or invalid ones
+     * @throws NullPointerException     on a playback chain, if either argument is null
+     */
+    IPcmChain when(@NotNull Predicate<IPlaybackFrame> condition, @NotNull Consumer<IPcmChain> branch);
+
+    /**
      * A stateful single-sample transform supplied to {@link IPcmChain#stage(Supplier)}. One instance belongs to
      * exactly one pipeline and is only ever stepped sequentially, so it needs no synchronization for its own
      * state.
@@ -173,5 +221,33 @@ public interface IPcmChain {
          * @return the output sample (clamped to the PCM range at the pipeline boundary, so overshoot is allowed)
          */
         double step(double x);
+
+        /**
+         * PLAYBACK ONLY. Called once per frame, before this stage's first {@link #step} of that frame, with the
+         * frame's {@link IPlaybackFrame} - on the decode thread, sequentially with this instance's {@code step}
+         * calls (the instance belongs to one voice source), so per-frame parameters can live in plain fields:
+         *
+         * <pre>{@code
+         * c.stage(() -> new IPcmChain.Stage() {
+         *
+         *     private double gain = 1.0;
+         *
+         *     public void beginFrame(IPlaybackFrame frame) {
+         *         gain = frame.positional() ? 1.0 : 0.7;
+         *     }
+         *
+         *     public double step(double x) {
+         *         return x * gain;
+         *     }
+         * })
+         * }</pre>
+         *
+         * Inside a {@link IPcmChain#when} branch, only the frames that branch processes reach it. Throwing here is
+         * like throwing from {@link #step}: the whole chain is skipped for that frame. Capture chains never call
+         * it, and their {@link IPcmChain#stage} rejects a stage that overrides it. The default does nothing.
+         *
+         * @param frame the context of the frame about to be stepped
+         */
+        default void beginFrame(@NotNull IPlaybackFrame frame) {}
     }
 }

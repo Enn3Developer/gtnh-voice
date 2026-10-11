@@ -3,6 +3,9 @@ package com.enn3developer.gtnhvoice.client.api;
 import java.util.List;
 import java.util.function.Supplier;
 
+import org.jetbrains.annotations.Nullable;
+
+import com.enn3developer.gtnhvoice.api.client.IPlaybackFrame;
 import com.enn3developer.gtnhvoice.api.client.VoiceFormat;
 
 /**
@@ -29,11 +32,22 @@ final class PcmChainPipeline {
     private final double[] buffer = new double[VoiceFormat.FRAME_SAMPLES];
 
     PcmChainPipeline(List<Supplier<FrameStage>> factories) {
-        stages = new FrameStage[factories.size()];
+        stages = instantiate(factories);
+    }
+
+    /** Builds one fresh stage per factory - the per-instance state a pipeline (or a re-entered branch) owns. */
+    static FrameStage[] instantiate(List<Supplier<FrameStage>> factories) {
+        FrameStage[] stages = new FrameStage[factories.size()];
         for (int i = 0; i < stages.length; i++) {
             stages[i] = factories.get(i)
                 .get();
         }
+        return stages;
+    }
+
+    /** {@link #process(IPlaybackFrame, short[])} without a frame context - the capture path. */
+    short[] process(short[] frame) {
+        return process(null, frame);
     }
 
     /**
@@ -41,13 +55,15 @@ final class PcmChainPipeline {
      * it. Leaves {@code frame} untouched if any stage throws (the write-back is the last step, past every
      * stage), so a throwing stage costs nothing but this frame. Returns the SAME array it was given - never a
      * reused internal buffer - so the frame stays safe to hand downstream.
+     *
+     * @param context the playback frame's context, handed to every stage; {@code null} on the capture path
      */
-    short[] process(short[] frame) {
+    short[] process(@Nullable IPlaybackFrame context, short[] frame) {
         for (int i = 0; i < frame.length; i++) {
             buffer[i] = PcmSamples.toNormalized(frame[i]);
         }
         for (FrameStage stage : stages) {
-            stage.process(buffer);
+            stage.process(context, buffer);
         }
         for (int i = 0; i < frame.length; i++) {
             frame[i] = PcmSamples.toPcm(buffer[i]);

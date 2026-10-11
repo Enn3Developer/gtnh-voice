@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Frame-aware playback filters for client addons: `audio().playbackFrameFilter((frame, pcm) -> ...)` gets an `IPlaybackFrame` per frame (speaker, internal and display name of the group that routed that exact frame, positional flag); the group travels with each frame through the jitter buffer, and concealment frames keep the last real frame's group (client API 2.1)
+- Frame-aware playback chains: `when(frame -> ..., branch -> ...)` runs a sub-chain only on matching frames (per-speaker state, reset when re-entered after a skipped frame; a throwing condition skips just its branch), and custom chain stages can override `Stage.beginFrame(IPlaybackFrame)`; capture chains reject both at registration (client API 2.2)
 
 ### Changed
 

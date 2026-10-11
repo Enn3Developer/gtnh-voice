@@ -47,7 +47,7 @@ class PcmChainTest {
     }
 
     private static PcmChainPipeline pipeline(java.util.function.Consumer<IPcmChain> spec) {
-        PcmChainRecorder recorder = new PcmChainRecorder();
+        PcmChainRecorder recorder = PcmChainRecorder.forPlayback("addon");
         spec.accept(recorder);
         return new PcmChainPipeline(recorder.compile());
     }
@@ -115,7 +115,7 @@ class PcmChainTest {
 
     @Test
     void bandPassRecordsTwoCascadedSections() {
-        PcmChainRecorder recorder = new PcmChainRecorder();
+        PcmChainRecorder recorder = PcmChainRecorder.forPlayback("addon");
         recorder.bandPass(300, 3400);
         assertEquals(
             2,
@@ -126,12 +126,12 @@ class PcmChainTest {
 
     @Test
     void emptySpecIsRejectedAtCompile() {
-        assertThrows(IllegalArgumentException.class, () -> new PcmChainRecorder().compile());
+        assertThrows(IllegalArgumentException.class, () -> PcmChainRecorder.forPlayback("addon").compile());
     }
 
     @Test
     void argumentsAreValidatedEagerly() {
-        PcmChainRecorder r = new PcmChainRecorder();
+        PcmChainRecorder r = PcmChainRecorder.forPlayback("addon");
         assertThrows(IllegalArgumentException.class, () -> r.highPass(0));
         assertThrows(IllegalArgumentException.class, () -> r.lowPass(VoiceFormat.SAMPLE_RATE));
         assertThrows(IllegalArgumentException.class, () -> r.highPass(1000, 0));
@@ -153,7 +153,7 @@ class PcmChainTest {
             built[0]++;
             return x -> x;
         };
-        PcmChainRecorder recorder = new PcmChainRecorder();
+        PcmChainRecorder recorder = PcmChainRecorder.forPlayback("addon");
         recorder.stage(supplier);
         List<Supplier<FrameStage>> factories = recorder.compile();
         new PcmChainPipeline(factories);
@@ -280,7 +280,7 @@ class PcmChainTest {
     }
 
     private static List<Supplier<FrameStage>> compile(java.util.function.Consumer<IPcmChain> spec) {
-        PcmChainRecorder recorder = new PcmChainRecorder();
+        PcmChainRecorder recorder = PcmChainRecorder.forPlayback("addon");
         spec.accept(recorder);
         return recorder.compile();
     }

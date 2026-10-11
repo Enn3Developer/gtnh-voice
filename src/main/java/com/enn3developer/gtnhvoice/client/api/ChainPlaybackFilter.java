@@ -40,7 +40,7 @@ final class ChainPlaybackFilter implements IPlaybackFrameFilter {
         // computeIfAbsent's capturing-lambda overhead per frame. Fall into the atomic build only on the miss.
         PcmChainPipeline pipeline = pipelines.get(sourceId);
         if (pipeline == null) pipeline = pipelines.computeIfAbsent(sourceId, id -> new PcmChainPipeline(factories));
-        return pipeline.process(pcm);
+        return pipeline.process(frame, pcm);
     }
 
     /** Drops one source's pipeline (its speaker is gone); the next frame for a new source rebuilds lazily. */

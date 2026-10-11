@@ -80,6 +80,9 @@ public interface IAudioRegistrationBuilder {
      * Like {@link #playbackFilter}, repeated calls ACCUMULATE - two chains both run, in registration order,
      * interleaved with any raw filters by call order - and a non-empty chain counts as a filter for
      * {@link #done()}'s empty-bundle check.
+     * <p>
+     * A playback chain is frame-aware: {@link IPcmChain#when} branches pick their frames by
+     * {@link IPlaybackFrame}, and custom stages receive it through {@link IPcmChain.Stage#beginFrame}.
      *
      * @param spec records the chain's stages onto the supplied {@link IPcmChain}; non-null
      * @throws NullPointerException     if {@code spec} is null
