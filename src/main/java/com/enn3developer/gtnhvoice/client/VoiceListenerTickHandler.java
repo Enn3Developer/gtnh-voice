@@ -1,7 +1,6 @@
 package com.enn3developer.gtnhvoice.client;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.audio.SoundCategory;
 import net.minecraft.client.entity.EntityClientPlayerMP;
 import net.minecraft.util.Vec3;
 
@@ -33,12 +32,6 @@ public class VoiceListenerTickHandler {
         VoiceSourceManager sourceManager = VoiceClientManager.getInstance()
             .getVoiceSourceManager();
         if (sourceManager == null) return;
-
-        // Same publish discipline as the listener snapshot below: the audio thread multiplies this into its
-        // listener gain instead of reading GameSettings itself.
-        sourceManager.getPlaybackManager()
-            .setMinecraftMasterVolume(
-                Minecraft.getMinecraft().gameSettings.getSoundLevel(SoundCategory.MASTER));
 
         EntityClientPlayerMP player = Minecraft.getMinecraft().thePlayer;
         if (player == null) return;

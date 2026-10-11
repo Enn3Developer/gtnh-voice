@@ -74,15 +74,10 @@ public class PlaybackManager {
     private volatile int requestedAuxiliarySends;
 
     // Master volume for all incoming voice, as an AL listener gain multiplier - it scales everything the user
-    // hears in the voice context, mic monitor included. Volatile: written by the client thread (settings
-    // slider), read by the playback thread every pump iteration. Seeded from Config in start().
+    // hears in the voice context, mic monitor included. Minecraft's own sound sliders deliberately play no part.
+    // Volatile: written by the client thread (settings slider), read by the playback thread every pump
+    // iteration. Seeded from Config in start().
     private volatile float masterVolume = 1f;
-
-    // Minecraft's own master sound volume, published every client tick by VoiceListenerTickHandler (the audio
-    // thread never reads live GameSettings state directly, mirroring the listener-snapshot discipline) and
-    // multiplied into the effective listener gain - so voice follows the game's sound slider like any other
-    // sound. Defaults to full until the first tick publishes the real value.
-    private volatile float minecraftMasterVolume = 1f;
 
     // While true, every source except the mic monitor is gated to zero gain - the settings GUI's Input tab
     // silencing other speakers so the user hears only their own mic. Volatile: client thread writes, and
@@ -194,23 +189,17 @@ public class PlaybackManager {
     }
 
     /**
-     * The effective AL listener gain (0..1): Minecraft's master sound volume times the voice-chat master
-     * volume, so voice respects both sliders. Read by the playback thread every pump iteration, so a change to
-     * either factor is audible within one poll interval and survives context rebuilds with no re-apply
-     * bookkeeping.
+     * The AL listener gain (0..1): the voice-chat master volume alone - independent of Minecraft's sound sliders,
+     * so muting the game leaves voice untouched. Read by the playback thread every pump iteration, so a change is
+     * audible within one poll interval and survives context rebuilds with no re-apply bookkeeping.
      */
     public float masterVolume() {
-        return minecraftMasterVolume * masterVolume;
+        return masterVolume;
     }
 
     /** Live voice-chat master-volume hotswap from the settings GUI; {@code volume} is a 0..1 multiplier. */
     public void setMasterVolume(float volume) {
         masterVolume = volume;
-    }
-
-    /** Per-tick publish of Minecraft's master sound volume (0..1) - see {@link #masterVolume()}. */
-    public void setMinecraftMasterVolume(float volume) {
-        minecraftMasterVolume = volume;
     }
 
     /**
