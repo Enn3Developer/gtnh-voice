@@ -22,6 +22,10 @@ import java.util.UUID;
  * isolation: a filter that throws, returns {@code null} or returns a wrong-length array is skipped for that
  * frame - the frame continues unfiltered into the rest of the chain - with a throttled error log; one broken
  * filter can neither mute voice nor kill the receive path.
+ * <p>
+ * This filter sees only the speaker's id. When the effect depends on how a frame was routed (which group
+ * delivered it, positional or flat), register an {@link IPlaybackFrameFilter} instead - same seam, same chain,
+ * plus the per-frame {@link IPlaybackFrame} context.
  */
 @FunctionalInterface
 public interface IPlaybackPcmFilter {

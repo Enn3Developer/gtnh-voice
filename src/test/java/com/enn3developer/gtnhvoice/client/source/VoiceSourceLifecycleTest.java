@@ -10,6 +10,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
 
+import com.enn3developer.gtnhvoice.api.client.IPlaybackFrame;
 import com.enn3developer.gtnhvoice.client.playback.PlaybackManager;
 import com.enn3developer.gtnhvoice.core.api.audio.codec.AudioDecoder;
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.clientbound.SourceAudioPacket;
@@ -41,7 +42,7 @@ class VoiceSourceLifecycleTest {
         public void updateSourcePosition(UUID sourceId, double x, double y, double z) {}
 
         @Override
-        public void submit(UUID sourceId, short[] frame) {}
+        public void submit(IPlaybackFrame frame, short[] pcm) {}
 
         @Override
         public void updateListener(double x, double y, double z, float lookX, float lookY, float lookZ) {}
@@ -86,7 +87,11 @@ class VoiceSourceLifecycleTest {
             return new CountingDecoder();
         };
 
-        VoiceSourceManager mgr = new VoiceSourceManager(new NoOpPlaybackManager(), factory, id -> Optional.of("test"));
+        VoiceSourceManager mgr = new VoiceSourceManager(
+            new NoOpPlaybackManager(),
+            factory,
+            id -> Optional.of("test"),
+            new GroupTable());
         mgr.start();
         mgr.stop();
 
@@ -112,7 +117,11 @@ class VoiceSourceLifecycleTest {
             return new CountingDecoder();
         };
 
-        VoiceSourceManager mgr = new VoiceSourceManager(new NoOpPlaybackManager(), factory, id -> Optional.empty());
+        VoiceSourceManager mgr = new VoiceSourceManager(
+            new NoOpPlaybackManager(),
+            factory,
+            id -> Optional.empty(),
+            new GroupTable());
         mgr.start();
 
         SourceAudioPacket packet = new SourceAudioPacket(
@@ -141,7 +150,8 @@ class VoiceSourceLifecycleTest {
         VoiceSourceManager mgr = new VoiceSourceManager(
             new NoOpPlaybackManager(),
             factory,
-            id -> present.contains(id) ? Optional.of("x") : Optional.empty());
+            id -> present.contains(id) ? Optional.of("x") : Optional.empty(),
+            new GroupTable());
 
         UUID id = UUID.randomUUID();
         present.add(id);
@@ -174,7 +184,11 @@ class VoiceSourceLifecycleTest {
             return new CountingDecoder();
         };
 
-        VoiceSourceManager mgr = new VoiceSourceManager(new NoOpPlaybackManager(), factory, id -> Optional.of("x"));
+        VoiceSourceManager mgr = new VoiceSourceManager(
+            new NoOpPlaybackManager(),
+            factory,
+            id -> Optional.of("x"),
+            new GroupTable());
         mgr.start();
 
         for (int i = 0; i < 65; i++) {
@@ -198,7 +212,11 @@ class VoiceSourceLifecycleTest {
     @Test
     void twoDestroysCloseDecoderOnce() throws Exception {
         CountingDecoder dec = new CountingDecoder();
-        VoiceSource src = new VoiceSource(UUID.randomUUID(), new NoOpPlaybackManager(), (sr, st, fs) -> dec);
+        VoiceSource src = new VoiceSource(
+            UUID.randomUUID(),
+            new NoOpPlaybackManager(),
+            (sr, st, fs) -> dec,
+            new GroupTable());
         src.create(16);
         src.destroy();
         src.destroy();

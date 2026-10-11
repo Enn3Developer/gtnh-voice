@@ -43,19 +43,25 @@ public final class VoiceSourceManager {
     private final PlaybackManager playbackManager;
     private final DecoderFactory decoderFactory;
     private final Function<UUID, Optional<String>> rosterLookup;
+    private final GroupTable groupTable;
 
     private ScheduledExecutorService watchdog;
     private volatile boolean running;
 
-    public VoiceSourceManager(Function<UUID, Optional<String>> rosterLookup) {
-        this(new PlaybackManager(), OpusCodecSupplier::createDecoder, rosterLookup);
+    /**
+     * @param rosterLookup speaker name by sourceId - a source is only created for a roster-present speaker
+     * @param groupTable   the session's group table, which attributes every frame at playout (see {@link VoiceSource})
+     */
+    public VoiceSourceManager(Function<UUID, Optional<String>> rosterLookup, GroupTable groupTable) {
+        this(new PlaybackManager(), OpusCodecSupplier::createDecoder, rosterLookup, groupTable);
     }
 
     VoiceSourceManager(PlaybackManager playbackManager, DecoderFactory decoderFactory,
-        Function<UUID, Optional<String>> rosterLookup) {
+        Function<UUID, Optional<String>> rosterLookup, GroupTable groupTable) {
         this.playbackManager = playbackManager;
         this.decoderFactory = decoderFactory;
         this.rosterLookup = rosterLookup;
+        this.groupTable = groupTable;
     }
 
     public void start() {
@@ -117,13 +123,16 @@ public final class VoiceSourceManager {
             packet.getX(),
             packet.getY(),
             packet.getZ(),
-            packet.isPositional());
+            packet.isPositional(),
+            packet.getGroupId());
     }
 
     /**
      * The wire group id of the last audio frame received from {@code sourceId} - which group's routing won this
      * recipient (see {@code SourceAudioPacket#getGroupId}) - or the local built-in's 0 before any frame landed.
-     * Read at render rate by the HUD; written per frame on the UDP receive thread.
+     * Read at render rate by the HUD; written per frame on the UDP receive thread. Arrival-time, deliberately: the
+     * HUD shows the newest routing as soon as it is known, while playback filters get each frame's own group at
+     * playout.
      */
     public short lastGroupIdFor(@NotNull UUID sourceId) {
         Short groupId = lastGroupIdBySource.get(sourceId);
@@ -175,7 +184,7 @@ public final class VoiceSourceManager {
     }
 
     private VoiceSource createSource(UUID sourceId, int distance) {
-        VoiceSource source = new VoiceSource(sourceId, playbackManager, decoderFactory);
+        VoiceSource source = new VoiceSource(sourceId, playbackManager, decoderFactory, groupTable);
         try {
             source.create(distance);
         } catch (CodecException e) {

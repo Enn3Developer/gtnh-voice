@@ -54,7 +54,9 @@ public final class VoiceProtocol {
     // v5: SourceAudioPacket grows a trailing short groupId - the wire id of the group that routed
     // the frame to this recipient (multi-group membership + priority dedup), resolved to a display
     // name via the group table synced on the reliable channel.
-    public static final byte PROTOCOL_VERSION = 5;
+    // v6: VoiceGroupTablePacket entries carry the group's internal (registry) name before its display name, so
+    // client playback filters can key on the stable name instead of presentation text.
+    public static final byte PROTOCOL_VERSION = 6;
 
     public static final byte REASON_VERSION_MISMATCH = 0;
     /** The protocol versions matched but the peer's ClientHello carried no usable X25519 public key. */

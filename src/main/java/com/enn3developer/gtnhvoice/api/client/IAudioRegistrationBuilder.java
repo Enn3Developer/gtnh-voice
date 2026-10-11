@@ -53,6 +53,21 @@ public interface IAudioRegistrationBuilder {
     IAudioRegistrationBuilder playbackFilter(@NotNull IPlaybackPcmFilter filter);
 
     /**
+     * Adds a frame-aware PCM filter on incoming voice to the bundle - an {@link IPlaybackFrameFilter} sees each
+     * frame's {@link IPlaybackFrame} context (speaker, routing group, positional flag) next to its samples; see
+     * there for the threading, format and failure contract. Deliberately NOT an overload of
+     * {@code playbackFilter(...)}: an implicitly-typed two-argument lambda would be ambiguous between the two, so
+     * this carries its own name.
+     * <p>
+     * Like {@link #playbackFilter}, repeated calls ACCUMULATE, frame filters interleave with raw filters and
+     * chains by call order (filters across all bundles run in registration order), and each one counts as a filter
+     * for {@link #done()}'s empty-bundle check and sits behind the bundle's filter gate.
+     *
+     * @throws NullPointerException if {@code filter} is null
+     */
+    IAudioRegistrationBuilder playbackFrameFilter(@NotNull IPlaybackFrameFilter filter);
+
+    /**
      * Adds a {@link IPcmChain} recipe as one playback filter - the fluent alternative to hand-writing an
      * {@link IPlaybackPcmFilter}. The {@code spec} lambda is invoked IMMEDIATELY to record the chain's stages;
      * the compiled filter then sits at the exact seam {@link #playbackFilter} occupies. The mod instantiates a

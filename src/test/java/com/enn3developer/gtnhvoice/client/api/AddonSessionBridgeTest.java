@@ -14,9 +14,12 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 import com.enn3developer.gtnhvoice.api.client.IAudioLifecycleListener;
+import com.enn3developer.gtnhvoice.api.client.IPlaybackFrame;
+import com.enn3developer.gtnhvoice.api.client.IPlaybackFrameFilter;
 import com.enn3developer.gtnhvoice.api.client.IPlaybackPcmFilter;
 import com.enn3developer.gtnhvoice.api.client.IRegistration;
 import com.enn3developer.gtnhvoice.api.client.VoiceFormat;
+import com.enn3developer.gtnhvoice.client.playback.PlaybackFrame;
 
 /**
  * Exercises {@link AddonSessionBridge}'s bookkeeping against recording fake targets, driven through the real
@@ -62,7 +65,7 @@ class AddonSessionBridgeTest {
         }
 
         @Override
-        public Object attachPlaybackFilter(String addonName, IPlaybackPcmFilter filter) {
+        public Object attachPlaybackFilter(String addonName, IPlaybackFrameFilter filter) {
             Attachment attachment = new Attachment(addonName, filter);
             filterAttaches.add(attachment);
             return attachment.handle;
@@ -305,6 +308,27 @@ class AddonSessionBridgeTest {
     }
 
     @Test
+    void frameFilterIsWiredBehindTheBundlesFilterGate() {
+        List<IPlaybackFrame> seen = new ArrayList<>();
+        IRegistration registration = addons.audio("addon")
+            .playbackFrameFilter((frame, pcm) -> {
+                seen.add(frame);
+                return pcm;
+            })
+            .initiallyEnabled(false)
+            .done();
+        bridge.onSessionStarted(playback);
+        IPlaybackFrameFilter wired = (IPlaybackFrameFilter) playback.filterAttaches.get(0).attached;
+        IPlaybackFrame frame = from(UUID.randomUUID());
+
+        wired.process(frame, new short[VoiceFormat.FRAME_SAMPLES]);
+        registration.setFilterEnabled(true);
+        wired.process(frame, new short[VoiceFormat.FRAME_SAMPLES]);
+
+        assertEquals(List.of(frame), seen, "gated off the frame filter never runs; gated on it sees the frame");
+    }
+
+    @Test
     void playbackChainCleanupSurvivesAThrowingAddonListenerPart() {
         // #1: the chain's per-source cleanup is wired as a SEPARATE listener attach, isolated from the addon's
         // own parts, so an addon sourceDestroying that throws can never abort pipeline eviction.
@@ -322,9 +346,9 @@ class AddonSessionBridgeTest {
             .get(0);
 
         UUID src = UUID.randomUUID();
-        short[] fresh = chain.process(UUID.randomUUID(), dcFrame()); // virgin first-frame response
-        chain.process(src, dcFrame()); // src speaks
-        chain.process(src, dcFrame()); // dirty src's pipeline
+        short[] fresh = chain.process(from(UUID.randomUUID()), dcFrame()); // virgin first-frame response
+        chain.process(from(src), dcFrame()); // src speaks
+        chain.process(from(src), dcFrame()); // dirty src's pipeline
 
         // Dispatch sourceDestroying to every attached listener with the per-attach isolation
         // AddonListenerAdapter provides in production: the addon part throws, the next attach must still fire.
@@ -341,8 +365,13 @@ class AddonSessionBridgeTest {
         assertEquals(2, dispatched, "the addon listener and the mod's chain-cleanup listener are separate attaches");
         assertArrayEquals(
             fresh,
-            chain.process(src, dcFrame()),
+            chain.process(from(src), dcFrame()),
             "the isolated cleanup listener evicted src despite the addon part throwing");
+    }
+
+    /** A frame context for {@code sourceId} - chain filters key their per-source pipelines off its source id. */
+    private static IPlaybackFrame from(UUID sourceId) {
+        return new PlaybackFrame(sourceId, "local", "local", true);
     }
 
     private static short[] dcFrame() {

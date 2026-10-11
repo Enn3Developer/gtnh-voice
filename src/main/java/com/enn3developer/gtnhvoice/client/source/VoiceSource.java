@@ -3,11 +3,13 @@ package com.enn3developer.gtnhvoice.client.source;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
 
 import org.jetbrains.annotations.NotNull;
 
 import com.enn3developer.gtnhvoice.GtnhVoice;
 import com.enn3developer.gtnhvoice.client.PlayerVoiceSettings;
+import com.enn3developer.gtnhvoice.client.playback.PlaybackFrame;
 import com.enn3developer.gtnhvoice.client.playback.PlaybackManager;
 import com.enn3developer.gtnhvoice.core.api.audio.codec.AudioDecoder;
 import com.enn3developer.gtnhvoice.core.api.audio.codec.CodecException;
@@ -19,14 +21,20 @@ import com.enn3developer.gtnhvoice.core.audio.jitter.AdaptiveJitterBuffer;
  * sourceIds), its own {@link AdaptiveJitterBuffer}, and its own positioned AL source (owned by the shared
  * {@link PlaybackManager}, keyed by {@link #sourceId}).
  * <p>
- * Raw (undecoded) frames are offered into the jitter buffer keyed by sequence number as packets arrive; a
- * dedicated poller thread drains it, sleeping via {@link AdaptiveJitterBuffer#awaitNextEvent} until the exact
- * moment the schedule has work (head frame due, or a concealable gap slot going overdue) rather than polling
- * on a fixed tick - emission is paced by the buffer's own 20ms due-time schedule, and an idle source's poller
- * sleeps indefinitely until the next packet arrives. Decoding happens in the order the buffer hands frames
+ * Raw (undecoded) frames are offered into the jitter buffer keyed by sequence number as packets arrive, each tagged
+ * with the routing the server stamped on its packet ({@link FrameRouting}: group id, positional flag, speaker
+ * position); a dedicated poller thread drains it, sleeping via {@link AdaptiveJitterBuffer#awaitNextEvent} until
+ * the exact moment the schedule has work (head frame due, or a concealable gap slot going overdue) rather than
+ * polling on a fixed tick - emission is paced by the buffer's own 20ms due-time schedule, and an idle source's
+ * poller sleeps indefinitely until the next packet arrives. Decoding happens in the order the buffer hands frames
  * back, so out-of-order UDP arrival doesn't feed the stateful decoder out of order. Isolated mid-stream packet
  * loss is masked with Opus packet loss concealment instead of stalling playback - see {@link #emitNextFrame()}
  * for the exact conditions.
+ * <p>
+ * Routing is applied at PLAYOUT, not arrival: as a frame leaves the buffer its positional flag and position go to
+ * the AL source and its group is resolved through the {@link GroupTable} into the {@link PlaybackFrame} context
+ * the playback filters see. A concealment frame reuses the context of the last real frame emitted - the frame it
+ * continues - and re-applies nothing, since nothing new arrived.
  * <p>
  * Created lazily by {@link VoiceSourceManager} on the first {@code SourceAudioPacket} seen for a given sourceId,
  * which stays stable for the speaker's whole session. Two distinct lifecycle events, both driven by the manager:
@@ -49,7 +57,9 @@ final class VoiceSource {
     private final UUID sourceId;
     private final PlaybackManager playbackManager;
     private final DecoderFactory decoderFactory;
-    private final AdaptiveJitterBuffer jitterBuffer;
+    private final GroupTable groupTable;
+    private final LongSupplier clock;
+    private final AdaptiveJitterBuffer<FrameRouting> jitterBuffer;
     private final AtomicBoolean destroyed = new AtomicBoolean();
 
     private AudioDecoder decoder;
@@ -68,27 +78,47 @@ final class VoiceSource {
     private final AtomicLong lastPollerFaultLogMillis = new AtomicLong();
 
     // Decode bookkeeping, only ever touched from the poller thread.
+    // Context of the last real frame emitted, inherited by concealment frames. Non-null whenever concealment can
+    // fire: concealment requires emittedSinceReset, which only a real frame (that set this first) can raise.
+    private PlaybackFrame lastFrameContext;
     private long lastEmittedSequence = -1;
     private int consecutivePlcFrames;
     private boolean emittedSinceReset;
     private long framesEmitted;
     private long framesConcealed;
 
-    VoiceSource(@NotNull UUID sourceId, @NotNull PlaybackManager playbackManager, DecoderFactory decoderFactory) {
+    VoiceSource(@NotNull UUID sourceId, @NotNull PlaybackManager playbackManager, DecoderFactory decoderFactory,
+        @NotNull GroupTable groupTable) {
+        this(sourceId, playbackManager, decoderFactory, groupTable, System::currentTimeMillis);
+    }
+
+    /** @param clock drives the jitter schedule and packet timestamps; the watchdog's {@code now} must agree */
+    VoiceSource(@NotNull UUID sourceId, @NotNull PlaybackManager playbackManager, DecoderFactory decoderFactory,
+        @NotNull GroupTable groupTable, @NotNull LongSupplier clock) {
         this.sourceId = sourceId;
         this.playbackManager = playbackManager;
         this.decoderFactory = decoderFactory;
-        this.jitterBuffer = new AdaptiveJitterBuffer(System::currentTimeMillis, JITTER_INITIAL_DELAY_FRAMES);
+        this.groupTable = groupTable;
+        this.clock = clock;
+        this.jitterBuffer = new AdaptiveJitterBuffer<>(clock, JITTER_INITIAL_DELAY_FRAMES);
     }
 
     void create(int distance) throws CodecException {
-        this.distance = distance;
-        decoder = decoderFactory.create(SAMPLE_RATE, false, FRAME_SIZE);
+        open(distance);
 
         running = true;
         pollerThread = new Thread(this::runPoller, "gtnhvoice-jitterbuffer-" + sourceId);
         pollerThread.setDaemon(true);
         pollerThread.start();
+    }
+
+    /**
+     * {@link #create} minus the poller thread: opens the decoder and registers the AL source. Package-private so
+     * tests can drive {@link #emitNextFrame()} by hand against a fake clock instead of racing a real poller.
+     */
+    void open(int distance) throws CodecException {
+        this.distance = distance;
+        decoder = decoderFactory.create(SAMPLE_RATE, false, FRAME_SIZE);
 
         playbackManager.createSource(
             sourceId,
@@ -96,13 +126,14 @@ final class VoiceSource {
             PlayerVoiceSettings.getInstance()
                 .getVolume(sourceId));
 
-        lastPacketMillis = System.currentTimeMillis();
+        lastPacketMillis = clock.getAsLong();
         segmentActive = true;
         GtnhVoice.LOG.info("[VoiceSource] Created for sourceId={}", sourceId);
     }
 
-    void handleAudio(long sequenceNumber, byte[] opusData, double x, double y, double z, boolean positional) {
-        lastPacketMillis = System.currentTimeMillis();
+    void handleAudio(long sequenceNumber, byte[] opusData, double x, double y, double z, boolean positional,
+        short groupId) {
+        lastPacketMillis = clock.getAsLong();
         if (!segmentActive) {
             segmentActive = true;
             GtnhVoice.LOG.info("[VoiceSource] Segment resumed for sourceId={}", sourceId);
@@ -119,12 +150,10 @@ final class VoiceSource {
             distance,
             PlayerVoiceSettings.getInstance()
                 .getVolume(sourceId));
-        // Per packet, not per source: the server-side group decides positional-vs-flat frame by frame, so a
-        // speaker switching groups mid-stream flips the existing AL source's mode without teardown. The position
-        // is recorded even for flat frames so a flip back to positional resumes from a fresh location.
-        playbackManager.setPositional(sourceId, positional);
-        playbackManager.updateSourcePosition(sourceId, x, y, z);
-        jitterBuffer.offer(sequenceNumber, opusData);
+        // The routing rides WITH the frame and is applied when the frame plays out (emitNextFrame): the jitter
+        // buffer reorders and delays frames, so applying it here would let a newer packet's group/mode/position
+        // reach playback ahead of the older frames still buffered.
+        jitterBuffer.offer(sequenceNumber, opusData, new FrameRouting(groupId, positional, x, y, z));
     }
 
     /**
@@ -249,9 +278,10 @@ final class VoiceSource {
      * mid-stream loss - the missing slot's playback time has passed, a later frame is already buffered (proof
      * the stream is still flowing, so this isn't the sender pausing), and that later frame isn't itself due yet
      * (if it is, the whole gap is stale and we skip ahead rather than replaying the outage late and dragging
-     * extra latency behind us for the rest of the segment).
+     * extra latency behind us for the rest of the segment). Package-private as the poller's single step, so tests
+     * can drive emission by hand (see {@link #open}).
      */
-    private boolean emitNextFrame() {
+    boolean emitNextFrame() {
         // Frames at or below the last emitted sequence arrived too late - their slot was already played or
         // concealed, and decoding them now would feed the stateful decoder out of order.
         jitterBuffer.discardThrough(lastEmittedSequence);
@@ -264,14 +294,15 @@ final class VoiceSource {
             return true;
         }
 
-        AdaptiveJitterBuffer.Frame frame = jitterBuffer.poll();
+        AdaptiveJitterBuffer.Frame<FrameRouting> frame = jitterBuffer.poll();
         if (frame == null) return false; // head frame isn't due yet (pre-buffering phase)
 
         lastEmittedSequence = frame.sequenceNumber;
         consecutivePlcFrames = 0;
+        lastFrameContext = applyRouting(frame.tag);
         try {
             short[] decoded = decoder.decode(frame.data);
-            playbackManager.submit(sourceId, decoded);
+            playbackManager.submit(lastFrameContext, decoded);
             framesEmitted++;
             emittedSinceReset = true;
         } catch (CodecException e) {
@@ -298,10 +329,26 @@ final class VoiceSource {
 
         try {
             short[] concealed = decoder.decode(null); // null input = Opus packet loss concealment
-            playbackManager.submit(sourceId, concealed);
+            playbackManager.submit(lastFrameContext, concealed);
             framesConcealed++;
         } catch (CodecException e) {
             GtnhVoice.LOG.error("[VoiceSource] Failed to conceal lost frame for sourceId={}", sourceId, e);
         }
     }
+
+    /**
+     * Hands a real frame's routing to playback as it plays out: positional flag and position to the AL source
+     * (per frame, not per source - the server-side group decides positional-vs-flat frame by frame, so a speaker
+     * switching groups mid-stream flips the existing AL source's mode without teardown; the position is recorded
+     * even for flat frames so a flip back to positional resumes from a fresh location), and the group resolved
+     * into the frame context every playback filter sees.
+     */
+    private PlaybackFrame applyRouting(FrameRouting routing) {
+        playbackManager.setPositional(sourceId, routing.positional());
+        playbackManager.updateSourcePosition(sourceId, routing.x(), routing.y(), routing.z());
+        return PlaybackFrame.of(sourceId, groupTable.resolve(routing.groupId()), routing.positional());
+    }
+
+    /** The routing the server stamped on one audio packet, carried through the jitter buffer with its frame. */
+    private record FrameRouting(short groupId, boolean positional, double x, double y, double z) {}
 }

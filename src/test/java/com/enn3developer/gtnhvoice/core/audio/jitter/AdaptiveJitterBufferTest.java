@@ -161,6 +161,26 @@ class AdaptiveJitterBufferTest {
         assertTrue(buffer.isSequenceOverdue(1));
     }
 
+    @Test
+    void eachFrameComesBackWithTheTagItWasOfferedWithDespiteReordering() {
+        FakeClock clock = new FakeClock();
+        AdaptiveJitterBuffer<String> buffer = new AdaptiveJitterBuffer<>(clock, INITIAL_DELAY_FRAMES);
+
+        buffer.offer(2, payloadFor(2), "charlie");
+        buffer.offer(0, payloadFor(0), "alpha");
+        buffer.offer(1, payloadFor(1), "bravo");
+        clock.advance(10_000L); // every slot is long due
+
+        assertEquals(
+            List.of("0:alpha", "1:bravo", "2:charlie"),
+            List.of(describe(buffer.poll()), describe(buffer.poll()), describe(buffer.poll())),
+            "frames come out in sequence order, each still carrying its own tag");
+    }
+
+    private static String describe(AdaptiveJitterBuffer.Frame<String> frame) {
+        return frame.sequenceNumber + ":" + frame.tag;
+    }
+
     private static void assertDoesNotThrowWhileDraining(Runnable runnable) {
         try {
             runnable.run();

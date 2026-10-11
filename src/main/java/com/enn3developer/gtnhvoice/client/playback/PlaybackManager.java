@@ -15,7 +15,8 @@ import java.util.concurrent.atomic.AtomicLong;
 import com.enn3developer.gtnhvoice.Config;
 import com.enn3developer.gtnhvoice.GtnhVoice;
 import com.enn3developer.gtnhvoice.api.client.IAudioLifecycleListener;
-import com.enn3developer.gtnhvoice.api.client.IPlaybackPcmFilter;
+import com.enn3developer.gtnhvoice.api.client.IPlaybackFrame;
+import com.enn3developer.gtnhvoice.api.client.IPlaybackFrameFilter;
 import com.enn3developer.gtnhvoice.api.client.ISourceMetadata;
 import com.enn3developer.gtnhvoice.core.api.util.AudioUtil;
 import com.enn3developer.gtnhvoice.core.api.util.LogThrottle;
@@ -27,8 +28,8 @@ import com.enn3developer.gtnhvoice.core.api.util.LogThrottle;
  * {@code VoiceSource} that registers here - each gets its own positioned AL source, not its own device.
  * <p>
  * Frame queues and positions are kept in plain {@link ConcurrentHashMap}s so the hot path ({@link #submit} /
- * {@link #updateSourcePosition}, called from the network receive path every ~20ms per active source) never has to
- * cross onto the playback thread. Only the AL object lifecycle (create/destroy/reset) is marshalled onto
+ * {@link #updateSourcePosition}, called from each source's decode thread every ~20ms per active source) never has
+ * to cross onto the playback thread. Only the AL object lifecycle (create/destroy/reset) is marshalled onto
  * {@link PlaybackThread} via its command queue, since only that thread may call {@code AL10}/{@code ALC10}
  * functions.
  */
@@ -250,27 +251,28 @@ public class PlaybackManager {
     }
 
     /**
-     * Submits a decoded 960-sample mono PCM frame for {@code sourceId}. The frame first passes through the
-     * registered {@link PlaybackPcmFilter} chain (on this calling thread - see the interface for the full
-     * threading and isolation contract), then drops the oldest queued frame if that source's queue is full, to
-     * keep playback latency bounded rather than growing unboundedly under sustained overload. No-op if the
-     * source hasn't been registered via {@link #createSource(UUID, int, float)}.
+     * Submits a decoded 960-sample mono PCM frame for {@code frame.sourceId()}. The frame first passes through the
+     * registered {@link PlaybackPcmFilter} chain with its {@link IPlaybackFrame} context (on this calling thread -
+     * see the interface for the full threading and isolation contract), then drops the oldest queued frame if that
+     * source's queue is full, to keep playback latency bounded rather than growing unboundedly under sustained
+     * overload. No-op if the source hasn't been registered via {@link #createSource(UUID, int, float)}.
      */
-    public void submit(UUID sourceId, short[] frame) {
+    public void submit(IPlaybackFrame frame, short[] pcm) {
+        UUID sourceId = frame.sourceId();
         BlockingQueue<short[]> queue = frameQueues.get(sourceId);
         if (queue == null) return;
 
-        frame = applyPcmFilters(sourceId, frame);
+        pcm = applyPcmFilters(frame, pcm);
 
         // Same -60..0 dB -> 0..1 normalization as the capture-side mic meter, measured post-filter (what
         // will actually be heard). One RMS pass per 20ms frame per speaking source - negligible.
-        double levelDb = AudioUtil.calculateAudioLevel(frame, 0, frame.length);
+        double levelDb = AudioUtil.calculateAudioLevel(pcm, 0, pcm.length);
         float normalized = Math.max(0f, Math.min(1f, (float) ((levelDb + 60.0) / 60.0)));
         sourceLevels.put(sourceId, new LevelSample(normalized, System.currentTimeMillis()));
 
-        if (!queue.offer(frame)) {
+        if (!queue.offer(pcm)) {
             queue.poll();
-            queue.offer(frame);
+            queue.offer(pcm);
         }
     }
 
@@ -309,21 +311,21 @@ public class PlaybackManager {
     }
 
     /**
-     * Runs {@code frame} through the filter chain in registration order, feeding each filter's output to the
-     * next. A filter that throws, returns {@code null}, or returns a wrong-length array is skipped for this
+     * Runs {@code pcm} through the filter chain in registration order, feeding each filter's output to the
+     * next; every filter sees the same {@code frame} context. A filter that throws, returns {@code null}, or returns a wrong-length array is skipped for this
      * frame - the current frame continues unfiltered into the rest of the chain - with an error log throttled to
      * one per {@value #FILTER_ERROR_LOG_INTERVAL_MILLIS}ms, mirroring {@code PlaybackThread}'s command isolation
      * (minus its AL error drain, which has no business on this non-AL thread). With no filters registered this
      * is a single {@code isEmpty} check.
      */
-    private short[] applyPcmFilters(UUID sourceId, short[] frame) {
-        if (pcmFilters.isEmpty()) return frame;
+    private short[] applyPcmFilters(IPlaybackFrame frame, short[] pcm) {
+        if (pcmFilters.isEmpty()) return pcm;
 
         for (PlaybackPcmFilter filter : pcmFilters) {
             try {
-                short[] processed = filter.process(sourceId, frame);
+                short[] processed = filter.process(frame, pcm);
                 if (processed != null && processed.length == FRAME_SAMPLES) {
-                    frame = processed;
+                    pcm = processed;
                     continue;
                 }
                 logFilterFailure(filter, "returned " + describeBadOutput(processed), null);
@@ -331,7 +333,7 @@ public class PlaybackManager {
                 logFilterFailure(filter, "threw", t);
             }
         }
-        return frame;
+        return pcm;
     }
 
     private static String describeBadOutput(short[] processed) {
@@ -344,8 +346,9 @@ public class PlaybackManager {
     }
 
     /**
-     * Records the latest known absolute world position of {@code sourceId}'s speaker. Picked up by the playback
-     * thread on its next loop iteration and applied to that source's AL position.
+     * Records the latest known absolute world position of {@code sourceId}'s speaker - the position that arrived
+     * with the frame now playing out, applied by the source's decode thread just before it submits that frame.
+     * Picked up by the playback thread on its next loop iteration and applied to that source's AL position.
      */
     public void updateSourcePosition(UUID sourceId, double x, double y, double z) {
         if (!frameQueues.containsKey(sourceId)) return;
@@ -354,9 +357,11 @@ public class PlaybackManager {
 
     /**
      * Records whether {@code sourceId} should play positionally (proximity/3D) or flat (full gain, no
-     * spatialization). Arrives with every audio packet - the server-side group decides per frame - and is picked
-     * up by the playback thread on its next loop iteration, which flips the existing AL source in place only when
-     * the mode actually changed. No-op if the source hasn't been registered via {@link #createSource}.
+     * spatialization). The server-side group decides per frame; the source's decode thread applies each frame's
+     * flag just before it submits that frame, so a group switch lands with the first frame the new group routed
+     * rather than a jitter-buffer delay early. Picked up by the playback thread on its next loop iteration, which
+     * flips the existing AL source in place only when the mode actually changed. No-op if the source hasn't been
+     * registered via {@link #createSource}.
      */
     public void setPositional(UUID sourceId, boolean positional) {
         if (!frameQueues.containsKey(sourceId)) return;
@@ -372,15 +377,15 @@ public class PlaybackManager {
      * Callable from any thread (typically inside {@link PlaybackLifecycleListener#audioTick()}). The position
      * triple is always internally consistent - {@link #updateSourcePosition} replaces the array wholesale, never
      * mutates it - but position and positional flag are read without a common lock, so the two may come from
-     * instants up to one packet (~20ms) apart. That relaxed consistency is deliberate: it's plenty for
+     * instants up to one frame (~20ms) apart. That relaxed consistency is deliberate: it's plenty for
      * spatial-audio consumers, and locking the hot receive path to do better isn't worth it. The returned
      * snapshot is a detached copy - later updates never mutate an already-returned instance.
      * <p>
      * A voice {@code sourceId} IS the speaking player's UUID (see {@code VoiceClientManager#resolveName}), so
      * consumers needing the player entity or name resolve it directly; this query deliberately duplicates no
      * roster data. Fresh-source edge: {@link #createSource} seeds the position with {@code (0,0,0)} until the
-     * first audio packet lands (~20ms), so a source reporting exactly the origin may simply be brand new -
-     * consumers doing raycasts should treat it with suspicion or wait a tick.
+     * first frame plays out (one jitter-buffer delay, typically 20-100ms), so a source reporting exactly the
+     * origin may simply be brand new - consumers doing raycasts should treat it with suspicion or wait a tick.
      */
     Optional<SourceMetadata> sourceMetadata(UUID sourceId) {
         double[] position = positions.get(sourceId);
@@ -523,7 +528,7 @@ public class PlaybackManager {
      * start flowing through on the receive path. Returns the opaque handle
      * {@link #detachAddonPlaybackFilter} takes.
      */
-    public Object attachAddonPlaybackFilter(String addonName, IPlaybackPcmFilter filter) {
+    public Object attachAddonPlaybackFilter(String addonName, IPlaybackFrameFilter filter) {
         Objects.requireNonNull(addonName, "addonName");
         Objects.requireNonNull(filter, "filter");
 

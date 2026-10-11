@@ -15,8 +15,12 @@ import org.junit.jupiter.api.Test;
 
 import com.enn3developer.gtnhvoice.api.client.IAudioLifecycleListener;
 import com.enn3developer.gtnhvoice.api.client.IAudioRegistrationBuilder;
+import com.enn3developer.gtnhvoice.api.client.IPlaybackFrame;
+import com.enn3developer.gtnhvoice.api.client.IPlaybackFrameFilter;
 import com.enn3developer.gtnhvoice.api.client.IPlaybackPcmFilter;
 import com.enn3developer.gtnhvoice.api.client.IRegistration;
+import com.enn3developer.gtnhvoice.api.client.VoiceFormat;
+import com.enn3developer.gtnhvoice.client.playback.PlaybackFrame;
 
 /**
  * Exercises the playback-side registration pipeline as plain objects - builder assembly (per-event lambdas and
@@ -34,6 +38,19 @@ class AudioRegistrationBuilderTest {
         List<AudioRegistrationBundle> bundles = backend.audioBundlesView();
         assertEquals(1, bundles.size());
         return bundles.get(0);
+    }
+
+    private static IPlaybackFrame frameFrom(UUID sourceId) {
+        return new PlaybackFrame(sourceId, "radio", "Radio", false);
+    }
+
+    /** Feeds one silent frame through every filter of {@code bundle} in stored order, like the playback chain. */
+    private static short[] runPlaybackFilters(AudioRegistrationBundle bundle, IPlaybackFrame frame) {
+        short[] pcm = new short[VoiceFormat.FRAME_SAMPLES];
+        for (IPlaybackFrameFilter filter : bundle.playbackFilters()) {
+            pcm = filter.process(frame, pcm);
+        }
+        return pcm;
     }
 
     @Test
@@ -113,16 +130,24 @@ class AudioRegistrationBuilderTest {
 
     @Test
     void filterOnlyBundleHasNoListenerAndKeepsFilterOrder() {
-        IPlaybackPcmFilter first = (sourceId, frame) -> frame;
-        IPlaybackPcmFilter second = (sourceId, frame) -> frame;
+        List<String> calls = new ArrayList<>();
+        IPlaybackPcmFilter first = (sourceId, frame) -> {
+            calls.add("first");
+            return frame;
+        };
+        IPlaybackPcmFilter second = (sourceId, frame) -> {
+            calls.add("second");
+            return frame;
+        };
         addons.audio("addon")
             .playbackFilter(first)
             .playbackFilter(second)
             .done();
 
         AudioRegistrationBundle bundle = onlyBundle();
+        runPlaybackFilters(bundle, frameFrom(UUID.randomUUID()));
         assertNull(bundle.listener());
-        assertEquals(Arrays.asList(first, second), bundle.playbackFilters());
+        assertEquals(Arrays.asList("first", "second"), calls);
         assertEquals("addon", bundle.addonName());
     }
 
@@ -184,6 +209,74 @@ class AudioRegistrationBuilderTest {
         assertThrows(NullPointerException.class, () -> builder.onSourceDestroying(null));
         assertThrows(NullPointerException.class, () -> builder.onAudioTick(null));
         assertThrows(NullPointerException.class, () -> builder.playbackFilter(null));
+        assertThrows(NullPointerException.class, () -> builder.playbackFrameFilter(null));
+    }
+
+    @Test
+    void frameFilterSeesTheContextOfTheFrameItProcesses() {
+        List<IPlaybackFrame> seen = new ArrayList<>();
+        addons.audio("addon")
+            .playbackFrameFilter((frame, pcm) -> {
+                seen.add(frame);
+                return pcm;
+            })
+            .done();
+        IPlaybackFrame radioFrame = frameFrom(UUID.randomUUID());
+
+        runPlaybackFilters(onlyBundle(), radioFrame);
+
+        assertEquals(List.of(radioFrame), seen);
+    }
+
+    @Test
+    void rawFilterStillGetsTheSpeakerIdAndTheSamplesAndItsOutputFlowsOn() {
+        UUID speaker = UUID.randomUUID();
+        List<UUID> seenIds = new ArrayList<>();
+        short[] replacement = new short[VoiceFormat.FRAME_SAMPLES];
+        replacement[0] = 42;
+        addons.audio("addon")
+            .playbackFilter((sourceId, frame) -> {
+                seenIds.add(sourceId);
+                return replacement;
+            })
+            .done();
+
+        short[] out = runPlaybackFilters(onlyBundle(), frameFrom(speaker));
+
+        assertEquals(List.of(speaker), seenIds, "a frame-blind filter is called with the frame's source id");
+        assertSame(replacement, out, "its output is what the chain carries on");
+    }
+
+    @Test
+    void rawAndFrameFiltersRunInCallOrderAcrossKinds() {
+        List<String> calls = new ArrayList<>();
+        addons.audio("addon")
+            .playbackFilter((sourceId, frame) -> {
+                calls.add("raw-1");
+                return frame;
+            })
+            .playbackFrameFilter((frame, pcm) -> {
+                calls.add("frame");
+                return pcm;
+            })
+            .playbackFilter((sourceId, frame) -> {
+                calls.add("raw-2");
+                return frame;
+            })
+            .done();
+
+        runPlaybackFilters(onlyBundle(), frameFrom(UUID.randomUUID()));
+
+        assertEquals(List.of("raw-1", "frame", "raw-2"), calls);
+    }
+
+    @Test
+    void frameFilterAloneMakesTheBundleNonEmpty() {
+        addons.audio("addon")
+            .playbackFrameFilter((frame, pcm) -> pcm)
+            .done();
+
+        assertEquals(1, onlyBundle().playbackFilters().size());
     }
 
     @Test

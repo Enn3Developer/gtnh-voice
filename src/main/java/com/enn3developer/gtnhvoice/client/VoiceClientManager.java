@@ -23,7 +23,9 @@ import com.enn3developer.gtnhvoice.GtnhVoice;
 import com.enn3developer.gtnhvoice.Tags;
 import com.enn3developer.gtnhvoice.api.client.ICapturePcmFilter;
 import com.enn3developer.gtnhvoice.client.capture.CaptureManager;
+import com.enn3developer.gtnhvoice.client.playback.PlaybackFrame;
 import com.enn3developer.gtnhvoice.client.playback.PlaybackManager;
+import com.enn3developer.gtnhvoice.client.source.GroupTable;
 import com.enn3developer.gtnhvoice.client.source.VoiceSourceManager;
 import com.enn3developer.gtnhvoice.core.api.audio.codec.AudioEncoder;
 import com.enn3developer.gtnhvoice.core.api.audio.codec.CodecException;
@@ -40,6 +42,7 @@ import com.enn3developer.gtnhvoice.core.proto.packets.udp.clientbound.SourceAudi
 import com.enn3developer.gtnhvoice.core.proto.packets.udp.clientbound.SourceEndPacket;
 import com.enn3developer.gtnhvoice.core.transport.UdpTransportClient;
 import com.enn3developer.gtnhvoice.network.ClientHelloPacket;
+import com.enn3developer.gtnhvoice.network.GroupNames;
 import com.enn3developer.gtnhvoice.network.NetworkHandler;
 import com.enn3developer.gtnhvoice.network.ServerHelloPacket;
 import com.enn3developer.gtnhvoice.network.ServerRejectPacket;
@@ -147,9 +150,15 @@ public final class VoiceClientManager {
      * FML channel handler, read every frame by the HUD.
      */
     private volatile String groupDisplayName = DEFAULT_GROUP_DISPLAY_NAME;
-    // Wire group id -> display name, synced via VoiceGroupTablePacket; read at render rate by the HUD to
-    // attribute per-speaker audio (see groupDisplayNameFor).
-    private final Map<Short, String> groupTable = new ConcurrentHashMap<>();
+    // Wire group id -> names, synced via VoiceGroupTablePacket. Outlives each per-session VoiceSourceManager (the
+    // table lands before ServerHello creates the new one): sources resolve every frame's group through it at
+    // playout, and the HUD attributes per-speaker audio with it (see groupDisplayNameFor).
+    private final GroupTable groupTable = new GroupTable();
+
+    // Mic-monitor frames are the local player's own mic: no routing group ever touched them, and the monitor
+    // source is created non-positional (applyMicMonitor).
+    private static final PlaybackFrame MIC_MONITOR_FRAME = PlaybackFrame
+        .of(PlaybackManager.MIC_MONITOR_SOURCE_ID, GroupTable.LOCAL, false);
 
     public static VoiceClientManager getInstance() {
         return INSTANCE;
@@ -280,7 +289,7 @@ public final class VoiceClientManager {
         VoiceSourceManager sourceManager = voiceSourceManager;
         if (sourceManager == null) return;
         sourceManager.getPlaybackManager()
-            .submit(PlaybackManager.MIC_MONITOR_SOURCE_ID, frame);
+            .submit(MIC_MONITOR_FRAME, frame);
     }
 
     /**
@@ -437,8 +446,7 @@ public final class VoiceClientManager {
     }
 
     public synchronized void handleGroupTable(@NotNull VoiceGroupTablePacket packet) {
-        groupTable.clear();
-        groupTable.putAll(packet.getGroupTable());
+        groupTable.replace(packet.getGroupTable());
         GtnhVoice.LOG.info("Client voice group table applied: {}", groupTable);
     }
 
@@ -451,8 +459,8 @@ public final class VoiceClientManager {
     public String groupDisplayNameFor(@NotNull UUID sourceId) {
         VoiceSourceManager sourceManager = voiceSourceManager;
         if (sourceManager == null) return "";
-        String name = groupTable.get(sourceManager.lastGroupIdFor(sourceId));
-        return name == null ? "" : name;
+        GroupNames names = groupTable.lookup(sourceManager.lastGroupIdFor(sourceId));
+        return names == null ? "" : names.displayName();
     }
 
     public synchronized void handleServerHello(@NotNull ServerHelloPacket packet) {
@@ -526,7 +534,7 @@ public final class VoiceClientManager {
                 packet.getFrameSize(),
                 packet.getSampleRate());
 
-            voiceSourceManager = new VoiceSourceManager(this::resolveName);
+            voiceSourceManager = new VoiceSourceManager(this::resolveName, groupTable);
             voiceSourceManager.start();
             // User already sitting on the settings GUI's Input tab when the session came up: wire the monitor
             // onto the fresh playback so "mic is always live on that tab" holds across session starts too.

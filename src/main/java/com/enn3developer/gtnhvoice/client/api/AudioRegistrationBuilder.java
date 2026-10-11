@@ -13,6 +13,7 @@ import com.enn3developer.gtnhvoice.api.client.IAudioLifecycleListener;
 import com.enn3developer.gtnhvoice.api.client.IAudioRegistrationBuilder;
 import com.enn3developer.gtnhvoice.api.client.IContextCreated;
 import com.enn3developer.gtnhvoice.api.client.IPcmChain;
+import com.enn3developer.gtnhvoice.api.client.IPlaybackFrameFilter;
 import com.enn3developer.gtnhvoice.api.client.IPlaybackPcmFilter;
 import com.enn3developer.gtnhvoice.api.client.IRegistration;
 import com.enn3developer.gtnhvoice.api.client.ISourceEvent;
@@ -22,6 +23,9 @@ import com.enn3developer.gtnhvoice.api.client.ISourceEvent;
  * {@code IAudioLifecycleListener} overrides as they arrive, so one list preserves exact registration order
  * across whole listeners and callbacks alike; {@link #done()} collapses that list into the bundle's single
  * assembled listener (unwrapped when there is exactly one part, {@link CompositeLifecycleListener} otherwise).
+ * Playback filters of every kind land in one list in call order: raw {@link IPlaybackPcmFilter}s are adapted to
+ * the {@link IPlaybackFrameFilter} shape on the way in (they get {@code frame.sourceId()}, exactly what they always
+ * got), so registration order across kinds is preserved by construction.
  * Not thread-safe - a builder is a short-lived, single-caller object; only the activated bundle is shared.
  */
 final class AudioRegistrationBuilder implements IAudioRegistrationBuilder {
@@ -31,7 +35,7 @@ final class AudioRegistrationBuilder implements IAudioRegistrationBuilder {
     private final ClientApiBackend backend;
     private final String addonName;
     private final List<IAudioLifecycleListener> listenerParts = new ArrayList<>();
-    private final List<IPlaybackPcmFilter> playbackFilters = new ArrayList<>();
+    private final List<IPlaybackFrameFilter> playbackFilters = new ArrayList<>();
     private final List<ChainPlaybackFilter> chainFilters = new ArrayList<>();
     private int auxiliarySends;
     private boolean initiallyEnabled = true;
@@ -122,6 +126,14 @@ final class AudioRegistrationBuilder implements IAudioRegistrationBuilder {
 
     @Override
     public IAudioRegistrationBuilder playbackFilter(@NotNull IPlaybackPcmFilter filter) {
+        requireNotConsumed();
+        Objects.requireNonNull(filter, "filter");
+        playbackFilters.add((frame, pcm) -> filter.process(frame.sourceId(), pcm));
+        return this;
+    }
+
+    @Override
+    public IAudioRegistrationBuilder playbackFrameFilter(@NotNull IPlaybackFrameFilter filter) {
         requireNotConsumed();
         Objects.requireNonNull(filter, "filter");
         playbackFilters.add(filter);

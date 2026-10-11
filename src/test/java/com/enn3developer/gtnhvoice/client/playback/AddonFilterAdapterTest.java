@@ -4,11 +4,14 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
 
+import com.enn3developer.gtnhvoice.api.client.IPlaybackFrame;
 import com.enn3developer.gtnhvoice.api.client.VoiceFormat;
 
 /**
@@ -22,6 +25,7 @@ import com.enn3developer.gtnhvoice.api.client.VoiceFormat;
 class AddonFilterAdapterTest {
 
     private static final UUID SOURCE_A = UUID.fromString("00000000-0000-0000-0000-00000000000a");
+    private static final PlaybackFrame FRAME_A = new PlaybackFrame(SOURCE_A, "radio", "Radio", false);
 
     private static short[] frame() {
         return new short[VoiceFormat.FRAME_SAMPLES];
@@ -30,29 +34,34 @@ class AddonFilterAdapterTest {
     @Test
     void validOutputPassesThrough() {
         short[] processed = frame();
-        AddonFilterAdapter adapter = new AddonFilterAdapter("addon", (sourceId, input) -> processed);
+        AddonFilterAdapter adapter = new AddonFilterAdapter("addon", (context, input) -> processed);
 
-        assertSame(processed, adapter.process(SOURCE_A, frame()));
+        assertSame(processed, adapter.process(FRAME_A, frame()));
     }
 
     @Test
-    void sourceIdAndFramePassThroughToDelegate() {
+    void frameContextAndSamplesPassThroughToDelegate() {
         short[] input = frame();
-        AddonFilterAdapter adapter = new AddonFilterAdapter("addon", (sourceId, delegateFrame) -> {
-            assertEquals(SOURCE_A, sourceId);
-            assertSame(input, delegateFrame);
+        List<IPlaybackFrame> seenContexts = new ArrayList<>();
+        List<short[]> seenSamples = new ArrayList<>();
+        AddonFilterAdapter adapter = new AddonFilterAdapter("addon", (context, delegateFrame) -> {
+            seenContexts.add(context);
+            seenSamples.add(delegateFrame);
             return delegateFrame;
         });
 
-        assertSame(input, adapter.process(SOURCE_A, input));
+        adapter.process(FRAME_A, input);
+
+        assertEquals(List.of(FRAME_A), seenContexts, "the delegate sees the submitted context as-is");
+        assertSame(input, seenSamples.get(0), "the delegate sees the submitted samples as-is");
     }
 
     @Test
     void nullOutputPassesInputThroughUnchanged() {
         short[] input = frame();
-        AddonFilterAdapter adapter = new AddonFilterAdapter("addon", (sourceId, delegateFrame) -> null);
+        AddonFilterAdapter adapter = new AddonFilterAdapter("addon", (context, delegateFrame) -> null);
 
-        assertSame(input, adapter.process(SOURCE_A, input));
+        assertSame(input, adapter.process(FRAME_A, input));
     }
 
     @Test
@@ -60,9 +69,9 @@ class AddonFilterAdapterTest {
         short[] input = frame();
         AddonFilterAdapter adapter = new AddonFilterAdapter(
             "addon",
-            (sourceId, delegateFrame) -> new short[VoiceFormat.FRAME_SAMPLES / 2]);
+            (context, delegateFrame) -> new short[VoiceFormat.FRAME_SAMPLES / 2]);
 
-        assertSame(input, adapter.process(SOURCE_A, input));
+        assertSame(input, adapter.process(FRAME_A, input));
     }
 
     @Test
@@ -71,13 +80,13 @@ class AddonFilterAdapterTest {
         // The exact failure mode addon filters hit when their class is missing @Lwjgl3Aware.
         AddonFilterAdapter erroring = new AddonFilterAdapter(
             "addon",
-            (sourceId, delegateFrame) -> { throw new NoClassDefFoundError("org.lwjgl.openal.AL10"); });
+            (context, delegateFrame) -> { throw new NoClassDefFoundError("org.lwjgl.openal.AL10"); });
         AddonFilterAdapter excepting = new AddonFilterAdapter(
             "addon",
-            (sourceId, delegateFrame) -> { throw new RuntimeException("addon bug"); });
+            (context, delegateFrame) -> { throw new RuntimeException("addon bug"); });
 
-        assertDoesNotThrow(() -> assertSame(input, erroring.process(SOURCE_A, input)));
-        assertDoesNotThrow(() -> assertSame(input, excepting.process(SOURCE_A, input)));
+        assertDoesNotThrow(() -> assertSame(input, erroring.process(FRAME_A, input)));
+        assertDoesNotThrow(() -> assertSame(input, excepting.process(FRAME_A, input)));
     }
 
     @Test
@@ -86,19 +95,19 @@ class AddonFilterAdapterTest {
         // repeatedly, with no shared state between them.
         AtomicInteger firstCalls = new AtomicInteger();
         AtomicInteger secondCalls = new AtomicInteger();
-        AddonFilterAdapter adapterA = new AddonFilterAdapter("addon-a", (sourceId, delegateFrame) -> {
+        AddonFilterAdapter adapterA = new AddonFilterAdapter("addon-a", (context, delegateFrame) -> {
             firstCalls.incrementAndGet();
             throw new RuntimeException("addon-a bug");
         });
-        AddonFilterAdapter adapterB = new AddonFilterAdapter("addon-b", (sourceId, delegateFrame) -> {
+        AddonFilterAdapter adapterB = new AddonFilterAdapter("addon-b", (context, delegateFrame) -> {
             secondCalls.incrementAndGet();
             return null;
         });
 
         short[] input = frame();
         for (int i = 0; i < 10; i++) {
-            assertSame(input, adapterA.process(SOURCE_A, input));
-            assertSame(input, adapterB.process(SOURCE_A, input));
+            assertSame(input, adapterA.process(FRAME_A, input));
+            assertSame(input, adapterB.process(FRAME_A, input));
         }
 
         assertEquals(10, firstCalls.get());

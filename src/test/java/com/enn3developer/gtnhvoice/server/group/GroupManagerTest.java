@@ -10,12 +10,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
 import com.enn3developer.gtnhvoice.api.server.group.IGroup;
 import com.enn3developer.gtnhvoice.api.server.group.RoutingContext;
+import com.enn3developer.gtnhvoice.network.GroupNames;
 
 /**
  * Covers {@link GroupManager}'s multi-membership model: {@link GroupManager#byName} resolution of the built-ins,
@@ -152,12 +154,33 @@ class GroupManagerTest {
         assertEquals((short) 2, manager.groupIdOf(party));
         assertEquals(1, tableChanges, "registerGroup must announce the table change");
 
-        assertEquals("party", manager.groupTableView().get((short) 2));
-        assertEquals(
-            manager.byName("local")
-                .getDisplayName(),
-            manager.groupTableView()
-                .get(GroupManager.LOCAL_GROUP_ID));
+        assertEquals(new GroupNames("party", "party"), manager.groupTableView().get((short) 2));
+        assertEquals(new GroupNames("local", "local"), manager.groupTableView().get(GroupManager.LOCAL_GROUP_ID));
+    }
+
+    @Test
+    void groupTableCarriesEachGroupsInternalNameBesideItsDisplayName() {
+        IGroup squad = new IGroup() {
+
+            @Override
+            public String getName() {
+                return "becom:squad-7";
+            }
+
+            @Override
+            public String getDisplayName() {
+                return "Squad 7";
+            }
+
+            @Override
+            public void route(RoutingContext context) {}
+        };
+        manager.registerGroup(squad);
+
+        Map<Short, GroupNames> table = manager.groupTableView();
+
+        assertEquals(new GroupNames("becom:squad-7", "Squad 7"), table.get((short) 2));
+        assertEquals(new GroupNames("global", "global"), table.get((short) 1));
     }
 
     @Test

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Frame-aware playback filters for client addons: `audio().playbackFrameFilter((frame, pcm) -> ...)` gets an `IPlaybackFrame` per frame (speaker, internal and display name of the group that routed that exact frame, positional flag); the group travels with each frame through the jitter buffer, and concealment frames keep the last real frame's group (client API 2.1)
+
+### Changed
+
+- Voice protocol bumped to v6 (the group table carries each group's internal name beside its display name)
+- A voice source's positional flag and position now apply when its frame plays rather than when the packet arrives, so a group switch no longer re-spatializes audio still in the jitter buffer; `sourceMetadata` follows the audio accordingly
+
 ## [0.9.2] - 2026-10-03
 
 ### Fixed

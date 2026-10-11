@@ -16,6 +16,7 @@ import org.jetbrains.annotations.Nullable;
 import com.enn3developer.gtnhvoice.api.server.GtnhVoiceApi;
 import com.enn3developer.gtnhvoice.api.server.group.IGroup;
 import com.enn3developer.gtnhvoice.api.server.group.IGroupManager;
+import com.enn3developer.gtnhvoice.network.GroupNames;
 
 /**
  * The {@link IGroupManager} implementation - see the interface for the addon-facing contract (threading,
@@ -28,9 +29,9 @@ import com.enn3developer.gtnhvoice.api.server.group.IGroupManager;
  * <p>
  * Wire ids: every group gets a stable short id for the session lifetime ({@link LocalGroup} 0,
  * {@link GlobalGroup} 1, registered groups sequentially from 2) - stamped into each routed audio packet so
- * clients can attribute what they hear; {@link #groupTableView} is the id-to-display-name table synced to
- * clients. Addons reach this only as {@link IGroupManager} via {@link GtnhVoiceApi#groupManager()}; the
- * internal lifecycle hooks ({@link #onPlayerRemoved}, {@link #clear}) stay off the interface.
+ * clients can attribute what they hear; {@link #groupTableView} is the id-to-names table synced to clients.
+ * Addons reach this only as {@link IGroupManager} via {@link GtnhVoiceApi#groupManager()}; the internal lifecycle
+ * hooks ({@link #onPlayerRemoved}, {@link #clear}) stay off the interface.
  */
 public final class GroupManager implements IGroupManager {
 
@@ -166,21 +167,23 @@ public final class GroupManager implements IGroupManager {
     }
 
     /**
-     * Snapshot of the wire id to display-name table for the client sync packet: built-ins first, then every
+     * Snapshot of the wire id to {@link GroupNames} table for the client sync packet - each group's internal name
+     * (what client playback filters key on) and display name (what the HUD shows): built-ins first, then every
      * registered group, ordered by id.
      */
-    public Map<Short, String> groupTableView() {
-        Map<Short, String> table = new java.util.TreeMap<>();
-        table.put(LOCAL_GROUP_ID, localGroup.getDisplayName());
-        table.put(GLOBAL_GROUP_ID, globalGroup.getDisplayName());
+    public Map<Short, GroupNames> groupTableView() {
+        Map<Short, GroupNames> table = new java.util.TreeMap<>();
+        table.put(LOCAL_GROUP_ID, namesOf(localGroup));
+        table.put(GLOBAL_GROUP_ID, namesOf(globalGroup));
         for (Map.Entry<String, IGroup> entry : registeredGroups.entrySet()) {
             Short id = groupIdsByName.get(entry.getKey());
-            if (id != null) table.put(
-                id,
-                entry.getValue()
-                    .getDisplayName());
+            if (id != null) table.put(id, namesOf(entry.getValue()));
         }
         return table;
+    }
+
+    private static GroupNames namesOf(@NotNull IGroup group) {
+        return new GroupNames(group.getName(), group.getDisplayName());
     }
 
     /**

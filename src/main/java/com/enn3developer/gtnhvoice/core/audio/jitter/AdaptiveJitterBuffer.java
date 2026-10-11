@@ -17,11 +17,17 @@ import java.util.function.LongSupplier;
  * toward zero, bursty/jittery arrival grows it. Frames are handed out in sequence order regardless of arrival
  * order, so a caller can decode them (Opus is stateful) in the order they were actually sent.
  * <p>
+ * Each frame may carry an opaque per-frame {@code tag} (e.g. the routing metadata that arrived with the packet),
+ * handed back untouched with the frame it was offered with - so metadata follows its own frame through reordering
+ * instead of being sampled at arrival time. Untagged frames carry {@code null}.
+ * <p>
  * Not thread-safe by contract of the underlying queue alone - {@link #offer}, {@link #poll} and {@link #clear} are
  * synchronized so one thread can feed packets (e.g. the network thread) while another drains them (e.g. a
  * playback-tick thread).
+ *
+ * @param <T> the per-frame tag type
  */
-public final class AdaptiveJitterBuffer {
+public final class AdaptiveJitterBuffer<T> {
 
     private static final int MAX_QUEUE_SIZE = 512;
     /**
@@ -32,7 +38,7 @@ public final class AdaptiveJitterBuffer {
     private static final AudioUnit FLOOR_DELAY = AudioUnit.frames(1);
 
     private final LongSupplier timeSupplier;
-    private final Queue<Entry> queue;
+    private final Queue<Entry<T>> queue;
 
     private Long firstPacketArrival;
     private Long firstSequenceNumber;
@@ -55,12 +61,21 @@ public final class AdaptiveJitterBuffer {
             Comparator.comparingLong(entry -> entry.frame.sequenceNumber));
     }
 
-    public synchronized void offer(long sequenceNumber, byte[] data) {
+    /** {@link #offer(long, byte[], Object)} with no tag - the frame comes back with a {@code null} tag. */
+    public void offer(long sequenceNumber, byte[] data) {
+        offer(sequenceNumber, data, null);
+    }
+
+    /**
+     * Buffers one frame with its per-frame {@code tag}, which {@link #poll} hands back on the same {@link Frame}.
+     * Dropped silently once {@value #MAX_QUEUE_SIZE} frames are buffered.
+     */
+    public synchronized void offer(long sequenceNumber, byte[] data, T tag) {
         if (queue.size() >= MAX_QUEUE_SIZE) return;
 
         long arrivalTime = timeSupplier.getAsLong();
         long scheduledPlaybackTime = scheduledPlaybackTime(sequenceNumber, arrivalTime);
-        queue.offer(new Entry(new Frame(sequenceNumber, data), scheduledPlaybackTime));
+        queue.offer(new Entry<>(new Frame<>(sequenceNumber, data, tag), scheduledPlaybackTime));
         notifyAll(); // wake a consumer blocked in awaitNextEvent - the head/schedule may have changed
     }
 
@@ -104,8 +119,8 @@ public final class AdaptiveJitterBuffer {
      * otherwise {@code null} - either because the buffer is empty or because the head frame isn't due yet (the
      * buffering phase).
      */
-    public synchronized Frame poll() {
-        Entry next = queue.peek();
+    public synchronized Frame<T> poll() {
+        Entry<T> next = queue.peek();
         if (next == null) return null;
 
         if (timeSupplier.getAsLong() >= adaptiveDelay.asTimestamp(next.scheduledPlaybackTime)) {
@@ -121,7 +136,7 @@ public final class AdaptiveJitterBuffer {
      * "the next slot's frame is missing while later frames already arrived" (a concealable gap).
      */
     public synchronized Long peekSequenceNumber() {
-        Entry next = queue.peek();
+        Entry<T> next = queue.peek();
         return next == null ? null : next.frame.sequenceNumber;
     }
 
@@ -190,7 +205,7 @@ public final class AdaptiveJitterBuffer {
      * (both {@code System.currentTimeMillis}), so don't call this with a fake clock in tests.
      */
     public synchronized void awaitNextEvent(long concealSequence) throws InterruptedException {
-        Entry head = queue.peek();
+        Entry<T> head = queue.peek();
         if (head == null) {
             wait();
             return;
@@ -208,23 +223,26 @@ public final class AdaptiveJitterBuffer {
         wait(delay);
     }
 
-    public static final class Frame {
+    public static final class Frame<T> {
 
         public final long sequenceNumber;
         public final byte[] data;
+        /** The tag this frame was offered with, or {@code null} for an untagged offer. */
+        public final T tag;
 
-        Frame(long sequenceNumber, byte[] data) {
+        Frame(long sequenceNumber, byte[] data, T tag) {
             this.sequenceNumber = sequenceNumber;
             this.data = data;
+            this.tag = tag;
         }
     }
 
-    private static final class Entry {
+    private static final class Entry<T> {
 
-        final Frame frame;
+        final Frame<T> frame;
         final long scheduledPlaybackTime;
 
-        Entry(Frame frame, long scheduledPlaybackTime) {
+        Entry(Frame<T> frame, long scheduledPlaybackTime) {
             this.frame = frame;
             this.scheduledPlaybackTime = scheduledPlaybackTime;
         }

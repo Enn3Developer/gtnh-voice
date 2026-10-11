@@ -15,7 +15,7 @@ import org.jetbrains.annotations.Nullable;
 import com.enn3developer.gtnhvoice.api.client.IAddonBuilder;
 import com.enn3developer.gtnhvoice.api.client.IAudioLifecycleListener;
 import com.enn3developer.gtnhvoice.api.client.ICapturePcmFilter;
-import com.enn3developer.gtnhvoice.api.client.IPlaybackPcmFilter;
+import com.enn3developer.gtnhvoice.api.client.IPlaybackFrameFilter;
 import com.enn3developer.gtnhvoice.api.client.IVoiceAddon;
 import com.enn3developer.gtnhvoice.client.VoiceClientManager;
 import com.enn3developer.gtnhvoice.client.playback.PlaybackManager;
@@ -255,7 +255,7 @@ public final class ClientApiBackend {
         }
 
         @Override
-        public Object attachPlaybackFilter(String addonName, IPlaybackPcmFilter filter) {
+        public Object attachPlaybackFilter(String addonName, IPlaybackFrameFilter filter) {
             return playback.attachAddonPlaybackFilter(addonName, filter);
         }
 

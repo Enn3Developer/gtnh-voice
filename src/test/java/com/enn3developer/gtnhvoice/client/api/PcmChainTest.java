@@ -17,8 +17,10 @@ import org.junit.jupiter.api.Test;
 
 import com.enn3developer.gtnhvoice.api.client.ICapturePcmFilter;
 import com.enn3developer.gtnhvoice.api.client.IPcmChain;
+import com.enn3developer.gtnhvoice.api.client.IPlaybackFrame;
 import com.enn3developer.gtnhvoice.api.client.IRegistration;
 import com.enn3developer.gtnhvoice.api.client.VoiceFormat;
+import com.enn3developer.gtnhvoice.client.playback.PlaybackFrame;
 
 /**
  * Exercises the {@link IPcmChain} recipe stack directly (recorder -> pipeline -> compiled filter), the
@@ -37,6 +39,11 @@ class PcmChainTest {
             frame[i] = value;
         }
         return frame;
+    }
+
+    /** A frame context for {@code sourceId} - chain filters key their per-source pipelines off its source id. */
+    private static IPlaybackFrame from(UUID sourceId) {
+        return new PlaybackFrame(sourceId, "local", "local", true);
     }
 
     private static PcmChainPipeline pipeline(java.util.function.Consumer<IPcmChain> spec) {
@@ -196,14 +203,14 @@ class PcmChainTest {
         short[] in = frameOf(0.5);
 
         // process mutates its argument in place, so feed clones and keep the outputs to compare.
-        short[] aFirst = filter.process(a, in.clone());
-        filter.process(a, in.clone()); // advance A's state only
-        short[] bFirst = filter.process(b, in.clone());
+        short[] aFirst = filter.process(from(a), in.clone());
+        filter.process(from(a), in.clone()); // advance A's state only
+        short[] bFirst = filter.process(from(b), in.clone());
         assertArrayEquals(aFirst, bFirst, "each source starts from its own fresh delay line");
 
         // Evicting A drops its state, so A's next frame matches a first-ever frame again.
         filter.evict(a);
-        assertArrayEquals(aFirst, filter.process(a, in.clone()), "eviction rebuilds the source pipeline fresh");
+        assertArrayEquals(aFirst, filter.process(from(a), in.clone()), "eviction rebuilds the source pipeline fresh");
     }
 
     @Test
@@ -215,15 +222,15 @@ class PcmChainTest {
         UUID a = UUID.randomUUID();
         short[] in = frameOf(0.5);
 
-        short[] fresh = filter.process(UUID.randomUUID(), in.clone()); // first-frame response of a virgin pipeline
+        short[] fresh = filter.process(from(UUID.randomUUID()), in.clone()); // first-frame response of a virgin pipeline
 
-        filter.process(a, in.clone()); // A speaks
+        filter.process(from(a), in.clone()); // A speaks
         filter.evict(a);               // A's source is destroyed
-        filter.process(a, in.clone()); // in-flight frame re-inserts a stale pipeline...
-        filter.process(a, in.clone()); // ...and dirties it
+        filter.process(from(a), in.clone()); // in-flight frame re-inserts a stale pipeline...
+        filter.process(from(a), in.clone()); // ...and dirties it
 
         cleanup.sourceCreated(a, 0);   // A reappears: drop any lingering entry
-        assertArrayEquals(fresh, filter.process(a, in.clone()), "sourceCreated eviction restarts the source fresh");
+        assertArrayEquals(fresh, filter.process(from(a), in.clone()), "sourceCreated eviction restarts the source fresh");
     }
 
     @Test

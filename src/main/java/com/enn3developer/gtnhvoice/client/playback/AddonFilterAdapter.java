@@ -1,17 +1,18 @@
 package com.enn3developer.gtnhvoice.client.playback;
 
-import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 
 import com.enn3developer.gtnhvoice.GtnhVoice;
-import com.enn3developer.gtnhvoice.api.client.IPlaybackPcmFilter;
+import com.enn3developer.gtnhvoice.api.client.IPlaybackFrame;
+import com.enn3developer.gtnhvoice.api.client.IPlaybackFrameFilter;
 import com.enn3developer.gtnhvoice.api.client.VoiceFormat;
 import com.enn3developer.gtnhvoice.core.api.util.LogThrottle;
 
 /**
- * Wraps one addon's public {@link IPlaybackPcmFilter} as an internal {@link PlaybackPcmFilter} - the adapter
+ * Wraps one addon's public {@link IPlaybackFrameFilter} as an internal {@link PlaybackPcmFilter} - the adapter
  * {@link PlaybackManager#attachAddonPlaybackFilter} registers, and the opaque handle it returns. Lives beside
- * the internals it wraps so the internal filter type stays package-private.
+ * the internals it wraps so the internal filter type stays package-private. (Frame-blind
+ * {@code IPlaybackPcmFilter}s arrive here already adapted to the frame-filter shape by the registration builder.)
  * <p>
  * Delivers the public contract's failure isolation with per-addon attribution: a delegate that throws, returns
  * {@code null}, or returns a wrong-length array is skipped for that frame - the input frame passes through
@@ -25,24 +26,24 @@ final class AddonFilterAdapter implements PlaybackPcmFilter {
     private static final long ERROR_LOG_INTERVAL_MILLIS = 1_000L;
 
     private final String addonName;
-    private final IPlaybackPcmFilter delegate;
+    private final IPlaybackFrameFilter delegate;
     private final AtomicLong lastErrorLogMillis = new AtomicLong();
 
-    AddonFilterAdapter(String addonName, IPlaybackPcmFilter delegate) {
+    AddonFilterAdapter(String addonName, IPlaybackFrameFilter delegate) {
         this.addonName = addonName;
         this.delegate = delegate;
     }
 
     @Override
-    public short[] process(UUID sourceId, short[] frame) {
+    public short[] process(IPlaybackFrame frame, short[] pcm) {
         try {
-            short[] processed = delegate.process(sourceId, frame);
+            short[] processed = delegate.process(frame, pcm);
             if (processed != null && processed.length == VoiceFormat.FRAME_SAMPLES) return processed;
             logFailure("returned " + describeBadOutput(processed), null);
         } catch (Throwable t) {
             logFailure("threw", t);
         }
-        return frame;
+        return pcm;
     }
 
     private static String describeBadOutput(short[] processed) {

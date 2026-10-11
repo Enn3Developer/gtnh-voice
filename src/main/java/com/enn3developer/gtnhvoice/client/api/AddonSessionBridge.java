@@ -9,7 +9,7 @@ import org.jetbrains.annotations.Nullable;
 
 import com.enn3developer.gtnhvoice.api.client.IAudioLifecycleListener;
 import com.enn3developer.gtnhvoice.api.client.ICapturePcmFilter;
-import com.enn3developer.gtnhvoice.api.client.IPlaybackPcmFilter;
+import com.enn3developer.gtnhvoice.api.client.IPlaybackFrameFilter;
 
 /**
  * The bridging dispatch layer between {@link ClientApiBackend}'s durable bundle storage and the live
@@ -43,7 +43,7 @@ final class AddonSessionBridge {
 
         void detachListener(Object handle);
 
-        Object attachPlaybackFilter(String addonName, IPlaybackPcmFilter filter);
+        Object attachPlaybackFilter(String addonName, IPlaybackFrameFilter filter);
 
         void detachPlaybackFilter(Object handle);
 
@@ -195,7 +195,7 @@ final class AddonSessionBridge {
                     bundle.addonName(),
                     new ChainPlaybackCleanupListener(bundle.chainFilters()));
         List<Object> filterHandles = new ArrayList<>();
-        for (IPlaybackPcmFilter filter : bundle.playbackFilters()) {
+        for (IPlaybackFrameFilter filter : bundle.playbackFilters()) {
             GatedPlaybackFilter gated = new GatedPlaybackFilter(bundle.gate(), filter);
             filterHandles.add(liveSession.attachPlaybackFilter(bundle.addonName(), gated));
         }
