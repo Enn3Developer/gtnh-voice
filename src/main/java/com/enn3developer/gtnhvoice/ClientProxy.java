@@ -16,7 +16,11 @@ import cpw.mods.fml.common.event.FMLPreInitializationEvent;
 public class ClientProxy extends CommonProxy {
 
     private final CaptureManager captureManager = new CaptureManager();
-    private final ActivationGate activationGate = new ActivationGate();
+    // Addon activations reach the gate through the API backend's registry; mute is the capture device's own state.
+    private final ActivationGate activationGate = new ActivationGate(
+        ClientApiBackend.getInstance()
+            .keyedActivations(),
+        captureManager::isMuted);
     private final ClientConnectionEventHandler clientConnectionEventHandler = new ClientConnectionEventHandler();
     private final VoiceListenerTickHandler voiceListenerTickHandler = new VoiceListenerTickHandler();
     private final VoiceHudRenderer voiceHudRenderer = new VoiceHudRenderer();

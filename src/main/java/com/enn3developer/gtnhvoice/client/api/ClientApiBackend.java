@@ -17,6 +17,7 @@ import com.enn3developer.gtnhvoice.api.client.IAudioLifecycleListener;
 import com.enn3developer.gtnhvoice.api.client.ICapturePcmFilter;
 import com.enn3developer.gtnhvoice.api.client.IPlaybackFrameFilter;
 import com.enn3developer.gtnhvoice.api.client.IVoiceAddon;
+import com.enn3developer.gtnhvoice.client.KeyedActivations;
 import com.enn3developer.gtnhvoice.client.VoiceClientManager;
 import com.enn3developer.gtnhvoice.client.playback.PlaybackManager;
 import com.enn3developer.gtnhvoice.client.source.VoiceSourceManager;
@@ -25,7 +26,8 @@ import com.enn3developer.gtnhvoice.client.source.VoiceSourceManager;
  * Singleton storage backend for the public client addon API ({@code com.enn3developer.gtnhvoice.api.client}) -
  * the one class {@code GtnhVoiceClient} reaches into, mirroring how the server API's entry point reaches
  * {@code VoiceServerManager}. Holds the registered addons (name is a unique key, claimed for the client
- * lifetime - {@link #registerAddon}) and every registered bundle, durably for the whole client lifetime:
+ * lifetime - {@link #registerAddon}), the keyed state of their activations ({@link #keyedActivations()}) and every
+ * registered bundle, durably for the whole client lifetime:
  * bundles are added by the registration builders' {@code done()}, removed by their {@code IRegistration}
  * handles, and never touched by session transitions - which is exactly what makes registrations survive
  * disconnect/reconnect cycles. CopyOnWrite lists so future hot-path iteration reads stable snapshots while
@@ -46,6 +48,7 @@ public final class ClientApiBackend {
     private final List<AudioRegistrationBundle> audioBundles = new CopyOnWriteArrayList<>();
     private final List<CaptureRegistrationBundle> captureBundles = new CopyOnWriteArrayList<>();
     private final ConcurrentMap<String, IVoiceAddon> addons = new ConcurrentHashMap<>();
+    private final KeyedActivations keyedActivations = new KeyedActivations();
 
     private final AtomicBoolean bridgingInitialized = new AtomicBoolean();
     // Null until initSessionBridging (or a test injects a fake-target bridge) - the hooks below skip a null
@@ -57,6 +60,14 @@ public final class ClientApiBackend {
 
     public static ClientApiBackend getInstance() {
         return INSTANCE;
+    }
+
+    /**
+     * The keyed addon activations: written by every {@code IAddonActivation} of this backend's addons, read per
+     * captured frame by the {@code ActivationGate} - the two are wired together once, in {@code ClientProxy}.
+     */
+    public KeyedActivations keyedActivations() {
+        return keyedActivations;
     }
 
     /**

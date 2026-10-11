@@ -35,6 +35,7 @@ public final class PlayerAudioPacket extends BaseAudioPacket<ServerPacketUdpHand
         this.stereo = stereo;
     }
 
+    @Override
     public UUID getActivationId() {
         return activationId;
     }

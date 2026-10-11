@@ -189,16 +189,27 @@ public final class VoiceClientManager {
 
     /**
      * Whether the client currently considers itself to be transmitting/speaking, per the active
-     * {@link com.enn3developer.gtnhvoice.Config.ActivationMode}. {@code false} when no gate is bound yet or
-     * nothing has ever been evaluated, or whenever {@link #isMuted()} - muting sits above VA/PTT, and since a
-     * muted capture thread stops enqueueing frames altogether, {@link ActivationGate}'s own flag can otherwise sit
-     * stale at whatever it was the instant before muting.
+     * {@link com.enn3developer.gtnhvoice.Config.ActivationMode} or a keyed addon activation. {@code false} when no
+     * gate is bound yet, nothing has ever been evaluated or the session's capture worker has stopped, or whenever
+     * {@link #isMuted()} - muting sits above VA/PTT, and since a muted capture thread stops enqueueing frames
+     * altogether, {@link ActivationGate}'s own flag can otherwise sit stale at whatever it was the instant before
+     * muting.
      */
     public boolean isSpeaking() {
         if (isMuted()) return false;
 
         ActivationGate gate = activationGate;
         return gate != null && gate.isSpeaking();
+    }
+
+    /**
+     * Whether the mic is sending frames stamped with {@code activationId} right now - what
+     * {@code IAddonActivation.isTransmitting()} reports. {@code false} when no gate is bound yet, no session is
+     * capturing, the mic is muted, or the latest frame went out under another id. Safe from any thread.
+     */
+    public boolean isTransmittingAs(@NotNull UUID activationId) {
+        ActivationGate gate = activationGate;
+        return gate != null && gate.isTransmittingAs(activationId);
     }
 
     /**
@@ -783,7 +794,6 @@ public final class VoiceClientManager {
                 udpClient,
                 sessionId,
                 encryption,
-                UUID.randomUUID(),
                 gate,
                 () -> micMonitorActive,
                 this::submitMicMonitorFrame,

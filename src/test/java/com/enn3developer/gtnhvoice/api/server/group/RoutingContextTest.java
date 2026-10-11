@@ -17,6 +17,8 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
+import com.enn3developer.gtnhvoice.api.server.ActivationIds;
+import com.enn3developer.gtnhvoice.api.server.IAudioFrame;
 import com.enn3developer.gtnhvoice.api.server.IVoiceSession;
 import com.enn3developer.gtnhvoice.api.server.PacketSender;
 import com.enn3developer.gtnhvoice.api.server.PlayerSnapshot;
@@ -184,6 +186,49 @@ class RoutingContextTest {
     }
 
     @Test
+    void groupCanTellAFrameSentWhileAnActivationWasKeyedFromOrdinaryVoice() {
+        VoiceServerSession speaker = addSession("speaker", true);
+        VoiceServerSession listener = addSession("listener", true);
+        // What a radio addon's server half declares, and the id its client half stamps (name-based UUID of
+        // "gtnh-voice-radio:radio", computed outside the JVM).
+        UUID radio = ActivationIds.of("gtnh-voice-radio", "radio");
+        UUID stampedByTheClient = UUID.fromString("a0826819-629a-3b48-8215-0553a6c09aea");
+        IGroup radioOnly = routingGroup(context -> {
+            if (radio.equals(context.getAudio()
+                .getActivationId())) context.sendTo(listener, SourceState.FLAT, 0, 0, 0);
+        });
+
+        RoutingContext.Driver ordinaryVoice = builderFor(speaker).audio(audio(1L, ActivationIds.DEFAULT))
+            .buildDriver();
+        RoutingContext.Driver keyed = builderFor(speaker).audio(audio(2L, stampedByTheClient))
+            .buildDriver();
+        ordinaryVoice.route(Collections.singletonList(radioOnly));
+        keyed.route(Collections.singletonList(radioOnly));
+
+        assertEquals(1, sent.size(), "only the keyed frame is routed by the radio group");
+        SourceAudioPacket forwarded = assertInstanceOf(SourceAudioPacket.class, sent.get(0).packet);
+        assertEquals(2L, forwarded.getSequenceNumber(), "and it is the keyed one");
+    }
+
+    @Test
+    void frameImplementationThatPredatesActivationsReadsAsOrdinaryVoice() {
+        IAudioFrame legacyTestDouble = new IAudioFrame() {
+
+            @Override
+            public long getSequenceNumber() {
+                return 1L;
+            }
+
+            @Override
+            public byte[] getData() {
+                return new byte[] { 1 };
+            }
+        };
+
+        assertEquals(ActivationIds.DEFAULT, legacyTestDouble.getActivationId());
+    }
+
+    @Test
     void buildWithMissingFieldThrowsNamingIt() {
         VoiceServerSession speaker = addSession("speaker", true);
 
@@ -267,6 +312,11 @@ class RoutingContextTest {
 
     private static PlayerAudioPacket audio() {
         return new PlayerAudioPacket(7L, new byte[] { 1, 2, 3 }, UUID.randomUUID(), (short) 48, false);
+    }
+
+    /** An inbound frame as the client sends it: {@code activationId} rides the packet's existing wire field. */
+    private static PlayerAudioPacket audio(long sequenceNumber, UUID activationId) {
+        return new PlayerAudioPacket(sequenceNumber, new byte[] { 1, 2, 3 }, activationId, (short) 0, false);
     }
 
     private VoiceServerSession addSession(String name, boolean withUdpAddress) {

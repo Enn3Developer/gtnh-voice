@@ -9,7 +9,7 @@ import org.jetbrains.annotations.NotNull;
  * The handle a registered addon holds for its whole lifetime, returned once by {@link IAddonBuilder#register()}
  * - the EXCLUSIVE gateway to the client voice pipeline. Everything an addon does flows through it: opening
  * playback/capture registration bundles ({@link #audio()}, {@link #capture()}), addon-owned sources
- * ({@link #source()}), audio-thread marshalling
+ * ({@link #source()}), push-to-talk activations ({@link #activation}), audio-thread marshalling
  * ({@link #runOnAudioThread}) and live source queries ({@link #sourceMetadata}). There is deliberately no way to
  * reach any of these without registering first.
  * <p>
@@ -64,6 +64,22 @@ public interface IVoiceAddon {
      * @return a single-use builder - see {@link IAddonSourceBuilder}
      */
     IAddonSourceBuilder source();
+
+    /**
+     * This addon's activation named {@code name} - a push-to-talk the addon keys on the player's behalf, which
+     * opens the mic regardless of the activation mode and tags the frames it sends so server-side groups can tell
+     * them apart. See {@link IAddonActivation} for precedence, durability and the wire id.
+     * <p>
+     * Get-or-create, from any thread: the first call for a name creates the activation unkeyed, and every later
+     * call with the same name returns that same handle. Names are exact and case-sensitive.
+     *
+     * @param name the activation's name within this addon; its id is derived from it and the addon's name
+     * @return the durable handle for that name
+     * @throws NullPointerException     if {@code name} is null
+     * @throws IllegalArgumentException if {@code name} is blank or contains {@code ':'} (the separator in the id
+     *                                  derivation)
+     */
+    IAddonActivation activation(@NotNull String name);
 
     /**
      * Submits {@code command} to run on the mod's audio thread with its OpenAL context bound and current,

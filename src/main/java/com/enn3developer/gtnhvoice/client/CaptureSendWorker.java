@@ -31,12 +31,13 @@ import com.enn3developer.gtnhvoice.core.transport.UdpTransportClient;
  * session-independent {@link CapturePcmFilterChain}
  * (addon DSP; owned by {@link VoiceClientManager}, so registrations survive this worker's
  * per-session lifetime), then passed through the {@link ActivationGate}: frames are only
- * encoded+sent while the gate is open (VA above threshold, or PTT key held). Frames while the gate
- * is closed are dropped here - the capture device itself keeps running regardless. The gain -&gt;
- * denoise -&gt; chain -&gt; gate ordering is deliberate: the whole pipeline sees the amplified mic
- * level, filters receive clean speech rather than raw mic noise, and the gate measures what will
- * actually be transmitted - a filter that quiets or mutes the signal correctly closes the gate
- * instead of transmitting shaped noise.
+ * encoded+sent while the gate is open (VA above threshold, PTT key held, or an addon activation
+ * keyed - never while muted), each stamped with the activation id the gate chose for it. Frames
+ * while the gate is closed are dropped here - the capture device itself keeps running regardless.
+ * The gain -&gt; denoise -&gt; chain -&gt; gate ordering is deliberate: the whole pipeline sees the
+ * amplified mic level, filters receive clean speech rather than raw mic noise, and the gate
+ * measures what will actually be transmitted - a filter that quiets or mutes the signal correctly
+ * closes the gate instead of transmitting shaped noise.
  * <p>
  * When the mic monitor is active (settings GUI Input tab), fully processed frames are also handed
  * to the monitor sink. In VOICE_ACTIVATION mode the monitor follows the gate (hangover included),
@@ -56,7 +57,6 @@ final class CaptureSendWorker extends Thread {
     private final UdpTransportClient client;
     private final UUID sessionId;
     private final Encryption encryption;
-    private final UUID activationId;
     private final ActivationGate activationGate;
     private final BooleanSupplier micMonitorActive;
     private final Consumer<short[]> micMonitorSink;
@@ -71,7 +71,7 @@ final class CaptureSendWorker extends Thread {
 
     CaptureSendWorker(BlockingQueue<short[]> captureFrameQueue, AudioEncoder encoder,
         NoiseSuppressionFilter noiseSuppressionFilter, CapturePcmFilterChain pcmFilterChain, UdpTransportClient client,
-        UUID sessionId, Encryption encryption, UUID activationId, ActivationGate activationGate,
+        UUID sessionId, Encryption encryption, ActivationGate activationGate,
         BooleanSupplier micMonitorActive, Consumer<short[]> micMonitorSink, DoubleConsumer micLevelSink) {
         super("gtnhvoice-capture-send");
         this.captureFrameQueue = captureFrameQueue;
@@ -81,7 +81,6 @@ final class CaptureSendWorker extends Thread {
         this.client = client;
         this.sessionId = sessionId;
         this.encryption = encryption;
-        this.activationId = activationId;
         this.activationGate = activationGate;
         this.micMonitorActive = micMonitorActive;
         this.micMonitorSink = micMonitorSink;
@@ -96,6 +95,14 @@ final class CaptureSendWorker extends Thread {
 
     @Override
     public void run() {
+        try {
+            sendLoop();
+        } finally {
+            activationGate.captureStopped();
+        }
+    }
+
+    private void sendLoop() {
         long lastLoggedFramesSent = 0;
         long lastLogTime = System.currentTimeMillis();
 
@@ -114,7 +121,8 @@ final class CaptureSendWorker extends Thread {
             // Publish the processed frame's level (dB) for the HUD's mic meter - same signal the gate measures.
             micLevelSink.accept(AudioUtil.calculateAudioLevel(frame, 0, frame.length));
 
-            boolean transmitting = activationGate.shouldTransmit(frame);
+            UUID activationId = activationGate.transmitAs(frame); // null: the gate is closed for this frame
+            boolean transmitting = activationId != null;
 
             // In VA mode the monitor follows the gate - you hear yourself exactly when you'd transmit, which
             // is how the threshold gets tuned by ear. In PTT mode it stays ungated, so the mic test works
@@ -125,7 +133,7 @@ final class CaptureSendWorker extends Thread {
             }
 
             if (transmitting) {
-                encodeAndSend(frame);
+                encodeAndSend(frame, activationId);
             }
             wasTransmitting = transmitting;
 
@@ -174,7 +182,7 @@ final class CaptureSendWorker extends Thread {
         }
     }
 
-    private void encodeAndSend(short[] frame) {
+    private void encodeAndSend(short[] frame, UUID activationId) {
         try {
             // Closed->open edge: fresh speech segment, don't carry encoder state across the gap.
             if (!wasTransmitting) {
