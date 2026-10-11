@@ -13,9 +13,12 @@ import org.jetbrains.annotations.Nullable;
  * keyed before it. Keying an activation that is already keyed changes nothing, so an addon re-asserting its key
  * every tick never steals precedence back from an activation keyed after it.
  * <p>
- * Client-lifetime, never cleared by session transitions: keyed state belongs to the addon that keyed it. Writers
- * ({@code IAddonActivation.setKeyed}, any thread) swap a fresh copy-on-write array under this object's monitor; the
- * capture worker reads one volatile reference per frame - no lock and no allocation on its path.
+ * Session-scoped: {@link VoiceClientManager}'s teardown of the voice link {@link #clear()}s it (through
+ * {@link ActivationGate#releaseActivations()}) when a session ends and again right before a new one starts, so no
+ * key outlives its session and none made between sessions carries into the next. Writers
+ * ({@code IAddonActivation.setKeyed}, any thread; the teardown) swap a fresh copy-on-write array under this
+ * object's monitor; the capture worker reads one volatile reference per frame - no lock and no allocation on its
+ * path.
  */
 public final class KeyedActivations {
 
@@ -44,6 +47,11 @@ public final class KeyedActivations {
         System.arraycopy(current, 0, next, 0, index);
         System.arraycopy(current, index + 1, next, index, next.length - index);
         keyed = next;
+    }
+
+    /** Unkeys every activation at once, emptying the precedence order. */
+    public synchronized void clear() {
+        keyed = NONE;
     }
 
     public boolean isKeyed(@NotNull UUID activationId) {

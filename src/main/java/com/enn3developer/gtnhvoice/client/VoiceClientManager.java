@@ -164,7 +164,8 @@ public final class VoiceClientManager {
         return INSTANCE;
     }
 
-    private VoiceClientManager() {}
+    // Package-private so tests drive a fresh, unconnected manager instead of the singleton.
+    VoiceClientManager() {}
 
     public VoiceClientSession getSession() {
         return session;
@@ -834,6 +835,13 @@ public final class VoiceClientManager {
                     WORKER_JOIN_TIMEOUT_MILLIS);
             captureSendWorker = null;
         }
+
+        // Keyed addon activations belong to the session: release them once its worker has sent its last frame
+        // (still under the keyed id), so whatever session comes next transmits under an activation only after the
+        // addon keys it again. Unconditional on purpose - handleServerHello tears down before every session start,
+        // so keys made while no session was up are dropped there and never open the mic on the next connection.
+        ActivationGate gate = activationGate;
+        if (gate != null) gate.releaseActivations();
 
         if (captureManager != null) {
             captureManager.stop();

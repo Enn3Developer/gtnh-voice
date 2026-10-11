@@ -22,10 +22,11 @@ import cpw.mods.fml.common.gameevent.TickEvent;
 
 /**
  * Decides, per captured frame, whether the mic should actually transmit and under which activation id. Registered
- * once at mod init - independent of any particular voice session - so push-to-talk and addon activations keep
- * working across reconnects. {@link CaptureSendWorker} calls {@link #transmitAs(short[])} for every frame it pulls
- * off the capture queue and only encodes+sends when it returns an id, stamping that id on the packet; capture
- * itself is never gated, only transmission.
+ * once at mod init - independent of any particular voice session - so push-to-talk keeps working across
+ * reconnects; keyed addon activations deliberately do not: {@link VoiceClientManager} releases them at every session
+ * boundary ({@link #releaseActivations()}). {@link CaptureSendWorker} calls {@link #transmitAs(short[])} for every
+ * frame it pulls off the capture queue and only encodes+sends when it returns an id, stamping that id on the
+ * packet; capture itself is never gated, only transmission.
  * <p>
  * Precedence, per frame: hard mute ({@code CaptureManager.setMuted}) drops it whatever else holds; otherwise a
  * keyed addon activation sends it under the winning activation's id (see {@link KeyedActivations}) regardless of
@@ -138,6 +139,15 @@ public class ActivationGate {
      */
     void captureStopped() {
         transmittingAs = null;
+    }
+
+    /**
+     * Unkeys every addon activation. Called by {@link VoiceClientManager} on every teardown of the voice link - once
+     * the old session's capture worker has stopped and before any new session starts - so a fresh session transmits
+     * under an activation only after its addon keys it again. Any thread.
+     */
+    void releaseActivations() {
+        keyedActivations.clear();
     }
 
     /** Mute beats everything, a keyed addon activation beats the mode, and an open mode sends ordinary voice. */

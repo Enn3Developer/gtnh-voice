@@ -24,10 +24,14 @@ import java.util.UUID;
  * and when it is unkeyed the one keyed before it takes over again. Re-keying an activation that is already keyed
  * does not change precedence, so re-asserting the key every tick is safe.
  * <p>
- * Durability: the handle lives as long as the client, and keyed state belongs to the addon - it survives voice
- * session disconnects and reconnects (a keyed activation transmits as soon as the next session is up) and is never
- * cleared behind the addon's back. While keyed the player's mic is open, so unkey on every path that ends the
- * gesture: release, item switch, opened GUI, death, world unload.
+ * Durability: the handle lives as long as the client, but keyed state lives only as long as the voice session.
+ * When the session ends - disconnect, or a new handshake replacing it (one the server timed out ends at the next
+ * connection: the client is not told) - every activation is unkeyed: {@link #isKeyed()} turns false and the
+ * precedence order is empty. A new session starts with nothing keyed - keying while no session is up is dropped
+ * when the next one starts - so it never transmits under an activation until the addon keys it again. An addon that
+ * re-asserts its key every tick, as above, is unaffected; one that forgets to unkey leaves the mic closed on the
+ * next connection instead of opening it. Within a session a keyed activation holds the mic open, so still unkey on
+ * every path that ends the gesture: release, item switch, opened GUI, death, world unload.
  * <p>
  * Threading: every method is callable from any thread. Implemented by the mod; addons never implement it.
  */
@@ -44,6 +48,7 @@ public interface IAddonActivation {
     /**
      * Keys ({@code true}) or unkeys ({@code false}) this activation, taking effect from the next captured mic frame
      * (frames are 20ms). Keying an activation that is already keyed, or unkeying one that is not, changes nothing.
+     * A key lasts until it is unkeyed or the voice session ends - see the class doc.
      */
     void setKeyed(boolean keyed);
 

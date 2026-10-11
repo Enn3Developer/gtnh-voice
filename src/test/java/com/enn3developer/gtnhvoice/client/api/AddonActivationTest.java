@@ -74,6 +74,21 @@ class AddonActivationTest {
     }
 
     @Test
+    void reassertingTheKeyAfterASessionEndReleasedItKeysItAgain() {
+        IAddonActivation radio = radioAddon.activation("radio");
+        radio.setKeyed(true);
+        backend.keyedActivations()
+            .clear(); // what the voice session teardown does
+
+        boolean keyedAfterTheSessionEnded = radio.isKeyed();
+        radio.setKeyed(true); // the documented every-tick re-assertion
+
+        assertFalse(keyedAfterTheSessionEnded, "the handle reports the release, it keeps no keyed flag of its own");
+        assertEquals(RADIO, backend.keyedActivations()
+            .winner(), "re-asserting the key reaches the registry again");
+    }
+
+    @Test
     void keyedActivationIsNotTransmittingWithoutAVoiceSession() {
         IAddonActivation radio = radioAddon.activation("radio");
 

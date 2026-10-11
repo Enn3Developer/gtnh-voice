@@ -25,9 +25,9 @@ import com.enn3developer.gtnhvoice.client.source.VoiceSourceManager;
 /**
  * Singleton storage backend for the public client addon API ({@code com.enn3developer.gtnhvoice.api.client}) -
  * the one class {@code GtnhVoiceClient} reaches into, mirroring how the server API's entry point reaches
- * {@code VoiceServerManager}. Holds the registered addons (name is a unique key, claimed for the client
- * lifetime - {@link #registerAddon}), the keyed state of their activations ({@link #keyedActivations()}) and every
- * registered bundle, durably for the whole client lifetime:
+ * {@code VoiceServerManager}. Holds the keyed state of the addons' activations ({@link #keyedActivations()} - the
+ * one session-scoped thing here), the registered addons (name is a unique key, claimed for the client lifetime -
+ * {@link #registerAddon}) and every registered bundle, durably for the whole client lifetime:
  * bundles are added by the registration builders' {@code done()}, removed by their {@code IRegistration}
  * handles, and never touched by session transitions - which is exactly what makes registrations survive
  * disconnect/reconnect cycles. CopyOnWrite lists so future hot-path iteration reads stable snapshots while
@@ -64,7 +64,8 @@ public final class ClientApiBackend {
 
     /**
      * The keyed addon activations: written by every {@code IAddonActivation} of this backend's addons, read per
-     * captured frame by the {@code ActivationGate} - the two are wired together once, in {@code ClientProxy}.
+     * captured frame by the {@code ActivationGate} - the two are wired together once, in {@code ClientProxy} - and
+     * released through that gate at every voice session boundary, which is what makes keyed state session-scoped.
      */
     public KeyedActivations keyedActivations() {
         return keyedActivations;
