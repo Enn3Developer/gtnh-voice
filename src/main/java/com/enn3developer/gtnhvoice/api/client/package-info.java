@@ -7,7 +7,7 @@
  * {@link com.enn3developer.gtnhvoice.api.client.IVoiceAddon} handle. Client side only, like everything in this
  * package.
  */
-@API(owner = "gtnhvoice", apiVersion = "2.3", provides = "GtnhVoice|ClientAPI")
+@API(owner = "gtnhvoice", apiVersion = "2.4", provides = "GtnhVoice|ClientAPI")
 package com.enn3developer.gtnhvoice.api.client;
 
 import cpw.mods.fml.common.API;

@@ -25,7 +25,14 @@ import com.enn3developer.gtnhvoice.api.client.VoiceFormat;
 class AddonFilterAdapterTest {
 
     private static final UUID SOURCE_A = UUID.fromString("00000000-0000-0000-0000-00000000000a");
-    private static final PlaybackFrame FRAME_A = new PlaybackFrame(SOURCE_A, "radio", "Radio", false);
+    private static final PlaybackFrame FRAME_A = new PlaybackFrame(
+        SOURCE_A,
+        "radio",
+        "Radio",
+        false,
+        Double.NaN,
+        Double.NaN,
+        Double.NaN);
 
     private static short[] frame() {
         return new short[VoiceFormat.FRAME_SAMPLES];

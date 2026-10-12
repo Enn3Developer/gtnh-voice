@@ -371,7 +371,7 @@ class AddonSessionBridgeTest {
 
     /** A frame context for {@code sourceId} - chain filters key their per-source pipelines off its source id. */
     private static IPlaybackFrame from(UUID sourceId) {
-        return new PlaybackFrame(sourceId, "local", "local", true);
+        return new PlaybackFrame(sourceId, "local", "local", true, 0, 64, 0);
     }
 
     private static short[] dcFrame() {

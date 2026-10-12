@@ -156,9 +156,9 @@ public final class VoiceClientManager {
     private final GroupTable groupTable = new GroupTable();
 
     // Mic-monitor frames are the local player's own mic: no routing group ever touched them, and the monitor
-    // source is created non-positional (applyMicMonitor).
+    // source is created non-positional (applyMicMonitor), so they play from nowhere.
     private static final PlaybackFrame MIC_MONITOR_FRAME = PlaybackFrame
-        .of(PlaybackManager.MIC_MONITOR_SOURCE_ID, GroupTable.LOCAL, false);
+        .of(PlaybackManager.MIC_MONITOR_SOURCE_ID, GroupTable.LOCAL, false, Double.NaN, Double.NaN, Double.NaN);
 
     public static VoiceClientManager getInstance() {
         return INSTANCE;

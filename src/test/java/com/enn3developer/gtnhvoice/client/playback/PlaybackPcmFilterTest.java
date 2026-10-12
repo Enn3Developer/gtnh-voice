@@ -27,8 +27,8 @@ class PlaybackPcmFilterTest {
 
     private static final UUID SOURCE_A = UUID.fromString("00000000-0000-0000-0000-00000000000a");
     private static final UUID SOURCE_B = UUID.fromString("00000000-0000-0000-0000-00000000000b");
-    private static final PlaybackFrame FRAME_A = new PlaybackFrame(SOURCE_A, "local", "local", true);
-    private static final PlaybackFrame FRAME_B = new PlaybackFrame(SOURCE_B, "local", "local", true);
+    private static final PlaybackFrame FRAME_A = new PlaybackFrame(SOURCE_A, "local", "local", true, 0, 64, 0);
+    private static final PlaybackFrame FRAME_B = new PlaybackFrame(SOURCE_B, "local", "local", true, 0, 64, 0);
     private static final int FRAME_SAMPLES = 960;
 
     private static PlaybackManager managerWithQueue(UUID sourceId) {

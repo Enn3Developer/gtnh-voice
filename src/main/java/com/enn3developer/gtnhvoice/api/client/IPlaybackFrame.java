@@ -5,10 +5,11 @@ import java.util.UUID;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * What one decoded playback frame IS, beyond its samples: whose voice it carries and how the server routed it to
- * this client. Handed to every {@link IPlaybackFrameFilter} alongside the PCM, so an effect can depend on the
- * frame's own routing - a radio crackle only on frames a radio group delivered, a phone band-pass only on a call
- * group - instead of on whatever the speaker happens to be doing by the time the frame plays.
+ * What one decoded playback frame IS, beyond its samples: whose voice it carries, how the server routed it to this
+ * client and where it plays from. Handed to every {@link IPlaybackFrameFilter} alongside the PCM, so an effect can
+ * depend on the frame's own routing - a radio crackle only on frames a radio group delivered, a phone band-pass only
+ * on a call group, a fade with the distance a frame plays from - instead of on whatever the speaker happens to be
+ * doing by the time the frame plays.
  * <p>
  * Per frame, not per source: a speaker in several groups can reach you through a different group from one frame
  * to the next (group priorities decide, frame by frame, which membership delivers to which listener). The
@@ -17,9 +18,9 @@ import org.jetbrains.annotations.NotNull;
  * older one that arrived out of order.
  * <p>
  * Packet-loss concealment: a frame synthesized to cover a lost packet carries the context of the source's most
- * recent REAL frame - the frame it continues - so a group-keyed effect stays on across a network gap instead of
- * flickering off for the concealed stretch. (Filters still cannot tell concealment from real audio, by design -
- * see {@link IPlaybackPcmFilter}.)
+ * recent REAL frame - the frame it continues, its position included - so a group-keyed effect stays on across a
+ * network gap instead of flickering off for the concealed stretch. (Filters still cannot tell concealment from real
+ * audio, by design - see {@link IPlaybackPcmFilter}.)
  * <p>
  * Attribution fallback: a frame whose group cannot be attributed resolves to the built-in local group
  * ({@code groupName()} and {@code groupDisplayName()} both {@code "local"}). That happens when the group table
@@ -60,4 +61,36 @@ public interface IPlaybackFrame {
      * playback, so it tracks the audio it belongs to rather than packet arrival.
      */
     boolean positional();
+
+    /**
+     * The world X coordinate a positional frame plays from: the position the routing group stamped on the frame, which
+     * is the speaker's own position for proximity chat, or a fixed point such as a loudspeaker block. The mod moves the
+     * source's OpenAL source there as the frame plays. {@link Double#NaN} when {@link #positional()} is {@code false}.
+     * With {@link #y()} and {@link #z()}, enough for a playback stage to fade a frame by its distance from the
+     * listener.
+     * <p>
+     * The position travels with the frame through the jitter buffer, as the group does, so a concealment frame keeps
+     * the position of the real frame it continues. Client side, on any thread: the frame is an immutable value.
+     * Defaults to NaN so that implementations written before client API 2.4 (test doubles) keep compiling; the mod's
+     * own frames always carry the position.
+     */
+    default double x() {
+        return Double.NaN;
+    }
+
+    /**
+     * The world Y coordinate a positional frame plays from, {@link Double#NaN} when {@link #positional()} is
+     * {@code false}. Client side, on any thread; see {@link #x()} for the rest of the contract.
+     */
+    default double y() {
+        return Double.NaN;
+    }
+
+    /**
+     * The world Z coordinate a positional frame plays from, {@link Double#NaN} when {@link #positional()} is
+     * {@code false}. Client side, on any thread; see {@link #x()} for the rest of the contract.
+     */
+    default double z() {
+        return Double.NaN;
+    }
 }

@@ -4,9 +4,9 @@ import org.jetbrains.annotations.NotNull;
 
 /**
  * Per-frame PCM hook on incoming voice that also sees how the frame was routed - the {@link IPlaybackFrame}
- * context: speaker, internal and display name of the routing group, positional flag. Registered exclusively through
- * an {@link IVoiceAddon#audio()} bundle's {@code playbackFrameFilter(...)}. Reach for it over
- * {@link IPlaybackPcmFilter} when the effect depends on the routing, e.g.:
+ * context: speaker, internal and display name of the routing group, positional flag and the position the frame plays
+ * from. Registered exclusively through an {@link IVoiceAddon#audio()} bundle's {@code playbackFrameFilter(...)}.
+ * Reach for it over {@link IPlaybackPcmFilter} when the effect depends on the routing, e.g.:
  *
  * <pre>{@code
  * addon.audio()

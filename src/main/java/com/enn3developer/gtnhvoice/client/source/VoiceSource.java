@@ -32,9 +32,9 @@ import com.enn3developer.gtnhvoice.core.audio.jitter.AdaptiveJitterBuffer;
  * for the exact conditions.
  * <p>
  * Routing is applied at PLAYOUT, not arrival: as a frame leaves the buffer its positional flag and position go to
- * the AL source and its group is resolved through the {@link GroupTable} into the {@link PlaybackFrame} context
- * the playback filters see. A concealment frame reuses the context of the last real frame emitted - the frame it
- * continues - and re-applies nothing, since nothing new arrived.
+ * the AL source, and its group, resolved through the {@link GroupTable}, and its position go into the
+ * {@link PlaybackFrame} context the playback filters see. A concealment frame reuses the context of the last real
+ * frame emitted - the frame it continues - and re-applies nothing, since nothing new arrived.
  * <p>
  * Created lazily by {@link VoiceSourceManager} on the first {@code SourceAudioPacket} seen for a given sourceId,
  * which stays stable for the speaker's whole session. Two distinct lifecycle events, both driven by the manager:
@@ -341,12 +341,18 @@ final class VoiceSource {
      * (per frame, not per source - the server-side group decides positional-vs-flat frame by frame, so a speaker
      * switching groups mid-stream flips the existing AL source's mode without teardown; the position is recorded
      * even for flat frames so a flip back to positional resumes from a fresh location), and the group resolved
-     * into the frame context every playback filter sees.
+     * into the frame context every playback filter sees, with the position the frame plays from.
      */
     private PlaybackFrame applyRouting(FrameRouting routing) {
         playbackManager.setPositional(sourceId, routing.positional());
         playbackManager.updateSourcePosition(sourceId, routing.x(), routing.y(), routing.z());
-        return PlaybackFrame.of(sourceId, groupTable.resolve(routing.groupId()), routing.positional());
+        return PlaybackFrame.of(
+            sourceId,
+            groupTable.resolve(routing.groupId()),
+            routing.positional(),
+            routing.x(),
+            routing.y(),
+            routing.z());
     }
 
     /** The routing the server stamped on one audio packet, carried through the jitter buffer with its frame. */

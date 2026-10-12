@@ -84,6 +84,15 @@ class VoiceSourcePlayoutTest {
             }
             return plays;
         }
+
+        /** Where each played frame's context says it plays from, as "x,y,z". */
+        List<String> playedPositions() {
+            List<String> positions = new ArrayList<>();
+            for (IPlaybackFrame frame : playedContexts) {
+                positions.add(frame.x() + "," + frame.y() + "," + frame.z());
+            }
+            return positions;
+        }
     }
 
     private static final short PLC_MARKER = -1;
@@ -231,6 +240,52 @@ class VoiceSourcePlayoutTest {
         IPlaybackFrame played = harness.playback.playedContexts.get(0);
         assertEquals("local", played.groupName(), "unattributable frames resolve to the local group");
         assertEquals("local", played.groupDisplayName());
+    }
+
+    @Test
+    void positionalFrameCarriesThePositionItsPacketPlaysFrom() throws Exception {
+        Harness harness = new Harness();
+        harness.arrives(0, 0, ALPHA, true, 1.5, 64.0, -3.25);
+
+        harness.runUntil(100);
+
+        assertEquals(List.of("1.5,64.0,-3.25"), harness.playback.playedPositions());
+    }
+
+    @Test
+    void flatFrameHasNoPosition() throws Exception {
+        Harness harness = new Harness();
+        harness.arrives(0, 0, CHARLIE, false, 2.0, 70.0, 8.0);
+
+        harness.runUntil(100);
+
+        assertEquals(List.of("NaN,NaN,NaN"), harness.playback.playedPositions());
+    }
+
+    @Test
+    void concealmentFrameKeepsThePositionOfTheLastRealFrameNotTheNextOne() throws Exception {
+        Harness harness = new Harness();
+        // The timeline of concealmentFrameCarriesTheGroupOfTheLastRealFrameNotTheNextOne: seq1 is lost and concealed.
+        harness.arrives(0, 0, ALPHA, true, 1, 64, 1);
+        harness.arrives(40, 2, ALPHA, true, 5, 64, 5);
+
+        harness.runUntil(100);
+
+        assertEquals(List.of("seq0/alpha", "PLC/alpha", "seq2/alpha"), harness.playback.plays());
+        assertEquals(List.of("1.0,64.0,1.0", "1.0,64.0,1.0", "5.0,64.0,5.0"), harness.playback.playedPositions());
+    }
+
+    @Test
+    void framesArrivingOutOfOrderEachPlayFromTheirOwnPosition() throws Exception {
+        Harness harness = new Harness();
+        // seq2 overtakes seq1, as in framesFromDifferentGroupsArrivingOutOfOrderUnderJitterEachPlayWithTheirOwnGroup.
+        harness.arrives(0, 0, ALPHA, true, 0, 64, 0);
+        harness.arrives(30, 2, ALPHA, true, 2, 64, 0);
+        harness.arrives(35, 1, ALPHA, true, 1, 64, 0);
+
+        harness.runUntil(200);
+
+        assertEquals(List.of("0.0,64.0,0.0", "1.0,64.0,0.0", "2.0,64.0,0.0"), harness.playback.playedPositions());
     }
 
     @Test

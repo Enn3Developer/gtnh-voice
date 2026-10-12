@@ -33,11 +33,11 @@ class FrameAwareChainTest {
     private static final UUID SPEAKER_B = UUID.fromString("00000000-0000-0000-0000-00000000000b");
 
     private static IPlaybackFrame radio(UUID speaker) {
-        return new PlaybackFrame(speaker, "radio", "Radio", false);
+        return new PlaybackFrame(speaker, "radio", "Radio", false, Double.NaN, Double.NaN, Double.NaN);
     }
 
     private static IPlaybackFrame local(UUID speaker) {
-        return new PlaybackFrame(speaker, "local", "local", true);
+        return new PlaybackFrame(speaker, "local", "local", true, 0, 64, 0);
     }
 
     private static boolean isRadio(IPlaybackFrame frame) {

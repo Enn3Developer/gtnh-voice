@@ -41,7 +41,7 @@ class AudioRegistrationBuilderTest {
     }
 
     private static IPlaybackFrame frameFrom(UUID sourceId) {
-        return new PlaybackFrame(sourceId, "radio", "Radio", false);
+        return new PlaybackFrame(sourceId, "radio", "Radio", false, Double.NaN, Double.NaN, Double.NaN);
     }
 
     /** Feeds one silent frame through every filter of {@code bundle} in stored order, like the playback chain. */
