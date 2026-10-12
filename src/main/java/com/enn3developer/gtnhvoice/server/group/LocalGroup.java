@@ -47,7 +47,7 @@ public final class LocalGroup implements IGroup {
         context.getAllSessions()
             .excludeSelf()
             .excludeNoAddress()
-            .cutoffDistance(Math.min(Config.distance, Config.maxDistance))
+            .cutoffDistance(Config.proximityRange())
             .send(SourceState.POSITIONAL);
     }
 }

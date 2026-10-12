@@ -6,13 +6,15 @@ import java.util.UUID;
 
 import org.jetbrains.annotations.NotNull;
 
+import com.enn3developer.gtnhvoice.Config;
+import com.enn3developer.gtnhvoice.api.server.group.IGroup;
 import com.enn3developer.gtnhvoice.api.server.group.IGroupManager;
 import com.enn3developer.gtnhvoice.server.VoiceServerManager;
 
 /**
- * Static entry point addons use to reach the voice server's group routing and session lifecycle - the single place
- * this package touches the server internals, so addons never import them. Server side only, like everything in
- * this package.
+ * Static entry point addons use to reach the voice server's group routing, session lifecycle and proximity range -
+ * the single place this package touches the server internals, so addons never import them. Server side only, like
+ * everything in this package.
  */
 public final class GtnhVoiceApi {
 
@@ -61,5 +63,19 @@ public final class GtnhVoiceApi {
         return VoiceServerManager.getInstance()
             .getSessionLifecycle()
             .sessions();
+    }
+
+    /**
+     * The effective proximity range in blocks: {@code min(distance, maxDistance)} from the server's voice config. The
+     * built-in local group routes a speaker to listeners in the same dimension within this many blocks, a listener at
+     * exactly this distance included, and it reads the range from the same place this method does. Reads the live
+     * config on every call, never a value cached at startup.
+     * <p>
+     * Server side: on a client connected to a remote server it reads the client's own config file, which says nothing
+     * about that server. Callable from any thread, including {@link IGroup#route} on the network thread: it takes no
+     * lock and never blocks.
+     */
+    public static int proximityRange() {
+        return Config.proximityRange();
     }
 }

@@ -3,7 +3,7 @@
  * lifecycle events, the activation ids frames carry, position snapshots, playback source states, the transport seam
  * - plus {@link com.enn3developer.gtnhvoice.api.server.GtnhVoiceApi}, the server API entry point.
  */
-@API(owner = "gtnhvoice", apiVersion = "1.2", provides = "GtnhVoice|ServerAPI")
+@API(owner = "gtnhvoice", apiVersion = "1.3", provides = "GtnhVoice|ServerAPI")
 package com.enn3developer.gtnhvoice.api.server;
 
 import cpw.mods.fml.common.API;

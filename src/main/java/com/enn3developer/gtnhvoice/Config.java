@@ -15,10 +15,11 @@ public class Config {
     // property in synchronizeConfiguration - only ever set once, from synchronizeConfiguration itself.
     private static Configuration configuration;
 
-    // Server-authoritative voice session config, sent to clients in ServerHelloPacket.
+    // Server-authoritative voice session config, sent to clients in ServerHelloPacket. distance and maxDistance are
+    // volatile because routing reads them on the network thread (see proximityRange).
     public static int udpPort = 25566;
-    public static int distance = 48;
-    public static int maxDistance = 128;
+    public static volatile int distance = 48;
+    public static volatile int maxDistance = 128;
     public static String opusMode = OpusMode.VOIP.name();
     public static int frameSize = 960;
     public static int sampleRate = 48_000;
@@ -219,6 +220,16 @@ public class Config {
                 PlayerVoiceSettings.getInstance()
                     .exportOverrides());
         configuration.save();
+    }
+
+    /**
+     * The effective server-side proximity range in blocks, {@code min(distance, maxDistance)}: the local group routes a
+     * speaker to listeners within it. The one place that range is worked out, so {@code LocalGroup} and
+     * {@code GtnhVoiceApi.proximityRange()} can't disagree. Reads the fields on every call, so a config change applies
+     * from the next call on; safe on any thread.
+     */
+    public static int proximityRange() {
+        return Math.min(distance, maxDistance);
     }
 
     /**

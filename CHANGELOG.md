@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `GtnhVoiceApi.proximityRange()`: the server's effective proximity range in blocks, `min(distance, maxDistance)` from its voice config. The built-in local group cuts off at exactly this range and reads it from the same place, so the two can't drift apart. It reads the live config on every call and is safe to call from `IGroup.route()` on the network thread (server API 1.3)
+
 ## [0.10.1] - 2026-10-11
 
 ### Fixed
