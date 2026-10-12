@@ -1,6 +1,7 @@
 package com.enn3developer.gtnhvoice.network;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 import org.junit.jupiter.api.Test;
 
@@ -8,8 +9,8 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 
 /**
- * Wire round-trip of the group display name. The name travels as UTF-8, so a non-ASCII group name
- * must survive encode/decode intact, not just the ASCII "local" default.
+ * Wire round-trip of the group display name and display component. The name travels as UTF-8, so a non-ASCII group
+ * name must survive encode/decode intact, not just the ASCII "local" default.
  */
 class VoiceGroupUpdatePacketTest {
 
@@ -18,6 +19,18 @@ class VoiceGroupUpdatePacketTest {
         VoiceGroupUpdatePacket decoded = roundTrip(new VoiceGroupUpdatePacket(VoiceProtocol.PROTOCOL_VERSION, "local"));
         assertEquals(VoiceProtocol.PROTOCOL_VERSION, decoded.getProtocolVersion());
         assertEquals("local", decoded.getGroupDisplayName());
+        assertNull(decoded.getGroupDisplayComponentJson(), "a group without a display component sends none");
+    }
+
+    @Test
+    void roundTripsTheDisplayComponent() {
+        String call = "{\"translate\":\"becom.group.call\"}";
+
+        VoiceGroupUpdatePacket decoded = roundTrip(
+            new VoiceGroupUpdatePacket(VoiceProtocol.PROTOCOL_VERSION, "Call", call));
+
+        assertEquals("Call", decoded.getGroupDisplayName());
+        assertEquals(call, decoded.getGroupDisplayComponentJson());
     }
 
     @Test

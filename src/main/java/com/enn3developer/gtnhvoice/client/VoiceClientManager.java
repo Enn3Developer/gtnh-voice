@@ -25,6 +25,7 @@ import com.enn3developer.gtnhvoice.api.client.ICapturePcmFilter;
 import com.enn3developer.gtnhvoice.client.capture.CaptureManager;
 import com.enn3developer.gtnhvoice.client.playback.PlaybackFrame;
 import com.enn3developer.gtnhvoice.client.playback.PlaybackManager;
+import com.enn3developer.gtnhvoice.client.source.GroupDisplayName;
 import com.enn3developer.gtnhvoice.client.source.GroupTable;
 import com.enn3developer.gtnhvoice.client.source.VoiceSourceManager;
 import com.enn3developer.gtnhvoice.core.api.audio.codec.AudioEncoder;
@@ -141,15 +142,15 @@ public final class VoiceClientManager {
     private final Map<UUID, String> roster = new ConcurrentHashMap<>();
 
     /** What every player is in until the server says otherwise - the default local proximity group's label. */
-    private static final String DEFAULT_GROUP_DISPLAY_NAME = "local";
+    private static final GroupDisplayName DEFAULT_GROUP_DISPLAY_NAME = GroupDisplayName.of("local", null);
 
     /**
-     * This player's own current voice group display name, shown inside the [] of the HUD self row.
-     * Server-synced via {@link VoiceGroupUpdatePacket} (on session establish and on every
-     * reassignment); reverts to the default in {@link #onDisconnected}. Volatile: written from the
-     * FML channel handler, read every frame by the HUD.
+     * This player's own current voice group display name, shown inside the [] of the HUD self row: the group's
+     * display component in this client's language when it has one. Server-synced via {@link VoiceGroupUpdatePacket}
+     * (on session establish and on every reassignment); reverts to the default in {@link #onDisconnected}. Volatile:
+     * written from the FML channel handler, read every frame by the HUD.
      */
-    private volatile String groupDisplayName = DEFAULT_GROUP_DISPLAY_NAME;
+    private volatile GroupDisplayName groupDisplayName = DEFAULT_GROUP_DISPLAY_NAME;
     // Wire group id -> names, synced via VoiceGroupTablePacket. Outlives each per-session VoiceSourceManager (the
     // table lands before ServerHello creates the new one): sources resolve every frame's group through it at
     // playout, and the HUD attributes per-speaker audio with it (see groupDisplayNameFor).
@@ -449,11 +450,11 @@ public final class VoiceClientManager {
 
     /** This player's own current voice group display name for the HUD self row - see {@link #groupDisplayName}. */
     public String getGroupDisplayName() {
-        return groupDisplayName;
+        return groupDisplayName.text();
     }
 
     public synchronized void handleGroupUpdate(@NotNull VoiceGroupUpdatePacket packet) {
-        groupDisplayName = packet.getGroupDisplayName();
+        groupDisplayName = GroupDisplayName.of(packet.getGroupDisplayName(), packet.getGroupDisplayComponentJson());
         GtnhVoice.LOG.info("Client voice group display name set to '{}'", groupDisplayName);
     }
 

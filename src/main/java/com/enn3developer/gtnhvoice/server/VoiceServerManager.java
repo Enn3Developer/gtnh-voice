@@ -41,6 +41,7 @@ import com.enn3developer.gtnhvoice.core.proto.packets.udp.serverbound.PlayerAudi
 import com.enn3developer.gtnhvoice.core.transport.UdpPacketListener;
 import com.enn3developer.gtnhvoice.core.transport.UdpTransportServer;
 import com.enn3developer.gtnhvoice.network.ClientHelloPacket;
+import com.enn3developer.gtnhvoice.network.GroupNames;
 import com.enn3developer.gtnhvoice.network.NetworkHandler;
 import com.enn3developer.gtnhvoice.network.ServerHelloPacket;
 import com.enn3developer.gtnhvoice.network.ServerRejectPacket;
@@ -386,9 +387,9 @@ public final class VoiceServerManager implements UdpPacketListener {
             pendingSends.add(
                 () -> sendGroupUpdate(
                     playerUuid,
-                    groupManager.groupsOf(playerUuid)
-                        .get(0)
-                        .getDisplayName()));
+                    GroupManager.namesOf(
+                        groupManager.groupsOf(playerUuid)
+                            .get(0))));
             pendingSends.add(() -> sendGroupTable(playerUuid));
         }
 
@@ -746,16 +747,15 @@ public final class VoiceServerManager implements UdpPacketListener {
 
     /**
      * {@link GroupManager} assignment listener: syncs the (re)assigned player's new group display
-     * name to them. Fires synchronously inside {@code assign()} on the server thread; the actual
-     * send still goes through {@link #pendingSends} so it shares the roster packets' safe path (and
-     * the display name is captured here, so the packet reflects the group as assigned even if a
-     * later reassignment lands in the same tick's queue behind it).
+     * name and display component to them. Fires synchronously inside {@code assign()} on the server
+     * thread; the actual send still goes through {@link #pendingSends} so it shares the roster
+     * packets' safe path (and the names are captured here, so the packet reflects the group as
+     * assigned even if a later reassignment lands in the same tick's queue behind it).
      */
     private void onMembershipChanged(@NotNull UUID playerUuid, @NotNull List<IGroup> groups) {
         // The HUD self-row tag shows the player's top-priority group (the snapshot is pre-sorted, local last).
-        String displayName = groups.get(0)
-            .getDisplayName();
-        pendingSends.add(() -> sendGroupUpdate(playerUuid, displayName));
+        GroupNames topGroup = GroupManager.namesOf(groups.get(0));
+        pendingSends.add(() -> sendGroupUpdate(playerUuid, topGroup));
     }
 
     /** A group registered (possibly after players connected): resync the id table to every voice session. */
@@ -791,13 +791,13 @@ public final class VoiceServerManager implements UdpPacketListener {
     }
 
     /**
-     * Sends {@code playerUuid} their own current group display name for the HUD self row - only
-     * ever the subject player, group membership is not broadcast to others. Runs from {@link
-     * #pendingSends} on the server thread since it resolves an {@code EntityPlayerMP}, like {@link
-     * #broadcastRosterUpdate}; skips silently if the player logged out or lost their voice session
-     * by flush time.
+     * Sends {@code playerUuid} their own current group's display name and display component for
+     * the HUD self row - only ever the subject player, group membership is not broadcast to others.
+     * Runs from {@link #pendingSends} on the server thread since it resolves an
+     * {@code EntityPlayerMP}, like {@link #broadcastRosterUpdate}; skips silently if the player
+     * logged out or lost their voice session by flush time.
      */
-    private void sendGroupUpdate(@NotNull UUID playerUuid, @NotNull String groupDisplayName) {
+    private void sendGroupUpdate(@NotNull UUID playerUuid, @NotNull GroupNames group) {
         if (!sessionsByPlayerUuid.containsKey(playerUuid)) return;
 
         MinecraftServer server = minecraftServer.get();
@@ -808,9 +808,17 @@ public final class VoiceServerManager implements UdpPacketListener {
                 .getId()
                 .equals(playerUuid)) continue;
 
-            NetworkHandler.WRAPPER
-                .sendTo(new VoiceGroupUpdatePacket(VoiceProtocol.PROTOCOL_VERSION, groupDisplayName), player);
-            GtnhVoice.LOG.info("Sent voice group update to {}: '{}'", player.getCommandSenderName(), groupDisplayName);
+            NetworkHandler.WRAPPER.sendTo(
+                new VoiceGroupUpdatePacket(
+                    VoiceProtocol.PROTOCOL_VERSION,
+                    group.displayName(),
+                    group.displayComponentJson()),
+                player);
+            GtnhVoice.LOG.info(
+                "Sent voice group update to {}: '{}' (display component: {})",
+                player.getCommandSenderName(),
+                group.displayName(),
+                group.displayComponentJson());
             return;
         }
     }

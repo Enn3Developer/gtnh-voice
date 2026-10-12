@@ -2,7 +2,10 @@ package com.enn3developer.gtnhvoice.api.server.group;
 
 import java.util.UUID;
 
+import net.minecraft.util.IChatComponent;
+
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import com.enn3developer.gtnhvoice.api.server.SourceState;
 
@@ -35,10 +38,32 @@ public interface IGroup {
      * Display name shown inside the [] of the HUD self row, synced to the member via
      * {@link com.enn3developer.gtnhvoice.network.VoiceGroupUpdatePacket}. Distinct from {@link #getName()},
      * which stays the internal identity. Never {@code null} - it is captured on assignment and written to the
-     * wire unchecked from the server tick.
+     * wire unchecked from the server tick. Clients show {@link #getDisplayComponent()} instead when the group has
+     * one; this name is still sent beside it as the fallback.
      */
     @NotNull
     String getDisplayName();
+
+    /**
+     * The display name as a chat component, for each client to format in its own player's language: typically a
+     * {@link net.minecraft.util.ChatComponentTranslation} with a key from your client-side lang files and any
+     * arguments it needs. {@code null}, the default, means "use {@link #getDisplayName()}".
+     * <p>
+     * The server sends it to clients as {@code IChatComponent.Serializer} JSON, beside the display name. Each client
+     * formats it with its own lang files, as plain text without formatting codes, wherever the group's display name
+     * shows: the HUD's speaker rows, the HUD self row and {@code IPlaybackFrame.groupDisplayName()}, again after a
+     * language change. A client shows {@link #getDisplayName()} instead when it has no translation for the
+     * component's translation key, which happens when your lang files are only on the server.
+     * <p>
+     * Server side, called on the server thread when the group table is sent (a session starting, a group
+     * registering) and, for the HUD self row, on a player's top-priority group when their session starts and whenever
+     * they join or leave a group; clients see a new component only then. A component that throws, that the serializer
+     * can't handle or whose JSON is longer than 16383 bytes is left out with a warning, and clients get the display
+     * name instead.
+     */
+    default @Nullable IChatComponent getDisplayComponent() {
+        return null;
+    }
 
     /**
      * Routes one inbound frame of speaker audio to this group's recipients. The whole routing event travels in

@@ -1,5 +1,6 @@
 package com.enn3developer.gtnhvoice.server.group;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -8,14 +9,19 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
+
+import net.minecraft.util.IChatComponent;
 
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import com.enn3developer.gtnhvoice.GtnhVoice;
 import com.enn3developer.gtnhvoice.api.server.GtnhVoiceApi;
 import com.enn3developer.gtnhvoice.api.server.group.IGroup;
 import com.enn3developer.gtnhvoice.api.server.group.IGroupManager;
+import com.enn3developer.gtnhvoice.core.api.util.LogThrottle;
 import com.enn3developer.gtnhvoice.network.GroupNames;
 
 /**
@@ -38,6 +44,9 @@ public final class GroupManager implements IGroupManager {
     public static final short LOCAL_GROUP_ID = 0;
     public static final short GLOBAL_GROUP_ID = 1;
     private static final short FIRST_REGISTERED_GROUP_ID = 2;
+
+    private static final long DISPLAY_COMPONENT_WARN_THROTTLE_MILLIS = 5000;
+    private static final AtomicLong lastDisplayComponentWarnMillis = new AtomicLong();
 
     /**
      * Priority desc, ties by name asc - the one ordering every membership snapshot uses, and the order
@@ -171,8 +180,8 @@ public final class GroupManager implements IGroupManager {
 
     /**
      * Snapshot of the wire id to {@link GroupNames} table for the client sync packet - each group's internal name
-     * (what client playback filters key on) and display name (what the HUD shows): built-ins first, then every
-     * registered group, ordered by id.
+     * (what client playback filters key on), display name and display component (what the HUD shows, see
+     * {@link #namesOf}): built-ins first, then every registered group, ordered by id. Server thread.
      */
     public Map<Short, GroupNames> groupTableView() {
         Map<Short, GroupNames> table = new java.util.TreeMap<>();
@@ -185,8 +194,44 @@ public final class GroupManager implements IGroupManager {
         return table;
     }
 
-    private static GroupNames namesOf(@NotNull IGroup group) {
-        return new GroupNames(group.getName(), group.getDisplayName());
+    /**
+     * The names {@code group} goes by on the wire: internal name, display name and display component, the last as
+     * {@code IChatComponent.Serializer} JSON. Server thread, since it calls the group's
+     * {@link IGroup#getDisplayComponent()}. A component that throws, can't be serialized or doesn't fit a packet string
+     * is left out with a throttled warning: its clients show the display name, and the table or update carrying it
+     * still goes out.
+     */
+    public static GroupNames namesOf(@NotNull IGroup group) {
+        return new GroupNames(group.getName(), group.getDisplayName(), displayComponentJson(group));
+    }
+
+    private static @Nullable String displayComponentJson(@NotNull IGroup group) {
+        try {
+            IChatComponent component = group.getDisplayComponent();
+            if (component == null) return null;
+
+            String json = IChatComponent.Serializer.func_150696_a(component);
+            if (json.getBytes(StandardCharsets.UTF_8).length <= GroupNames.MAX_DISPLAY_COMPONENT_JSON_BYTES)
+                return json;
+            warnDisplayComponentLeftOut(
+                group,
+                "its JSON is longer than " + GroupNames.MAX_DISPLAY_COMPONENT_JSON_BYTES + " bytes",
+                null);
+        } catch (RuntimeException e) {
+            warnDisplayComponentLeftOut(group, "it failed", e);
+        }
+        return null;
+    }
+
+    private static void warnDisplayComponentLeftOut(@NotNull IGroup group, @NotNull String why,
+        @Nullable RuntimeException cause) {
+        if (!LogThrottle.shouldLog(lastDisplayComponentWarnMillis, DISPLAY_COMPONENT_WARN_THROTTLE_MILLIS)) return;
+        GtnhVoice.LOG.warn(
+            "Leaving out the display component of voice group '{}' because {}; its clients show '{}' instead",
+            group.getName(),
+            why,
+            group.getDisplayName(),
+            cause);
     }
 
     /**

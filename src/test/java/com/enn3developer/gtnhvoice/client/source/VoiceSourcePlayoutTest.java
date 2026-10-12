@@ -38,6 +38,9 @@ class VoiceSourcePlayoutTest {
     private static final short ALPHA = 2;
     private static final short BRAVO = 3;
     private static final short CHARLIE = 4;
+    // A group with a display component: a translation the tests set with TestLanguage.
+    private static final short CALL = 5;
+    private static final String CALL_KEY = "gtnhvoice.test.playout.call";
 
     /** Records the routing hand-off and every submitted frame, in call order; touches no OpenAL. */
     private static final class RecordingPlaybackManager extends PlaybackManager {
@@ -142,7 +145,9 @@ class VoiceSourcePlayoutTest {
                     BRAVO,
                     new GroupNames("bravo", "Bravo"),
                     CHARLIE,
-                    new GroupNames("charlie", "Charlie")));
+                    new GroupNames("charlie", "Charlie"),
+                    CALL,
+                    new GroupNames("call", "Call", "{\"translate\":\"" + CALL_KEY + "\"}")));
             source.open(16);
         }
 
@@ -286,6 +291,19 @@ class VoiceSourcePlayoutTest {
         harness.runUntil(200);
 
         assertEquals(List.of("0.0,64.0,0.0", "1.0,64.0,0.0", "2.0,64.0,0.0"), harness.playback.playedPositions());
+    }
+
+    @Test
+    void frameRoutedByAGroupWithADisplayComponentCarriesItsNameInTheClientsLanguage() throws Exception {
+        TestLanguage.translate(CALL_KEY, "Chiamata");
+        Harness harness = new Harness();
+        harness.arrives(0, 0, CALL);
+
+        harness.runUntil(100);
+
+        IPlaybackFrame played = harness.playback.playedContexts.get(0);
+        assertEquals("call", played.groupName());
+        assertEquals("Chiamata", played.groupDisplayName());
     }
 
     @Test

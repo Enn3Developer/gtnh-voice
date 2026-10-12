@@ -10,19 +10,21 @@ import io.netty.buffer.ByteBuf;
 /**
  * S-&gt;C. The full wire-id to {@link GroupNames} table of every voice group, so clients can attribute incoming
  * audio frames (each {@code SourceAudioPacket} carries the routing group's id) by internal name - what playback
- * filters key on - and by display name - what the HUD shows. Full-replace semantics - idempotent and
- * reorder-proof - sent when a session is established and rebroadcast to everyone whenever a group registers late.
- * {@code protocolVersion} is read first, matching the other control packets.
+ * filters key on - and by display name and display component - what the HUD shows. Full-replace semantics -
+ * idempotent and reorder-proof - sent when a session is established and rebroadcast to everyone whenever a group
+ * registers late. {@code protocolVersion} is read first, matching the other control packets.
  * <p>
- * Wire format (protocol v6): {@code byte protocolVersion, short count, count x {short id, UTF-8 name, UTF-8
- * displayName}}. Decoding is bounded the same way as the roster snapshot: a count the remaining bytes could not
- * possibly hold, a negative count or a repeated id is rejected with {@link IllegalArgumentException} before
- * anything is stored, and each string is length-capped by FML's two-byte varint prefix.
+ * Wire format (protocol v7): {@code byte protocolVersion, short count, count x {short id, UTF-8 name, UTF-8
+ * displayName, UTF-8 displayComponent}}, the display component being {@code IChatComponent.Serializer} JSON, or an
+ * empty string for a group without one. Decoding is bounded the same way as the roster snapshot: a count the
+ * remaining bytes could not possibly hold, a negative count or a repeated id is rejected with
+ * {@link IllegalArgumentException} before anything is stored, and each string is length-capped by FML's two-byte
+ * varint prefix. The JSON is parsed only by the client's group table, so one bad component can't lose the table.
  */
 public class VoiceGroupTablePacket implements IMessage {
 
-    /** One entry's floor on the wire: the short id plus two empty strings' one-byte length prefixes. */
-    private static final int MIN_ENTRY_BYTES = 4;
+    /** One entry's floor on the wire: the short id plus three empty strings' one-byte length prefixes. */
+    private static final int MIN_ENTRY_BYTES = 5;
 
     private byte protocolVersion;
     private Map<Short, GroupNames> groupTable = new LinkedHashMap<>();
@@ -54,7 +56,12 @@ public class VoiceGroupTablePacket implements IMessage {
             short id = buf.readShort();
             String name = ByteBufUtils.readUTF8String(buf);
             String displayName = ByteBufUtils.readUTF8String(buf);
-            if (table.putIfAbsent(id, new GroupNames(name, displayName)) != null)
+            String displayComponentJson = ByteBufUtils.readUTF8String(buf);
+            GroupNames names = new GroupNames(
+                name,
+                displayName,
+                displayComponentJson.isEmpty() ? null : displayComponentJson);
+            if (table.putIfAbsent(id, names) != null)
                 throw new IllegalArgumentException("Duplicate group id in table: " + id);
         }
         groupTable = table;
@@ -74,6 +81,9 @@ public class VoiceGroupTablePacket implements IMessage {
                 buf,
                 entry.getValue()
                     .displayName());
+            String displayComponentJson = entry.getValue()
+                .displayComponentJson();
+            ByteBufUtils.writeUTF8String(buf, displayComponentJson == null ? "" : displayComponentJson);
         }
     }
 }

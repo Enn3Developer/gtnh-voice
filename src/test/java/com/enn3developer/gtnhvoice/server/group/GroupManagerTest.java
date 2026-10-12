@@ -12,6 +12,12 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Supplier;
+
+import net.minecraft.util.ChatComponentStyle;
+import net.minecraft.util.ChatComponentText;
+import net.minecraft.util.ChatComponentTranslation;
+import net.minecraft.util.IChatComponent;
 
 import org.junit.jupiter.api.Test;
 
@@ -239,5 +245,72 @@ class GroupManagerTest {
         manager.onPlayerRemoved(playerUuid);
 
         assertEquals(Arrays.asList(playerUuid), party.removedPlayers);
+    }
+
+    @Test
+    void groupTableCarriesTheDisplayComponentAsChatJson() {
+        manager.registerGroup(
+            displayComponentGroup("becom:call", () -> new ChatComponentTranslation("becom.group.call", "7")));
+
+        Map<Short, GroupNames> table = manager.groupTableView();
+
+        assertEquals(
+            new GroupNames("becom:call", "becom:call", "{\"translate\":\"becom.group.call\",\"with\":[\"7\"]}"),
+            table.get((short) 2));
+        assertNull(
+            table.get(GroupManager.LOCAL_GROUP_ID)
+                .displayComponentJson(),
+            "a group without a display component sends none");
+    }
+
+    @Test
+    void aDisplayComponentThatCannotBeSentLeavesTheTableToTheDisplayName() {
+        manager.registerGroup(displayComponentGroup("throws", () -> { throw new IllegalStateException("addon bug"); }));
+        manager.registerGroup(displayComponentGroup("unserializable", UnserializableComponent::new));
+        manager.registerGroup(displayComponentGroup("tooLong", () -> new ChatComponentText("x".repeat(20_000))));
+
+        Map<Short, GroupNames> table = manager.groupTableView();
+
+        assertEquals(new GroupNames("throws", "throws"), table.get((short) 2));
+        assertEquals(new GroupNames("unserializable", "unserializable"), table.get((short) 3));
+        assertEquals(new GroupNames("tooLong", "tooLong"), table.get((short) 4));
+    }
+
+    /** A group named {@code name}, displayed as its name, whose display component comes from {@code component}. */
+    private static IGroup displayComponentGroup(String name, Supplier<IChatComponent> component) {
+        return new IGroup() {
+
+            @Override
+            public String getName() {
+                return name;
+            }
+
+            @Override
+            public String getDisplayName() {
+                return name;
+            }
+
+            @Override
+            public IChatComponent getDisplayComponent() {
+                return component.get();
+            }
+
+            @Override
+            public void route(RoutingContext context) {}
+        };
+    }
+
+    /** A kind of component IChatComponent.Serializer has no JSON for. */
+    private static final class UnserializableComponent extends ChatComponentStyle {
+
+        @Override
+        public String getUnformattedTextForChat() {
+            return "?";
+        }
+
+        @Override
+        public IChatComponent createCopy() {
+            return new UnserializableComponent();
+        }
     }
 }

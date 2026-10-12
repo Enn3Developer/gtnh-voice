@@ -49,8 +49,11 @@ public interface IPlaybackFrame {
     String groupName();
 
     /**
-     * The display name of the group that routed this frame - presentation text, the label the HUD shows. It may
-     * change while the group lives and two groups may share one; never key logic on it, use {@link #groupName()}.
+     * The display name of the group that routed this frame - presentation text, the label the HUD shows: the group's
+     * display component formatted in this client's language when the server-side group has one
+     * ({@code IGroup#getDisplayComponent()}, since group API 1.2), its plain display name otherwise. It may change
+     * while the group lives, a language change included, and two groups may share one; never key logic on it, use
+     * {@link #groupName()}.
      */
     @NotNull
     String groupDisplayName();

@@ -56,7 +56,9 @@ public final class VoiceProtocol {
     // name via the group table synced on the reliable channel.
     // v6: VoiceGroupTablePacket entries carry the group's internal (registry) name before its display name, so
     // client playback filters can key on the stable name instead of presentation text.
-    public static final byte PROTOCOL_VERSION = 6;
+    // v7: VoiceGroupTablePacket entries and VoiceGroupUpdatePacket carry the group's display component as
+    // IChatComponent JSON after its display name, so each client formats group names in its own language.
+    public static final byte PROTOCOL_VERSION = 7;
 
     public static final byte REASON_VERSION_MISMATCH = 0;
     /** The protocol versions matched but the peer's ClientHello carried no usable X25519 public key. */
