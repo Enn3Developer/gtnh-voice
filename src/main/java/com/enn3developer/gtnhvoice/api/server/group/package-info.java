@@ -4,7 +4,7 @@
  * (respecting its threading contract) and register it via
  * {@link com.enn3developer.gtnhvoice.api.server.GtnhVoiceApi#groupManager()}.
  */
-@API(owner = "gtnhvoice", apiVersion = "1.1", provides = "GtnhVoice|GroupAPI")
+@API(owner = "gtnhvoice", apiVersion = "1.2", provides = "GtnhVoice|GroupAPI")
 package com.enn3developer.gtnhvoice.api.server.group;
 
 import cpw.mods.fml.common.API;

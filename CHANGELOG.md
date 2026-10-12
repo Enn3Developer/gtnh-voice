@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `GtnhVoiceApi.proximityRange()`: the server's effective proximity range in blocks, `min(distance, maxDistance)` from its voice config. The built-in local group cuts off at exactly this range and reads it from the same place, so the two can't drift apart. It reads the live config on every call and is safe to call from `IGroup.route()` on the network thread (server API 1.3)
+- `RoutingContext.isServed(UUID)`: whether the frame being routed already went to a player, from a higher-priority group or from the current one, so a group can act only on sends that reach someone. `sendTo` still returns nothing; its javadoc now lists the three cases where it drops a send silently, each with the check that predicts it: no live session for the player (not in `getSessionsByPlayerUuid()`), no UDP address yet (`IVoiceSession.hasUdpAddress()`), already served this frame (`isServed`) (group API 1.2)
 
 ## [0.10.1] - 2026-10-11
 

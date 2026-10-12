@@ -197,14 +197,41 @@ public final class RoutingContext {
     }
 
     /**
+     * Whether this frame already went to {@code playerUuid}: from a higher-priority group earlier in the chain, or
+     * from the group routing now. Once it has, {@link #sendTo} drops every further send to that player for this frame,
+     * so each player gets one packet per frame. Lets a group act only on sends that reach someone, such as counting a
+     * radio contact only for a listener the radio actually reached. A send {@link #sendTo} dropped for any other
+     * reason leaves the player unserved.
+     * <p>
+     * Server side, on the network thread, inside the {@link IGroup#route} call this context was built for.
+     */
+    public boolean isServed(@NotNull UUID playerUuid) {
+        return servedRecipients.contains(playerUuid);
+    }
+
+    /**
      * Builds one outgoing audio packet from this context's frame (sequence, data) and speaker UUID, stamped with
      * {@code sourceState} (see {@link SourceState}) and the given source coordinates, and sends it to
      * {@code recipient} over the UDP transport, wrapped with the recipient's own secret/encryption/address. The
      * coordinates are free: pass the speaker's snapshot position for normal routing, or a fixed point to emit
      * from somewhere else (loudspeaker blocks, radio towers). The concrete session is resolved from this
-     * context's live sessions by the recipient's player UUID; no-op if the recipient is unknown (a foreign
-     * {@link IVoiceSession} implementation, or a session removed since the context was built) or has no UDP
-     * address yet - never throws on the UDP/Netty thread over a stale recipient.
+     * context's live sessions by the recipient's player UUID.
+     * <p>
+     * It returns nothing and never throws over a recipient. Instead it drops a send silently in three cases, checked
+     * in this order, and each case has a check a group can run beforehand to tell whether its send will go through:
+     * <ol>
+     * <li>No live session for the player, as for a foreign {@link IVoiceSession} implementation or a session that
+     * ended after this frame arrived. Check: {@code getSessionsByPlayerUuid().get(recipient.getPlayerUuid())} is
+     * {@code null}.</li>
+     * <li>No UDP address yet: the player's client has not sent its first datagram. Check:
+     * {@link IVoiceSession#hasUdpAddress()} is {@code false} on that live session.</li>
+     * <li>Already served this frame, by a higher-priority group or by this one. Check:
+     * {@link #isServed isServed(recipient.getPlayerUuid())} is {@code true}.</li>
+     * </ol>
+     * A send that passes all three goes out and marks the player served. Sessions also end on other threads (logout,
+     * timeout), so one can still end between a check and the send, and the send is then dropped as in the first case.
+     * <p>
+     * Server side, on the network thread, inside the {@link IGroup#route} call this context was built for.
      */
     public void sendTo(@NotNull IVoiceSession recipient, byte sourceState, double x, double y, double z) {
         VoiceServerSession session = sessionsByPlayerUuid.get(recipient.getPlayerUuid());
