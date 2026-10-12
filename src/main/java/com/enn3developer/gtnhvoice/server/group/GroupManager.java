@@ -39,8 +39,11 @@ public final class GroupManager implements IGroupManager {
     public static final short GLOBAL_GROUP_ID = 1;
     private static final short FIRST_REGISTERED_GROUP_ID = 2;
 
-    /** Priority desc, ties by name asc - the one ordering every membership snapshot uses. */
-    private static final Comparator<IGroup> ROUTING_ORDER = Comparator.comparingInt(IGroup::priority)
+    /**
+     * Priority desc, ties by name asc - the one ordering every membership snapshot uses, and the order
+     * {@link com.enn3developer.gtnhvoice.api.server.group.RoutingTestKit} routes in.
+     */
+    public static final Comparator<IGroup> ROUTING_ORDER = Comparator.comparingInt(IGroup::priority)
         .reversed()
         .thenComparing(IGroup::getName);
 
