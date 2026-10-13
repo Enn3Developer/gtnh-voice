@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.11.0] - 2026-10-12
+## [0.11.0] - 2026-10-13
 
 Update servers and clients together: this release moves the voice protocol from 6 to 7, so the voice handshake rejects a 0.10.x client on a 0.11.0 server, and a 0.11.0 client on a 0.10.x server. Addons built against 0.10.1 keep loading.
 
